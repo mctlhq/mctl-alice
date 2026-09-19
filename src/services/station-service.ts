@@ -1,4 +1,5 @@
 import { YandexIoTClient, YandexApiError } from "../client/yandex-api.js";
+import { QuasarClient } from "../client/quasar-client.js";
 import {
   YandexDevice,
   YandexRoom,
@@ -27,11 +28,12 @@ export interface DeviceListResult {
 
 export class StationService {
   private client: YandexIoTClient | null = null;
+  private quasarClient: QuasarClient | null = null;
   private cachedUserInfo: YandexUserInfo | null = null;
   private cacheTimestamp = 0;
   private readonly CACHE_TTL_MS = 30000; // 30 seconds
 
-  constructor(client?: YandexIoTClient) {
+  constructor(client?: YandexIoTClient, quasarClient?: QuasarClient) {
     if (client) {
       this.client = client;
     } else {
@@ -41,6 +43,19 @@ export class StationService {
         this.client = null;
       }
     }
+    if (quasarClient) {
+      this.quasarClient = quasarClient;
+    } else {
+      try {
+        this.quasarClient = new QuasarClient();
+      } catch {
+        this.quasarClient = null;
+      }
+    }
+  }
+
+  getQuasarClient(): QuasarClient | null {
+    return this.quasarClient;
   }
 
   private getClient(): YandexIoTClient {
@@ -209,27 +224,48 @@ export class StationService {
    */
   async sendCommand(command: string, targetSpeaker?: string) {
     const speaker = await this.resolveSpeaker(targetSpeaker);
-    const response = await this.getClient().sendDeviceActions([
-      {
-        id: speaker.id,
-        actions: [
-          {
-            type: "devices.capabilities.quasar.server_action",
-            state: {
-              instance: "text_action",
-              value: command,
-            },
-          },
-        ],
-      },
-    ]);
 
-    return {
-      status: "ok",
-      speaker: { id: speaker.id, name: speaker.name },
-      command,
-      apiResponse: response,
-    };
+    if (this.quasarClient && this.quasarClient.hasCookie()) {
+      const response = await this.quasarClient.sendCommand(speaker.id, command);
+      return {
+        status: "ok",
+        speaker: { id: speaker.id, name: speaker.name },
+        command,
+        method: "quasar_command",
+        apiResponse: response,
+      };
+    }
+
+    try {
+      const response = await this.getClient().sendDeviceActions([
+        {
+          id: speaker.id,
+          actions: [
+            {
+              type: "devices.capabilities.quasar.server_action",
+              state: {
+                instance: "text_action",
+                value: command,
+              },
+            },
+          ],
+        },
+      ]);
+
+      return {
+        status: "ok",
+        speaker: { id: speaker.id, name: speaker.name },
+        command,
+        apiResponse: response,
+      };
+    } catch (err: any) {
+      throw new Error(
+        `Не удалось выполнить команду на колонке "${speaker.name}". ` +
+        `Для прямого выполнения голосовых команд требуется авторизация Yandex Quasar (куки Session_id). ` +
+        `Укажите YANDEX_COOKIE в .env или настройте на странице /auth/cookie. ` +
+        `Либо используйте готовый сценарий через triggerScenario.`
+      );
+    }
   }
 
   /**
@@ -237,27 +273,48 @@ export class StationService {
    */
   async sayPhrase(phrase: string, targetSpeaker?: string) {
     const speaker = await this.resolveSpeaker(targetSpeaker);
-    const response = await this.getClient().sendDeviceActions([
-      {
-        id: speaker.id,
-        actions: [
-          {
-            type: "devices.capabilities.quasar.server_action",
-            state: {
-              instance: "phrase_action",
-              value: phrase,
-            },
-          },
-        ],
-      },
-    ]);
 
-    return {
-      status: "ok",
-      speaker: { id: speaker.id, name: speaker.name },
-      phrase,
-      apiResponse: response,
-    };
+    if (this.quasarClient && this.quasarClient.hasCookie()) {
+      const response = await this.quasarClient.sendTts(speaker.id, phrase);
+      return {
+        status: "ok",
+        speaker: { id: speaker.id, name: speaker.name },
+        phrase,
+        method: "quasar_tts",
+        apiResponse: response,
+      };
+    }
+
+    try {
+      const response = await this.getClient().sendDeviceActions([
+        {
+          id: speaker.id,
+          actions: [
+            {
+              type: "devices.capabilities.quasar.server_action",
+              state: {
+                instance: "phrase_action",
+                value: phrase,
+              },
+            },
+          ],
+        },
+      ]);
+
+      return {
+        status: "ok",
+        speaker: { id: speaker.id, name: speaker.name },
+        phrase,
+        apiResponse: response,
+      };
+    } catch (err: any) {
+      throw new Error(
+        `Не удалось озвучить фразу на колонке "${speaker.name}". ` +
+        `Для прямого воспроизведения произвольного текста (TTS) требуется авторизация Yandex Quasar (куки Session_id). ` +
+        `Укажите YANDEX_COOKIE в .env или настройте на странице /auth/cookie. ` +
+        `Либо используйте готовый сценарий через triggerScenario.`
+      );
+    }
   }
 
   /**

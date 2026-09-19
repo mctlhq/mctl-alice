@@ -139,4 +139,23 @@ describe("HTTP Server & ChatGPT REST API", () => {
     });
     expect(res.status).toBe(404);
   });
+
+  it("should serve Quasar cookie configuration page at /auth/cookie", async () => {
+    const res = await fetch(`${baseUrl}/auth/cookie`);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("mctl-alice — Настройка Quasar");
+    expect(html).toContain("Session_id");
+  });
+
+  it("should validate missing cookie on /auth/save-cookie", async () => {
+    const res = await fetch(`${baseUrl}/auth/save-cookie`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.message).toContain("Cookie missing");
+  });
 });

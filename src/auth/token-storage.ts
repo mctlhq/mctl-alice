@@ -57,6 +57,22 @@ export function saveClientSecretToEnvFile(clientSecret: string, envFilePath?: st
   saveEnvVariable("YANDEX_CLIENT_SECRET", clientSecret, envFilePath);
 }
 
+export function saveCookieToEnvFile(cookie: string, envFilePath?: string) {
+  saveEnvVariable("YANDEX_COOKIE", cookie, envFilePath);
+}
+
+export function saveCookieToKeychain(
+  cookie: string,
+  service = "mctl-alice-cookie",
+  account = "mashkoffdmitry"
+): boolean {
+  return saveTokenToKeychain(cookie, service, account);
+}
+
+export function getCookieFromKeychain(service = "mctl-alice-cookie"): string | null {
+  return getTokenFromKeychain(service);
+}
+
 export function saveTokenToKeychain(
   token: string,
   service = "mctl-alice",

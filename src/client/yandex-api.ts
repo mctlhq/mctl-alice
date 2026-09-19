@@ -1,9 +1,23 @@
+import { execSync } from "node:child_process";
 import {
   YandexUserInfo,
   DeviceActionRequest,
   DeviceActionResponse,
   ScenarioActionResponse,
 } from "./types.js";
+
+function getMacKeychainToken(): string | null {
+  if (process.platform !== "darwin") return null;
+  try {
+    const out = execSync("security find-generic-password -s mctl-alice -w", {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "ignore"],
+    });
+    return out.trim() || null;
+  } catch {
+    return null;
+  }
+}
 
 export class YandexApiError extends Error {
   constructor(
@@ -20,11 +34,13 @@ export class YandexIoTClient {
   private baseUrl = "https://api.iot.yandex.net/v1.0";
   private token: string;
 
-  constructor(token?: string) {
-    const resolvedToken = token || process.env.YANDEX_OAUTH_TOKEN;
+  constructor(token?: string, options: { useKeychain?: boolean } = {}) {
+    const useKeychain = options.useKeychain ?? true;
+    const resolvedToken =
+      token || process.env.YANDEX_OAUTH_TOKEN || (useKeychain ? getMacKeychainToken() : null);
     if (!resolvedToken) {
       throw new YandexApiError(
-        "Yandex OAuth token is missing. Please provide it in YANDEX_OAUTH_TOKEN env variable or pass it directly."
+        "Yandex OAuth token is missing. Please provide it in YANDEX_OAUTH_TOKEN env variable, macOS Keychain, or pass it directly."
       );
     }
     // Clean token if user prefixed with 'Bearer ' or quotes

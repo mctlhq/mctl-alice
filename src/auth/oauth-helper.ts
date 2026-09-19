@@ -4,12 +4,9 @@ import path from "node:path";
 import { YandexIoTClient } from "../client/yandex-api.js";
 import { StationService } from "../services/station-service.js";
 
-// Standard client ID used for Yandex Smart Home / Quasar integrations
-const DEFAULT_CLIENT_ID = "c0ebe342af7d48fbbbfcf2d2eedb8f9e";
-
 export interface AuthServerOptions {
   port?: number;
-  clientId?: string;
+  clientId: string;
   envFilePath?: string;
   onSuccess?: (info: { token: string; speakers: string[] }) => void;
 }
@@ -23,31 +20,47 @@ export function buildOAuthUrl(clientId: string, redirectUri: string): string {
   return `https://oauth.yandex.ru/authorize?${params.toString()}`;
 }
 
-export function saveTokenToEnvFile(token: string, envFilePath?: string) {
+export function saveEnvVariable(key: string, value: string, envFilePath?: string) {
   const targetPath = envFilePath || path.resolve(process.cwd(), ".env");
   let content = "";
   if (fs.existsSync(targetPath)) {
     content = fs.readFileSync(targetPath, "utf-8");
   }
 
-  const tokenLine = `YANDEX_OAUTH_TOKEN=${token}`;
-  if (/^YANDEX_OAUTH_TOKEN=.*/m.test(content)) {
-    content = content.replace(/^YANDEX_OAUTH_TOKEN=.*/m, tokenLine);
+  const line = `${key}=${value}`;
+  const regex = new RegExp(`^${key}=.*`, "m");
+  if (regex.test(content)) {
+    content = content.replace(regex, line);
   } else {
-    content = content ? `${content.trim()}\n${tokenLine}\n` : `${tokenLine}\n`;
+    content = content ? `${content.trim()}\n${line}\n` : `${line}\n`;
   }
 
   fs.writeFileSync(targetPath, content, "utf-8");
-  process.env.YANDEX_OAUTH_TOKEN = token;
+  process.env[key] = value;
 }
 
-export function startAuthServer(options: AuthServerOptions = {}): Promise<{
+export function saveTokenToEnvFile(token: string, envFilePath?: string) {
+  saveEnvVariable("YANDEX_OAUTH_TOKEN", token, envFilePath);
+}
+
+export function saveClientIdToEnvFile(clientId: string, envFilePath?: string) {
+  saveEnvVariable("YANDEX_CLIENT_ID", clientId, envFilePath);
+}
+
+export async function validateTokenAndGetSpeakers(token: string): Promise<string[]> {
+  const client = new YandexIoTClient(token);
+  const service = new StationService(client);
+  const devices = await service.listDevices(true);
+  return devices.speakers.map((s) => `${s.name} (${s.room})`);
+}
+
+export function startAuthServer(options: AuthServerOptions): Promise<{
   token: string;
   speakers: string[];
   server: http.Server;
 }> {
   const port = options.port || 8085;
-  const clientId = options.clientId || process.env.YANDEX_CLIENT_ID || DEFAULT_CLIENT_ID;
+  const clientId = options.clientId;
   const redirectUri = `http://localhost:${port}/callback`;
   const oauthUrl = buildOAuthUrl(clientId, redirectUri);
 
@@ -144,10 +157,7 @@ export function startAuthServer(options: AuthServerOptions = {}): Promise<{
             }
 
             // Verify token with Yandex API
-            const client = new YandexIoTClient(token);
-            const service = new StationService(client);
-            const devices = await service.listDevices(true);
-            const speakerNames = devices.speakers.map((s) => `${s.name} (${s.room})`);
+            const speakerNames = await validateTokenAndGetSpeakers(token);
 
             // Save token
             saveTokenToEnvFile(token, options.envFilePath);

@@ -74,6 +74,7 @@ describe("YandexIoTClient", () => {
   it("should automatically refresh token on 401 and retry request when refresh credentials exist", async () => {
     const clientWithRefresh = new YandexIoTClient("initial-expired-token", {
       useKeychain: false,
+      persistEnv: false,
       refreshToken: "mock-refresh-token",
       clientId: "mock-client-id",
       clientSecret: "mock-client-secret",
@@ -120,6 +121,7 @@ describe("YandexIoTClient", () => {
   it("should throw descriptive error if auto-refresh itself fails", async () => {
     const clientWithRefresh = new YandexIoTClient("initial-expired-token", {
       useKeychain: false,
+      persistEnv: false,
       refreshToken: "revoked-refresh-token",
       clientId: "mock-client-id",
       clientSecret: "mock-client-secret",

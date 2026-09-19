@@ -173,4 +173,47 @@ describe("StationService", () => {
     expect(res.scenario.id).toBe("scen-morning");
     expect(mockClient.triggerScenario).toHaveBeenCalledWith("scen-morning");
   });
+
+  it("should use QuasarClient for sayPhrase when cookie is available", async () => {
+    const mockQuasar = {
+      hasCookie: vi.fn().mockReturnValue(true),
+      sendTts: vi.fn().mockResolvedValue({ status: "ok" }),
+      sendCommand: vi.fn().mockResolvedValue({ status: "ok" }),
+    } as any;
+
+    const quasarService = new StationService(mockClient, mockQuasar);
+    const res = await quasarService.sayPhrase("Привет мир", "Кухня");
+
+    expect(res.status).toBe("ok");
+    expect(res.method).toBe("quasar_tts");
+    expect(mockQuasar.sendTts).toHaveBeenCalledWith("station-kitchen", "Привет мир");
+    expect(mockClient.sendDeviceActions).not.toHaveBeenCalled();
+  });
+
+  it("should use QuasarClient for sendCommand when cookie is available", async () => {
+    const mockQuasar = {
+      hasCookie: vi.fn().mockReturnValue(true),
+      sendTts: vi.fn().mockResolvedValue({ status: "ok" }),
+      sendCommand: vi.fn().mockResolvedValue({ status: "ok" }),
+    } as any;
+
+    const quasarService = new StationService(mockClient, mockQuasar);
+    const res = await quasarService.sendCommand("включи рок", "Кухня");
+
+    expect(res.status).toBe("ok");
+    expect(res.method).toBe("quasar_command");
+    expect(mockQuasar.sendCommand).toHaveBeenCalledWith("station-kitchen", "включи рок");
+    expect(mockClient.sendDeviceActions).not.toHaveBeenCalled();
+  });
+
+  it("should provide helpful error when official IoT API fails sayPhrase", async () => {
+    mockClient.sendDeviceActions = vi.fn().mockRejectedValue(new Error("unknown capability"));
+    const serviceWithoutQuasar = new StationService(mockClient, {
+      hasCookie: () => false,
+    } as any);
+
+    await expect(serviceWithoutQuasar.sayPhrase("Привет", "Кухня")).rejects.toThrow(
+      "Для прямого воспроизведения произвольного текста (TTS) требуется авторизация Yandex Quasar"
+    );
+  });
 });

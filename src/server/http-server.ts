@@ -9,6 +9,7 @@ import { ALICE_TOOLS } from "../tools/definitions.js";
 import { handleToolCall } from "../tools/handlers.js";
 import { StationService } from "../services/station-service.js";
 import { YandexIoTClient } from "../client/yandex-api.js";
+import { QuasarClient } from "../client/quasar-client.js";
 import {
   buildOAuthUrl,
   exchangeCodeForToken,
@@ -16,7 +17,10 @@ import {
   saveRefreshTokenToEnvFile,
   saveTokenToKeychain,
   getTokenFromKeychain,
-} from "../auth/oauth-helper.js";
+  saveCookieToEnvFile,
+  saveCookieToKeychain,
+  getCookieFromKeychain,
+} from "../auth/token-storage.js";
 import { getOpenApiSpec } from "./openapi.js";
 
 const DEFAULT_CLIENT_ID = "c0ebe342af7d48fbbbfcf2d2eedb8f9e";
@@ -39,20 +43,33 @@ function parseJsonBody(req: http.IncomingMessage): Promise<any> {
 
 function getServiceForRequest(
   req: http.IncomingMessage,
-  defaultService: StationService
+  defaultService: StationService,
+  defaultQuasar?: QuasarClient
 ): StationService {
   const authHeader = req.headers.authorization;
+  const cookieHeader = req.headers["x-yandex-cookie"] as string | undefined;
+
+  let customQuasar = defaultQuasar;
+  if (cookieHeader) {
+    customQuasar = new QuasarClient({ cookie: cookieHeader, useKeychain: false, persistEnv: false });
+  }
+
   if (authHeader && authHeader.startsWith("Bearer ")) {
     const token = authHeader.replace(/^Bearer\s+/i, "").trim();
     if (token) {
       try {
         const client = new YandexIoTClient(token, { useKeychain: false, persistEnv: false });
-        return new StationService(client);
+        return new StationService(client, customQuasar);
       } catch {
         // Fallback to default service
       }
     }
   }
+
+  if (customQuasar && customQuasar !== defaultQuasar) {
+    return new StationService(undefined, customQuasar);
+  }
+
   return defaultService;
 }
 
@@ -99,7 +116,8 @@ export function createHttpServer(
     getTokenFromKeychain("mctl-alice-client-secret");
   const redirectUri = `${baseUrl}/auth/callback`;
 
-  let stationService = new StationService();
+  let quasarClient = new QuasarClient();
+  let stationService = new StationService(undefined, quasarClient);
 
   // Keep track of active SSE transports
   const sseTransports = new Map<string, SSEServerTransport>();
@@ -110,7 +128,7 @@ export function createHttpServer(
     // CORS headers
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Yandex-Cookie");
 
     if (req.method === "OPTIONS") {
       res.writeHead(204);
@@ -135,7 +153,7 @@ export function createHttpServer(
     // MCP SSE endpoint for ChatGPT Connectors / remote MCP clients
     if ((url.pathname === "/sse" || url.pathname === "/mcp/sse") && req.method === "GET") {
       try {
-        const svc = getServiceForRequest(req, stationService);
+        const svc = getServiceForRequest(req, stationService, quasarClient);
         const transport = new SSEServerTransport("/messages", res);
         const sessionId = transport.sessionId;
         sseTransports.set(sessionId, transport);
@@ -179,7 +197,7 @@ export function createHttpServer(
     if (url.pathname === "/api/devices" && req.method === "GET") {
       try {
         const onlySpeakers = url.searchParams.get("only_speakers") === "true";
-        const svc = getServiceForRequest(req, stationService);
+        const svc = getServiceForRequest(req, stationService, quasarClient);
         const result = await svc.listDevices(onlySpeakers);
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ status: "ok", ...result }));
@@ -201,7 +219,7 @@ export function createHttpServer(
           res.end(JSON.stringify({ status: "error", message: "Parameter 'phrase' is required" }));
           return;
         }
-        const svc = getServiceForRequest(req, stationService);
+        const svc = getServiceForRequest(req, stationService, quasarClient);
         const result = await svc.sayPhrase(phrase, body.device);
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ...result }));
@@ -223,7 +241,7 @@ export function createHttpServer(
           res.end(JSON.stringify({ status: "error", message: "Parameter 'command' is required" }));
           return;
         }
-        const svc = getServiceForRequest(req, stationService);
+        const svc = getServiceForRequest(req, stationService, quasarClient);
         const result = await svc.sendCommand(command, body.device);
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ...result }));
@@ -250,7 +268,7 @@ export function createHttpServer(
           );
           return;
         }
-        const svc = getServiceForRequest(req, stationService);
+        const svc = getServiceForRequest(req, stationService, quasarClient);
         const result = await svc.setVolume(level, body.device);
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ...result }));
@@ -277,7 +295,7 @@ export function createHttpServer(
           );
           return;
         }
-        const svc = getServiceForRequest(req, stationService);
+        const svc = getServiceForRequest(req, stationService, quasarClient);
         const result = await svc.mediaControl(action, body.device);
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ...result }));
@@ -299,7 +317,7 @@ export function createHttpServer(
           res.end(JSON.stringify({ status: "error", message: "Parameter 'scenario' is required" }));
           return;
         }
-        const svc = getServiceForRequest(req, stationService);
+        const svc = getServiceForRequest(req, stationService, quasarClient);
         const result = await svc.triggerScenario(scenario);
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ...result }));
@@ -486,7 +504,7 @@ export function createHttpServer(
 
           // Verify with Yandex API
           const client = new YandexIoTClient(token, { useKeychain: false, persistEnv: false });
-          stationService = new StationService(client);
+          stationService = new StationService(client, quasarClient);
           const devices = await stationService.listDevices(true);
           const speakerNames = devices.speakers.map((s) => `${s.name} (${s.room})`);
 
@@ -500,6 +518,128 @@ export function createHttpServer(
 
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ status: "ok", speakers: speakerNames }));
+        } catch (err: any) {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ status: "error", message: err.message }));
+        }
+      });
+      return;
+    }
+
+    // Quasar Cookie Setup Page
+    if (url.pathname === "/auth/cookie" && req.method === "GET") {
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(`<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>mctl-alice — Настройка Quasar Cookie</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 680px; margin: 40px auto; padding: 20px; line-height: 1.6; color: #1e293b; }
+    .card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 24px; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.05); }
+    h2 { margin-top: 0; color: #0f172a; }
+    .desc { margin-bottom: 20px; color: #475569; }
+    ol { padding-left: 20px; color: #334155; margin-bottom: 24px; }
+    li { margin-bottom: 8px; }
+    code { background: #e2e8f0; padding: 2px 6px; border-radius: 4px; font-size: 0.9em; }
+    textarea { width: 100%; height: 90px; padding: 10px; border: 1px solid #cbd5e1; border-radius: 8px; font-family: monospace; font-size: 13px; box-sizing: border-box; resize: vertical; }
+    button { margin-top: 12px; background: #2563eb; color: #fff; border: none; padding: 10px 20px; border-radius: 8px; font-size: 15px; font-weight: 500; cursor: pointer; transition: background 0.2s; }
+    button:hover { background: #1d4ed8; }
+    .status { margin-top: 16px; font-weight: 500; padding: 12px; border-radius: 8px; display: none; }
+    .status.success { display: block; background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; }
+    .status.error { display: block; background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>mctl-alice — Настройка Quasar (Динамический голос и команды)</h2>
+    <p class="desc">
+      Официальный IoT API Яндекса не позволяет произвольно говорить текст (TTS) или выполнять текстовые команды на колонках Алиса без заранее созданных вручную сценариев.<br>
+      Для прямого воспроизведения произвольной речи («голос/текст — в ответ голос») используется Quasar API через веб-сессию Яндекса.
+    </p>
+    <h3>Инструкция:</h3>
+    <ol>
+      <li>Откройте <a href="https://yandex.ru/quasar" target="_blank">yandex.ru/quasar</a> или <a href="https://yandex.ru" target="_blank">yandex.ru</a> в браузере под вашим аккаунтом.</li>
+      <li>Откройте DevTools (F12 или Cmd+Option+I на Mac).</li>
+      <li>Вкладка <b>Application</b> (Приложение) или <b>Storage</b> &rarr; <b>Cookies</b> &rarr; <code>https://yandex.ru</code>.</li>
+      <li>Найдите куки <code>Session_id</code> и скопируйте его значение (или скопируйте всю строку заголовка Cookie).</li>
+      <li>Вставьте ниже и нажмите <b>Сохранить</b>.</li>
+    </ol>
+    <form id="cookieForm">
+      <textarea id="cookieInput" placeholder="Session_id=3:17... или значение Session_id" required></textarea>
+      <button type="submit" id="saveBtn">Сохранить и проверить</button>
+    </form>
+    <div id="status" class="status"></div>
+  </div>
+  <script>
+    const form = document.getElementById('cookieForm');
+    const input = document.getElementById('cookieInput');
+    const statusEl = document.getElementById('status');
+    const btn = document.getElementById('saveBtn');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const cookie = input.value.trim();
+      if (!cookie) return;
+
+      btn.disabled = true;
+      statusEl.className = 'status';
+      statusEl.style.display = 'block';
+      statusEl.innerText = 'Проверка сессии в Yandex Quasar...';
+
+      try {
+        const res = await fetch('/auth/save-cookie', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ cookie })
+        });
+        const data = await res.json();
+        if (res.ok && data.status === 'ok') {
+          statusEl.className = 'status success';
+          statusEl.innerText = '✅ Куки успешно проверены и сохранены! Теперь доступны динамический TTS (произвольный текст) и текстовые голосовые команды.';
+        } else {
+          statusEl.className = 'status error';
+          statusEl.innerText = '❌ Ошибка проверки куки: ' + (data.message || 'не удалось получить CSRF токен');
+        }
+      } catch (err) {
+        statusEl.className = 'status error';
+        statusEl.innerText = '❌ Ошибка сети: ' + err.message;
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>`);
+      return;
+    }
+
+    // Save Quasar Cookie Endpoint
+    if (url.pathname === "/auth/save-cookie" && req.method === "POST") {
+      let body = "";
+      req.on("data", (chunk) => (body += chunk));
+      req.on("end", async () => {
+        try {
+          const data = JSON.parse(body);
+          const cookie = data.cookie?.trim();
+          if (!cookie) {
+            res.writeHead(400, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ status: "error", message: "Cookie missing" }));
+            return;
+          }
+
+          // Test verification with Quasar
+          const testQuasar = new QuasarClient({ cookie, useKeychain: false, persistEnv: false });
+          await testQuasar.getCsrfToken();
+
+          saveCookieToEnvFile(cookie);
+          saveCookieToKeychain(cookie);
+
+          quasarClient = new QuasarClient();
+          stationService = new StationService(undefined, quasarClient);
+
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ status: "ok", message: "Cookie saved and verified successfully" }));
         } catch (err: any) {
           res.writeHead(500, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ status: "error", message: err.message }));
@@ -547,7 +687,7 @@ export function createHttpServer(
 
           if (rpcReq.method === "tools/call") {
             const { name, arguments: args } = rpcReq.params || {};
-            const svc = getServiceForRequest(req, stationService);
+            const svc = getServiceForRequest(req, stationService, quasarClient);
             const result = await handleToolCall(name, args, svc);
             res.writeHead(200, { "Content-Type": "application/json" });
             res.end(
@@ -595,6 +735,7 @@ export function createHttpServer(
           mcp: "/mcp",
           healthz: "/healthz",
           auth: "/auth/login",
+          auth_cookie: "/auth/cookie",
           api: {
             devices: "GET /api/devices",
             say: "POST /api/say",

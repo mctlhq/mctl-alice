@@ -17,8 +17,44 @@ import {
   saveTokenToKeychain,
   getTokenFromKeychain,
 } from "../auth/oauth-helper.js";
+import { getOpenApiSpec } from "./openapi.js";
 
 const DEFAULT_CLIENT_ID = "c0ebe342af7d48fbbbfcf2d2eedb8f9e";
+
+function parseJsonBody(req: http.IncomingMessage): Promise<any> {
+  return new Promise((resolve, reject) => {
+    let body = "";
+    req.on("data", (chunk) => (body += chunk));
+    req.on("end", () => {
+      if (!body.trim()) return resolve({});
+      try {
+        resolve(JSON.parse(body));
+      } catch {
+        reject(new Error("Invalid JSON body"));
+      }
+    });
+    req.on("error", reject);
+  });
+}
+
+function getServiceForRequest(
+  req: http.IncomingMessage,
+  defaultService: StationService
+): StationService {
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+    if (token) {
+      try {
+        const client = new YandexIoTClient(token, { useKeychain: false, persistEnv: false });
+        return new StationService(client);
+      } catch {
+        // Fallback to default service
+      }
+    }
+  }
+  return defaultService;
+}
 
 export function createHttpServer(
   port = 8080,
@@ -62,6 +98,149 @@ export function createHttpServer(
       return;
     }
 
+    // OpenAPI 3.1 schema for ChatGPT Actions and external integrators
+    if (url.pathname === "/openapi.json" || url.pathname === "/openapi.yaml") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(getOpenApiSpec(baseUrl), null, 2));
+      return;
+    }
+
+    // REST API: List Devices
+    if (url.pathname === "/api/devices" && req.method === "GET") {
+      try {
+        const onlySpeakers = url.searchParams.get("only_speakers") === "true";
+        const svc = getServiceForRequest(req, stationService);
+        const result = await svc.listDevices(onlySpeakers);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ status: "ok", ...result }));
+      } catch (err: any) {
+        const status = err.statusCode || 500;
+        res.writeHead(status, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ status: "error", message: err.message }));
+      }
+      return;
+    }
+
+    // REST API: Speak Phrase (TTS)
+    if (url.pathname === "/api/say" && req.method === "POST") {
+      try {
+        const body = await parseJsonBody(req);
+        const phrase = String(body?.phrase || "").trim();
+        if (!phrase) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ status: "error", message: "Parameter 'phrase' is required" }));
+          return;
+        }
+        const svc = getServiceForRequest(req, stationService);
+        const result = await svc.sayPhrase(phrase, body.device);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ...result }));
+      } catch (err: any) {
+        const status = err.statusCode || 500;
+        res.writeHead(status, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ status: "error", message: err.message }));
+      }
+      return;
+    }
+
+    // REST API: Send Voice Command
+    if (url.pathname === "/api/command" && req.method === "POST") {
+      try {
+        const body = await parseJsonBody(req);
+        const command = String(body?.command || "").trim();
+        if (!command) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ status: "error", message: "Parameter 'command' is required" }));
+          return;
+        }
+        const svc = getServiceForRequest(req, stationService);
+        const result = await svc.sendCommand(command, body.device);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ...result }));
+      } catch (err: any) {
+        const status = err.statusCode || 500;
+        res.writeHead(status, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ status: "error", message: err.message }));
+      }
+      return;
+    }
+
+    // REST API: Set Volume
+    if (url.pathname === "/api/volume" && req.method === "POST") {
+      try {
+        const body = await parseJsonBody(req);
+        const level = Number(body?.level);
+        if (isNaN(level) || level < 1 || level > 10) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(
+            JSON.stringify({
+              status: "error",
+              message: "Parameter 'level' must be an integer between 1 and 10",
+            })
+          );
+          return;
+        }
+        const svc = getServiceForRequest(req, stationService);
+        const result = await svc.setVolume(level, body.device);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ...result }));
+      } catch (err: any) {
+        const status = err.statusCode || 500;
+        res.writeHead(status, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ status: "error", message: err.message }));
+      }
+      return;
+    }
+
+    // REST API: Media Control
+    if (url.pathname === "/api/media" && req.method === "POST") {
+      try {
+        const body = await parseJsonBody(req);
+        const action = body?.action as any;
+        if (!action || !["play", "pause", "stop", "next", "prev"].includes(action)) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(
+            JSON.stringify({
+              status: "error",
+              message: "Parameter 'action' must be one of: play, pause, stop, next, prev",
+            })
+          );
+          return;
+        }
+        const svc = getServiceForRequest(req, stationService);
+        const result = await svc.mediaControl(action, body.device);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ...result }));
+      } catch (err: any) {
+        const status = err.statusCode || 500;
+        res.writeHead(status, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ status: "error", message: err.message }));
+      }
+      return;
+    }
+
+    // REST API: Trigger Scenario
+    if (url.pathname === "/api/scenarios/trigger" && req.method === "POST") {
+      try {
+        const body = await parseJsonBody(req);
+        const scenario = String(body?.scenario || "").trim();
+        if (!scenario) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ status: "error", message: "Parameter 'scenario' is required" }));
+          return;
+        }
+        const svc = getServiceForRequest(req, stationService);
+        const result = await svc.triggerScenario(scenario);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ...result }));
+      } catch (err: any) {
+        const status = err.statusCode || 500;
+        res.writeHead(status, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ status: "error", message: err.message }));
+      }
+      return;
+    }
+
     // Auth login redirect
     if (url.pathname === "/auth/login") {
       const responseType = clientSecret ? "code" : "token";
@@ -86,6 +265,7 @@ export function createHttpServer(
           // Verify with Yandex API
           const client = new YandexIoTClient(tokens.access_token, {
             useKeychain: false,
+            persistEnv: false,
             refreshToken: tokens.refresh_token,
             clientId,
             clientSecret,
@@ -235,7 +415,7 @@ export function createHttpServer(
           }
 
           // Verify with Yandex API
-          const client = new YandexIoTClient(token, { useKeychain: false });
+          const client = new YandexIoTClient(token, { useKeychain: false, persistEnv: false });
           stationService = new StationService(client);
           const devices = await stationService.listDevices(true);
           const speakerNames = devices.speakers.map((s) => `${s.name} (${s.room})`);
@@ -297,7 +477,8 @@ export function createHttpServer(
 
           if (rpcReq.method === "tools/call") {
             const { name, arguments: args } = rpcReq.params || {};
-            const result = await handleToolCall(name, args, stationService);
+            const svc = getServiceForRequest(req, stationService);
+            const result = await handleToolCall(name, args, svc);
             res.writeHead(200, { "Content-Type": "application/json" });
             res.end(
               JSON.stringify({
@@ -335,12 +516,21 @@ export function createHttpServer(
     res.end(
       JSON.stringify({
         service: "mctl-alice",
-        description: "Yandex Alice Smart Speaker MCP Server",
+        description: "Yandex Alice Smart Speaker MCP & REST Server for ChatGPT",
         version: "1.0.0",
         endpoints: {
+          openapi: "/openapi.json",
           mcp: "/mcp",
           healthz: "/healthz",
           auth: "/auth/login",
+          api: {
+            devices: "GET /api/devices",
+            say: "POST /api/say",
+            command: "POST /api/command",
+            volume: "POST /api/volume",
+            media: "POST /api/media",
+            triggerScenario: "POST /api/scenarios/trigger",
+          },
         },
       })
     );

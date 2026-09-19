@@ -1,0 +1,38 @@
+{
+  "name": "mctl-alice",
+  "version": "1.0.0",
+  "description": "Model Context Protocol (MCP) server for controlling Yandex Alice smart speakers via Yandex Cloud IoT API",
+  "type": "module",
+  "bin": {
+    "mctl-alice": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js",
+    "test": "vitest run"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "yandex",
+    "alice",
+    "smart-home",
+    "station",
+    "ai-assistant"
+  ],
+  "author": "mctlhq",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.6.1",
+    "dotenv": "^16.4.7",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2",
+    "vitest": "^3.0.8"
+  }
+}

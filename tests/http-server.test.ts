@@ -83,4 +83,60 @@ describe("HTTP Server & ChatGPT REST API", () => {
     const data = await res.json();
     expect(data.message).toContain("action");
   });
+
+  it("should handle MCP SSE connection and send endpoint event", async () => {
+    const controller = new AbortController();
+    const res = await fetch(`${baseUrl}/sse`, {
+      signal: controller.signal,
+      headers: { Accept: "text/event-stream" },
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/event-stream");
+
+    const reader = res.body?.getReader();
+    expect(reader).toBeDefined();
+
+    const { value } = await reader!.read();
+    const text = new TextDecoder().decode(value);
+    expect(text).toContain("event: endpoint");
+    expect(text).toContain("data: /messages?sessionId=");
+
+    // Extract sessionId
+    const match = text.match(/sessionId=([a-zA-Z0-9_-]+)/);
+    expect(match).toBeDefined();
+    const sessionId = match![1];
+
+    // POST valid message with session
+    const postRes = await fetch(`${baseUrl}/messages?sessionId=${sessionId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2024-11-05",
+          capabilities: {},
+          clientInfo: { name: "chatgpt", version: "1.0.0" },
+        },
+      }),
+    });
+    expect(postRes.status).toBe(202);
+
+    controller.abort();
+  });
+
+  it("should return 404 for unknown session on /messages", async () => {
+    const res = await fetch(`${baseUrl}/messages?sessionId=non-existent-session`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "ping",
+      }),
+    });
+    expect(res.status).toBe(404);
+  });
 });

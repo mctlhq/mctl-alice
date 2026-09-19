@@ -56,6 +56,33 @@ function getServiceForRequest(
   return defaultService;
 }
 
+export function createMcpServer(service: StationService): Server {
+  const server = new Server(
+    {
+      name: "mctl-alice",
+      version: "1.0.0",
+    },
+    {
+      capabilities: {
+        tools: {},
+      },
+    }
+  );
+
+  server.setRequestHandler(ListToolsRequestSchema, async () => {
+    return {
+      tools: ALICE_TOOLS,
+    };
+  });
+
+  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    const { name, arguments: args } = request.params;
+    return handleToolCall(name, args, service);
+  });
+
+  return server;
+}
+
 export function createHttpServer(
   port = 8080,
   options: { clientId?: string; clientSecret?: string; publicBaseUrl?: string } = {}
@@ -102,6 +129,49 @@ export function createHttpServer(
     if (url.pathname === "/openapi.json" || url.pathname === "/openapi.yaml") {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify(getOpenApiSpec(baseUrl), null, 2));
+      return;
+    }
+
+    // MCP SSE endpoint for ChatGPT Connectors / remote MCP clients
+    if ((url.pathname === "/sse" || url.pathname === "/mcp/sse") && req.method === "GET") {
+      try {
+        const svc = getServiceForRequest(req, stationService);
+        const transport = new SSEServerTransport("/messages", res);
+        const sessionId = transport.sessionId;
+        sseTransports.set(sessionId, transport);
+
+        transport.onclose = () => {
+          sseTransports.delete(sessionId);
+        };
+
+        const mcpServer = createMcpServer(svc);
+        await mcpServer.connect(transport);
+      } catch (err: any) {
+        if (!res.headersSent) {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ status: "error", message: err.message }));
+        }
+      }
+      return;
+    }
+
+    // MCP messages endpoint for SSE transport
+    if ((url.pathname === "/messages" || url.pathname === "/mcp/messages") && req.method === "POST") {
+      const sessionId = url.searchParams.get("sessionId");
+      const transport = sessionId ? sseTransports.get(sessionId) : undefined;
+      if (!transport) {
+        res.writeHead(404, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Session not found or expired" }));
+        return;
+      }
+      try {
+        await transport.handlePostMessage(req, res);
+      } catch (err: any) {
+        if (!res.headersSent) {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      }
       return;
     }
 
@@ -520,6 +590,8 @@ export function createHttpServer(
         version: "1.0.0",
         endpoints: {
           openapi: "/openapi.json",
+          sse: "/sse",
+          messages: "/messages",
           mcp: "/mcp",
           healthz: "/healthz",
           auth: "/auth/login",

@@ -1,68 +1,72 @@
 import http from "node:http";
-import fs from "node:fs";
-import path from "node:path";
 import { YandexIoTClient } from "../client/yandex-api.js";
 import { StationService } from "../services/station-service.js";
+import {
+  OAuthTokenResponse,
+  buildOAuthUrl,
+  saveTokenToEnvFile,
+  saveRefreshTokenToEnvFile,
+  saveTokenToKeychain,
+  exchangeCodeForToken,
+  refreshAccessToken,
+} from "./token-storage.js";
+
+export * from "./token-storage.js";
 
 export interface AuthServerOptions {
   port?: number;
   clientId: string;
+  clientSecret?: string;
+  responseType?: "token" | "code";
   envFilePath?: string;
-  onSuccess?: (info: { token: string; speakers: string[] }) => void;
+  onSuccess?: (info: { token: string; refreshToken?: string; speakers: string[] }) => void;
 }
 
-export function buildOAuthUrl(clientId: string, redirectUri: string): string {
-  const params = new URLSearchParams({
-    response_type: "token",
-    client_id: clientId,
-    redirect_uri: redirectUri,
-  });
-  return `https://oauth.yandex.ru/authorize?${params.toString()}`;
-}
-
-export function saveEnvVariable(key: string, value: string, envFilePath?: string) {
-  const targetPath = envFilePath || path.resolve(process.cwd(), ".env");
-  let content = "";
-  if (fs.existsSync(targetPath)) {
-    content = fs.readFileSync(targetPath, "utf-8");
-  }
-
-  const line = `${key}=${value}`;
-  const regex = new RegExp(`^${key}=.*`, "m");
-  if (regex.test(content)) {
-    content = content.replace(regex, line);
-  } else {
-    content = content ? `${content.trim()}\n${line}\n` : `${line}\n`;
-  }
-
-  fs.writeFileSync(targetPath, content, "utf-8");
-  process.env[key] = value;
-}
-
-export function saveTokenToEnvFile(token: string, envFilePath?: string) {
-  saveEnvVariable("YANDEX_OAUTH_TOKEN", token, envFilePath);
-}
-
-export function saveClientIdToEnvFile(clientId: string, envFilePath?: string) {
-  saveEnvVariable("YANDEX_CLIENT_ID", clientId, envFilePath);
-}
 
 export async function validateTokenAndGetSpeakers(token: string): Promise<string[]> {
-  const client = new YandexIoTClient(token);
+  const client = new YandexIoTClient(token, { useKeychain: false });
   const service = new StationService(client);
   const devices = await service.listDevices(true);
   return devices.speakers.map((s) => `${s.name} (${s.room})`);
 }
 
+function renderHtmlPage(title: string, content: string): string {
+  return `<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>${title}</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; line-height: 1.6; }
+    .card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 24px; }
+    h2 { margin-top: 0; color: #0f172a; }
+    .status { font-size: 18px; margin: 16px 0; }
+    .success { color: #16a34a; }
+    .error { color: #dc2626; }
+    .speakers { background: #ffffff; border: 1px solid #cbd5e1; border-radius: 8px; padding: 12px; margin-top: 12px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>Подключение Яндекс Станции (mctl-alice)</h2>
+    ${content}
+  </div>
+</body>
+</html>`;
+}
+
 export function startAuthServer(options: AuthServerOptions): Promise<{
   token: string;
+  refreshToken?: string;
   speakers: string[];
   server: http.Server;
 }> {
   const port = options.port || 8085;
   const clientId = options.clientId;
+  const clientSecret = options.clientSecret;
+  const responseType = options.responseType || (clientSecret ? "code" : "token");
   const redirectUri = `http://localhost:${port}/callback`;
-  const oauthUrl = buildOAuthUrl(clientId, redirectUri);
+  const oauthUrl = buildOAuthUrl(clientId, redirectUri, responseType);
 
   return new Promise((resolve, reject) => {
     const server = http.createServer(async (req, res) => {
@@ -76,7 +80,71 @@ export function startAuthServer(options: AuthServerOptions): Promise<{
       }
 
       if (url.pathname === "/callback") {
-        // Return HTML that extracts hash fragment #access_token=... and POSTs it to /save-token
+        const code = url.searchParams.get("code");
+
+        // If Authorization Code flow was used, exchange code directly on backend
+        if (code && clientSecret) {
+          try {
+            const tokens = await exchangeCodeForToken({
+              code,
+              clientId,
+              clientSecret,
+              redirectUri,
+            });
+
+            const speakerNames = await validateTokenAndGetSpeakers(tokens.access_token);
+            saveTokenToEnvFile(tokens.access_token, options.envFilePath);
+            saveTokenToKeychain(tokens.access_token, "mctl-alice");
+
+            if (tokens.refresh_token) {
+              saveRefreshTokenToEnvFile(tokens.refresh_token, options.envFilePath);
+              saveTokenToKeychain(tokens.refresh_token, "mctl-alice-refresh-token");
+            }
+
+            const speakerHtml =
+              speakerNames.length > 0
+                ? `<div class="speakers"><strong>Найденные колонки:</strong><br>${speakerNames.map((s) => "• " + s).join("<br>")}</div>`
+                : `<div class="speakers"><em>Колонки не найдены в умном доме, но токен успешно получен и сохранен.</em></div>`;
+
+            res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+            res.end(
+              renderHtmlPage(
+                "mctl-alice — Авторизация успешна",
+                `<div class="status success">✅ Авторизация успешна! Получен постоянный Refresh-токен.</div>${speakerHtml}`
+              )
+            );
+
+            if (options.onSuccess) {
+              options.onSuccess({
+                token: tokens.access_token,
+                refreshToken: tokens.refresh_token,
+                speakers: speakerNames,
+              });
+            }
+
+            setTimeout(() => {
+              server.close();
+              resolve({
+                token: tokens.access_token,
+                refreshToken: tokens.refresh_token,
+                speakers: speakerNames,
+                server,
+              });
+            }, 1000);
+            return;
+          } catch (err: any) {
+            res.writeHead(500, { "Content-Type": "text/html; charset=utf-8" });
+            res.end(
+              renderHtmlPage(
+                "mctl-alice — Ошибка",
+                `<div class="status error">❌ Ошибка обмена кода авторизации: ${err.message}</div>`
+              )
+            );
+            return;
+          }
+        }
+
+        // Implicit flow fallback (hash fragment #access_token=... parsed by browser JS)
         res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
         res.end(`<!DOCTYPE html>
 <html lang="ru">
@@ -150,6 +218,7 @@ export function startAuthServer(options: AuthServerOptions): Promise<{
           try {
             const data = JSON.parse(body);
             const token = data.token?.trim();
+            const refreshToken = data.refreshToken?.trim();
             if (!token) {
               res.writeHead(400, { "Content-Type": "application/json" });
               res.end(JSON.stringify({ status: "error", message: "Token is missing" }));
@@ -159,8 +228,14 @@ export function startAuthServer(options: AuthServerOptions): Promise<{
             // Verify token with Yandex API
             const speakerNames = await validateTokenAndGetSpeakers(token);
 
-            // Save token
+            // Save tokens
             saveTokenToEnvFile(token, options.envFilePath);
+            saveTokenToKeychain(token, "mctl-alice");
+
+            if (refreshToken) {
+              saveRefreshTokenToEnvFile(refreshToken, options.envFilePath);
+              saveTokenToKeychain(refreshToken, "mctl-alice-refresh-token");
+            }
 
             res.writeHead(200, { "Content-Type": "application/json" });
             res.end(
@@ -171,13 +246,12 @@ export function startAuthServer(options: AuthServerOptions): Promise<{
             );
 
             if (options.onSuccess) {
-              options.onSuccess({ token, speakers: speakerNames });
+              options.onSuccess({ token, refreshToken, speakers: speakerNames });
             }
 
-            // Give the browser time to render success page, then resolve
             setTimeout(() => {
               server.close();
-              resolve({ token, speakers: speakerNames, server });
+              resolve({ token, refreshToken, speakers: speakerNames, server });
             }, 1000);
           } catch (err: any) {
             res.writeHead(500, { "Content-Type": "application/json" });

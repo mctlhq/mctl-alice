@@ -8,7 +8,10 @@ import {
   startAuthServer,
   buildOAuthUrl,
   saveClientIdToEnvFile,
+  saveClientSecretToEnvFile,
   saveTokenToEnvFile,
+  saveTokenToKeychain,
+  getTokenFromKeychain,
   validateTokenAndGetSpeakers,
 } from "./oauth-helper.js";
 
@@ -44,7 +47,12 @@ async function main() {
   console.log("\n🔑 [mctl-alice] Авторизация в Яндекс ID");
   console.log("==================================================");
 
-  let clientId = process.env.YANDEX_CLIENT_ID;
+  let clientId =
+    process.env.YANDEX_CLIENT_ID ||
+    getTokenFromKeychain("mctl-alice-client-id");
+  let clientSecret =
+    process.env.YANDEX_CLIENT_SECRET ||
+    getTokenFromKeychain("mctl-alice-client-secret");
 
   if (!clientId) {
     console.log("Для авторизации через веб-интерфейс Яндекса требуется Client ID приложения.");
@@ -73,7 +81,8 @@ async function main() {
       try {
         const speakers = await validateTokenAndGetSpeakers(input);
         saveTokenToEnvFile(input);
-        console.log("🎉 Токен валиден и успешно сохранен в .env!");
+        saveTokenToKeychain(input, "mctl-alice");
+        console.log("🎉 Токен валиден и успешно сохранен в Keychain и .env!");
         console.log(`Найденные колонки (${speakers.length}):`);
         for (const sp of speakers) {
           console.log(`  - ${sp}`);
@@ -87,16 +96,22 @@ async function main() {
 
     clientId = input;
     saveClientIdToEnvFile(clientId);
-    console.log(`✅ Client ID сохранен в .env: ${clientId}\n`);
+    saveTokenToKeychain(clientId, "mctl-alice-client-id");
+    console.log(`✅ Client ID сохранен: ${clientId}\n`);
   }
 
   const redirectUri = `http://localhost:${PORT}/callback`;
-  const authUrl = buildOAuthUrl(clientId, redirectUri);
+  const responseType = clientSecret ? "code" : "token";
+  const authUrl = buildOAuthUrl(clientId, redirectUri, responseType);
   const directVerifyUrl = `https://oauth.yandex.ru/authorize?response_type=token&client_id=${clientId}`;
 
   console.log("1. Открываем окно браузера для авторизации...");
   console.log(`   Ссылка: ${authUrl}`);
-  console.log("\n(Альтернатива: если редирект на localhost не сработает, откройте:\n " + directVerifyUrl + "\n и скопируйте токен из адресной строки)");
+  if (responseType === "code") {
+    console.log("   (Используется Authorization Code Flow для получения постоянного Refresh Token)");
+  } else {
+    console.log("\n(Альтернатива: если редирект на localhost не сработает, откройте:\n " + directVerifyUrl + "\n и скопируйте токен из адресной строки)");
+  }
   console.log("\n2. Нажмите 'Разрешить' в браузере. Ожидание ответа...\n");
 
   openBrowser(authUrl);
@@ -105,9 +120,13 @@ async function main() {
     await startAuthServer({
       port: PORT,
       clientId,
-      onSuccess: ({ speakers }) => {
+      clientSecret: clientSecret || undefined,
+      onSuccess: ({ speakers, refreshToken }) => {
         console.log("==================================================");
         console.log("🎉 Авторизация успешно завершена!");
+        if (refreshToken) {
+          console.log("✨ Получен и сохранен Refresh-токен для автоматического продления!");
+        }
         console.log(`Найденные колонки (${speakers.length}):`);
         if (speakers.length === 0) {
           console.log("  (колонки не обнаружены, но токен действителен)");
@@ -116,7 +135,7 @@ async function main() {
             console.log(`  - ${sp}`);
           }
         }
-        console.log("\nТокен записан в .env. Сервер mctl-alice готов к работе!");
+        console.log("\nТокены записаны в Keychain и .env. Сервер mctl-alice готов к работе!");
         console.log("==================================================\n");
         process.exit(0);
       },

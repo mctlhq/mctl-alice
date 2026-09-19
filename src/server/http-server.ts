@@ -9,16 +9,31 @@ import { ALICE_TOOLS } from "../tools/definitions.js";
 import { handleToolCall } from "../tools/handlers.js";
 import { StationService } from "../services/station-service.js";
 import { YandexIoTClient } from "../client/yandex-api.js";
-import { buildOAuthUrl, saveTokenToEnvFile } from "../auth/oauth-helper.js";
+import {
+  buildOAuthUrl,
+  exchangeCodeForToken,
+  saveTokenToEnvFile,
+  saveRefreshTokenToEnvFile,
+  saveTokenToKeychain,
+  getTokenFromKeychain,
+} from "../auth/oauth-helper.js";
 
 const DEFAULT_CLIENT_ID = "c0ebe342af7d48fbbbfcf2d2eedb8f9e";
 
 export function createHttpServer(
   port = 8080,
-  options: { clientId?: string; publicBaseUrl?: string } = {}
+  options: { clientId?: string; clientSecret?: string; publicBaseUrl?: string } = {}
 ): http.Server {
   const baseUrl = options.publicBaseUrl || process.env.PUBLIC_BASE_URL || `http://localhost:${port}`;
-  const clientId = options.clientId || process.env.YANDEX_CLIENT_ID || DEFAULT_CLIENT_ID;
+  const clientId =
+    options.clientId ||
+    process.env.YANDEX_CLIENT_ID ||
+    getTokenFromKeychain("mctl-alice-client-id") ||
+    DEFAULT_CLIENT_ID;
+  const clientSecret =
+    options.clientSecret ||
+    process.env.YANDEX_CLIENT_SECRET ||
+    getTokenFromKeychain("mctl-alice-client-secret");
   const redirectUri = `${baseUrl}/auth/callback`;
 
   let stationService = new StationService();
@@ -49,14 +64,97 @@ export function createHttpServer(
 
     // Auth login redirect
     if (url.pathname === "/auth/login") {
-      const oauthUrl = buildOAuthUrl(clientId, redirectUri);
+      const responseType = clientSecret ? "code" : "token";
+      const oauthUrl = buildOAuthUrl(clientId, redirectUri, responseType);
       res.writeHead(302, { Location: oauthUrl });
       res.end();
       return;
     }
 
-    // Auth callback HTML
+    // Auth callback HTML / Code exchange
     if (url.pathname === "/auth/callback") {
+      const code = url.searchParams.get("code");
+      if (code && clientSecret) {
+        try {
+          const tokens = await exchangeCodeForToken({
+            code,
+            clientId,
+            clientSecret,
+            redirectUri,
+          });
+
+          // Verify with Yandex API
+          const client = new YandexIoTClient(tokens.access_token, {
+            useKeychain: false,
+            refreshToken: tokens.refresh_token,
+            clientId,
+            clientSecret,
+          });
+          stationService = new StationService(client);
+          const devices = await stationService.listDevices(true);
+          const speakerNames = devices.speakers.map((s) => `${s.name} (${s.room})`);
+
+          saveTokenToEnvFile(tokens.access_token);
+          saveTokenToKeychain(tokens.access_token, "mctl-alice");
+
+          if (tokens.refresh_token) {
+            saveRefreshTokenToEnvFile(tokens.refresh_token);
+            saveTokenToKeychain(tokens.refresh_token, "mctl-alice-refresh-token");
+          }
+
+          const speakerHtml =
+            speakerNames.length > 0
+              ? `<div class="speakers"><strong>Найденные колонки:</strong><br>${speakerNames.map((s) => "• " + s).join("<br>")}</div>`
+              : `<div class="speakers"><em>Колонки не найдены в умном доме, но токен успешно получен и сохранен.</em></div>`;
+
+          res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+          res.end(`<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>mctl-alice — Авторизация успешна</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; line-height: 1.6; }
+    .card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 24px; }
+    h2 { margin-top: 0; color: #0f172a; }
+    .status { font-size: 18px; margin: 16px 0; color: #16a34a; }
+    .speakers { background: #ffffff; border: 1px solid #cbd5e1; border-radius: 8px; padding: 12px; margin-top: 12px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>mctl-alice — Успешный вход</h2>
+    <div class="status">✅ Авторизация успешна! Получен постоянный Refresh-токен для автообновления.</div>
+    ${speakerHtml}
+  </div>
+</body>
+</html>`);
+          return;
+        } catch (err: any) {
+          res.writeHead(500, { "Content-Type": "text/html; charset=utf-8" });
+          res.end(`<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>mctl-alice — Ошибка</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; line-height: 1.6; }
+    .card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 24px; }
+    h2 { margin-top: 0; color: #0f172a; }
+    .error { font-size: 18px; margin: 16px 0; color: #dc2626; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>mctl-alice — Ошибка авторизации</h2>
+    <div class="error">❌ Ошибка обмена кода: ${err.message}</div>
+  </div>
+</body>
+</html>`);
+          return;
+        }
+      }
+
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       res.end(`<!DOCTYPE html>
 <html lang="ru">
@@ -129,6 +227,7 @@ export function createHttpServer(
         try {
           const data = JSON.parse(body);
           const token = data.token?.trim();
+          const refreshToken = data.refreshToken?.trim();
           if (!token) {
             res.writeHead(400, { "Content-Type": "application/json" });
             res.end(JSON.stringify({ status: "error", message: "Token missing" }));
@@ -136,12 +235,18 @@ export function createHttpServer(
           }
 
           // Verify with Yandex API
-          const client = new YandexIoTClient(token);
+          const client = new YandexIoTClient(token, { useKeychain: false });
           stationService = new StationService(client);
           const devices = await stationService.listDevices(true);
           const speakerNames = devices.speakers.map((s) => `${s.name} (${s.room})`);
 
           saveTokenToEnvFile(token);
+          saveTokenToKeychain(token, "mctl-alice");
+
+          if (refreshToken) {
+            saveRefreshTokenToEnvFile(refreshToken);
+            saveTokenToKeychain(refreshToken, "mctl-alice-refresh-token");
+          }
 
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ status: "ok", speakers: speakerNames }));

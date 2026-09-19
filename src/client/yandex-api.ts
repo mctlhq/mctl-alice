@@ -1,4 +1,10 @@
-import { execSync } from "node:child_process";
+import {
+  getMacKeychain,
+  saveTokenToKeychain,
+  refreshAccessToken,
+  saveTokenToEnvFile,
+  saveRefreshTokenToEnvFile,
+} from "../auth/token-storage.js";
 import {
   YandexUserInfo,
   DeviceActionRequest,
@@ -6,17 +12,12 @@ import {
   ScenarioActionResponse,
 } from "./types.js";
 
-function getMacKeychainToken(): string | null {
-  if (process.platform !== "darwin") return null;
-  try {
-    const out = execSync("security find-generic-password -s mctl-alice -w", {
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "ignore"],
-    });
-    return out.trim() || null;
-  } catch {
-    return null;
-  }
+export interface YandexIoTClientOptions {
+  useKeychain?: boolean;
+  refreshToken?: string;
+  clientId?: string;
+  clientSecret?: string;
+  autoRefresh?: boolean;
 }
 
 export class YandexApiError extends Error {
@@ -33,11 +34,21 @@ export class YandexApiError extends Error {
 export class YandexIoTClient {
   private baseUrl = "https://api.iot.yandex.net/v1.0";
   private token: string;
+  private refreshToken: string | null = null;
+  private clientId: string | null = null;
+  private clientSecret: string | null = null;
+  private autoRefresh: boolean;
+  private useKeychain: boolean;
 
-  constructor(token?: string, options: { useKeychain?: boolean } = {}) {
-    const useKeychain = options.useKeychain ?? true;
+  constructor(token?: string, options: YandexIoTClientOptions = {}) {
+    this.useKeychain = options.useKeychain ?? true;
+    this.autoRefresh = options.autoRefresh ?? true;
+
     const resolvedToken =
-      token || process.env.YANDEX_OAUTH_TOKEN || (useKeychain ? getMacKeychainToken() : null);
+      token ||
+      process.env.YANDEX_OAUTH_TOKEN ||
+      (this.useKeychain ? getMacKeychain("mctl-alice") : null);
+
     if (!resolvedToken) {
       throw new YandexApiError(
         "Yandex OAuth token is missing. Please provide it in YANDEX_OAUTH_TOKEN env variable, macOS Keychain, or pass it directly."
@@ -45,6 +56,21 @@ export class YandexIoTClient {
     }
     // Clean token if user prefixed with 'Bearer ' or quotes
     this.token = resolvedToken.trim().replace(/^Bearer\s+/i, "").replace(/^["']|["']$/g, "");
+
+    this.refreshToken =
+      options.refreshToken ||
+      process.env.YANDEX_REFRESH_TOKEN ||
+      (this.useKeychain ? getMacKeychain("mctl-alice-refresh-token") : null);
+
+    this.clientId =
+      options.clientId ||
+      process.env.YANDEX_CLIENT_ID ||
+      (this.useKeychain ? getMacKeychain("mctl-alice-client-id") : null);
+
+    this.clientSecret =
+      options.clientSecret ||
+      process.env.YANDEX_CLIENT_SECRET ||
+      (this.useKeychain ? getMacKeychain("mctl-alice-client-secret") : null);
   }
 
   private async request<T>(
@@ -52,7 +78,8 @@ export class YandexIoTClient {
     options: {
       method?: string;
       body?: any;
-    } = {}
+    } = {},
+    isRetry = false
   ): Promise<T> {
     const url = `${this.baseUrl}${endpoint}`;
     const headers: Record<string, string> = {
@@ -82,12 +109,59 @@ export class YandexIoTClient {
 
       if (!response.ok) {
         if (response.status === 401) {
+          if (
+            !isRetry &&
+            this.autoRefresh &&
+            this.refreshToken &&
+            this.clientId &&
+            this.clientSecret
+          ) {
+            try {
+              const newTokens = await refreshAccessToken({
+                refreshToken: this.refreshToken,
+                clientId: this.clientId,
+                clientSecret: this.clientSecret,
+              });
+
+              this.token = newTokens.access_token;
+              if (newTokens.refresh_token) {
+                this.refreshToken = newTokens.refresh_token;
+              }
+
+              if (this.useKeychain) {
+                saveTokenToKeychain(this.token, "mctl-alice");
+                if (this.refreshToken) {
+                  saveTokenToKeychain(this.refreshToken, "mctl-alice-refresh-token");
+                }
+              }
+
+              try {
+                saveTokenToEnvFile(this.token);
+                if (this.refreshToken) {
+                  saveRefreshTokenToEnvFile(this.refreshToken);
+                }
+              } catch {
+                // Ignore env file write errors
+              }
+
+              // Retry request with newly acquired access token
+              return await this.request<T>(endpoint, options, true);
+            } catch (refreshErr: any) {
+              throw new YandexApiError(
+                `Unauthorized (401): The Yandex OAuth token has expired and auto-refresh failed: ${refreshErr.message}. Run 'npm run auth' or visit http://localhost:8080/auth/login to re-authenticate.`,
+                401,
+                responseData
+              );
+            }
+          }
+
           throw new YandexApiError(
-            "Unauthorized (401): The Yandex OAuth token is invalid or expired. Please check your YANDEX_OAUTH_TOKEN.",
+            "Unauthorized (401): The Yandex OAuth token is invalid or expired. Run 'npm run auth' or visit http://localhost:8080/auth/login to re-authenticate.",
             response.status,
             responseData
           );
         }
+
         if (response.status === 403) {
           throw new YandexApiError(
             "Forbidden (403): Token lacks 'iot:view' or 'iot:control' permissions.",
@@ -95,6 +169,7 @@ export class YandexIoTClient {
             responseData
           );
         }
+
         const errorMsg =
           responseData?.message ||
           responseData?.error_code ||

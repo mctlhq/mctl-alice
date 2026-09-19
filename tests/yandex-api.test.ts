@@ -7,7 +7,7 @@ describe("YandexIoTClient", () => {
   const originalFetch = global.fetch;
 
   beforeEach(() => {
-    client = new YandexIoTClient(mockToken);
+    client = new YandexIoTClient(mockToken, { useKeychain: false });
   });
 
   afterEach(() => {
@@ -23,7 +23,7 @@ describe("YandexIoTClient", () => {
   });
 
   it("should strip Bearer prefix from token", () => {
-    const c = new YandexIoTClient("Bearer my-secret-token");
+    const c = new YandexIoTClient("Bearer my-secret-token", { useKeychain: false });
     expect((c as any).token).toBe("my-secret-token");
   });
 
@@ -59,7 +59,7 @@ describe("YandexIoTClient", () => {
     );
   });
 
-  it("should handle 401 Unauthorized with descriptive error", async () => {
+  it("should handle 401 Unauthorized with descriptive error when no refresh token", async () => {
     global.fetch = vi.fn().mockResolvedValue({
       ok: false,
       status: 401,
@@ -68,6 +68,80 @@ describe("YandexIoTClient", () => {
 
     await expect(client.getUserInfo()).rejects.toThrow(
       /Unauthorized \(401\)/
+    );
+  });
+
+  it("should automatically refresh token on 401 and retry request when refresh credentials exist", async () => {
+    const clientWithRefresh = new YandexIoTClient("initial-expired-token", {
+      useKeychain: false,
+      refreshToken: "mock-refresh-token",
+      clientId: "mock-client-id",
+      clientSecret: "mock-client-secret",
+    });
+
+    let attempts = 0;
+    global.fetch = vi.fn().mockImplementation(async (url: string) => {
+      if (url.includes("/token")) {
+        return {
+          ok: true,
+          json: async () => ({
+            access_token: "refreshed-new-access-token",
+            refresh_token: "rotated-refresh-token",
+            expires_in: 31536000,
+          }),
+        };
+      }
+
+      if (url.includes("/user/info")) {
+        attempts++;
+        if (attempts === 1) {
+          return {
+            ok: false,
+            status: 401,
+            text: async () => JSON.stringify({ message: "Token expired" }),
+          };
+        }
+        return {
+          ok: true,
+          text: async () => JSON.stringify({ status: "ok", devices: [] }),
+        };
+      }
+
+      throw new Error(`Unexpected url: ${url}`);
+    });
+
+    const result = await clientWithRefresh.getUserInfo();
+    expect(result.status).toBe("ok");
+    expect(attempts).toBe(2);
+    expect((clientWithRefresh as any).token).toBe("refreshed-new-access-token");
+    expect((clientWithRefresh as any).refreshToken).toBe("rotated-refresh-token");
+  });
+
+  it("should throw descriptive error if auto-refresh itself fails", async () => {
+    const clientWithRefresh = new YandexIoTClient("initial-expired-token", {
+      useKeychain: false,
+      refreshToken: "revoked-refresh-token",
+      clientId: "mock-client-id",
+      clientSecret: "mock-client-secret",
+    });
+
+    global.fetch = vi.fn().mockImplementation(async (url: string) => {
+      if (url.includes("/token")) {
+        return {
+          ok: false,
+          status: 400,
+          json: async () => ({ error_description: "Refresh token revoked" }),
+        };
+      }
+      return {
+        ok: false,
+        status: 401,
+        text: async () => JSON.stringify({ message: "Token expired" }),
+      };
+    });
+
+    await expect(clientWithRefresh.getUserInfo()).rejects.toThrow(
+      /auto-refresh failed: Refresh token revoked/
     );
   });
 

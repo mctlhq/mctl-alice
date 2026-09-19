@@ -74,22 +74,15 @@ export class StationService {
    * Determine whether a device is a smart speaker or media device with Alice
    */
   isSpeaker(device: YandexDevice): boolean {
-    const speakerTypes = [
-      "devices.types.smart_speaker",
-      "devices.types.smart_speaker.yandex.station",
-      "devices.types.smart_speaker.yandex.station.mini",
-      "devices.types.smart_speaker.yandex.station.max",
-      "devices.types.smart_speaker.yandex.station_2",
-      "devices.types.smart_speaker.yandex.station_midi",
-      "devices.types.media_device.tv",
-      "devices.types.media_device.tv_box",
-    ];
-
-    if (speakerTypes.some((t) => device.type.startsWith(t))) {
+    if (device.type && device.type.startsWith("devices.types.smart_speaker")) {
       return true;
     }
 
-    // Check if device has quasar capability
+    // Check if device has quasar info or quasar capabilities
+    if ((device as any).quasar_info) {
+      return true;
+    }
+
     return (
       device.capabilities?.some(
         (c) =>
@@ -187,11 +180,19 @@ export class StationService {
     const bySubName = speakers.find((s) => s.name.toLowerCase().includes(searchQuery));
     if (bySubName) return bySubName;
 
-    // 4. Room match
-    const byRoom = speakers.find((s) => {
-      const rName = (s.room && roomMap.get(s.room))?.toLowerCase() || "";
-      return rName === searchQuery || rName.includes(searchQuery);
-    });
+    // 4. Room match (prefer smart speakers over other devices)
+    const byRoom =
+      speakers.find((s) => {
+        const rName = (s.room && roomMap.get(s.room))?.toLowerCase() || "";
+        return (
+          (rName === searchQuery || rName.includes(searchQuery)) &&
+          s.type.startsWith("devices.types.smart_speaker")
+        );
+      }) ||
+      speakers.find((s) => {
+        const rName = (s.room && roomMap.get(s.room))?.toLowerCase() || "";
+        return rName === searchQuery || rName.includes(searchQuery);
+      });
     if (byRoom) return byRoom;
 
     // If query was specified but not found

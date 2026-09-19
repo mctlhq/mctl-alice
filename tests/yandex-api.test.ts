@@ -18,7 +18,7 @@ describe("YandexIoTClient", () => {
   it("should throw error if token is not provided", () => {
     const oldEnv = process.env.YANDEX_OAUTH_TOKEN;
     delete process.env.YANDEX_OAUTH_TOKEN;
-    expect(() => new YandexIoTClient("")).toThrow(YandexApiError);
+    expect(() => new YandexIoTClient("", { useKeychain: false })).toThrow(YandexApiError);
     if (oldEnv) process.env.YANDEX_OAUTH_TOKEN = oldEnv;
   });
 

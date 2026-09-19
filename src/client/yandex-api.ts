@@ -18,6 +18,8 @@ export interface YandexIoTClientOptions {
   clientId?: string;
   clientSecret?: string;
   autoRefresh?: boolean;
+  persistEnv?: boolean;
+  envFilePath?: string;
 }
 
 export class YandexApiError extends Error {
@@ -39,10 +41,14 @@ export class YandexIoTClient {
   private clientSecret: string | null = null;
   private autoRefresh: boolean;
   private useKeychain: boolean;
+  private persistEnv: boolean;
+  private envFilePath?: string;
 
   constructor(token?: string, options: YandexIoTClientOptions = {}) {
     this.useKeychain = options.useKeychain ?? true;
     this.autoRefresh = options.autoRefresh ?? true;
+    this.persistEnv = options.persistEnv ?? true;
+    this.envFilePath = options.envFilePath;
 
     const resolvedToken =
       token ||
@@ -135,13 +141,15 @@ export class YandexIoTClient {
                 }
               }
 
-              try {
-                saveTokenToEnvFile(this.token);
-                if (this.refreshToken) {
-                  saveRefreshTokenToEnvFile(this.refreshToken);
+              if (this.persistEnv) {
+                try {
+                  saveTokenToEnvFile(this.token, this.envFilePath);
+                  if (this.refreshToken) {
+                    saveRefreshTokenToEnvFile(this.refreshToken, this.envFilePath);
+                  }
+                } catch {
+                  // Ignore env file write errors
                 }
-              } catch {
-                // Ignore env file write errors
               }
 
               // Retry request with newly acquired access token

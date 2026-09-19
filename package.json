@@ -10,7 +10,9 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "dev": "tsx src/index.ts",
+    "auth": "tsx src/auth/cli.ts",
     "start": "node dist/index.js",
+    "start:http": "PORT=8080 node dist/index.js",
     "test": "vitest run"
   },
   "keywords": [

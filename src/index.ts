@@ -12,15 +12,16 @@ import { ALICE_TOOLS } from "./tools/definitions.js";
 import { handleToolCall } from "./tools/handlers.js";
 import { StationService } from "./services/station-service.js";
 import { YandexIoTClient } from "./client/yandex-api.js";
+import { createHttpServer } from "./server/http-server.js";
 
-async function main() {
+async function runStdioServer() {
   const token = process.env.YANDEX_OAUTH_TOKEN;
   if (!token) {
     console.error(
       "⚠️ [mctl-alice] Warning: YANDEX_OAUTH_TOKEN is not set in environment or .env file."
     );
     console.error(
-      "Please set YANDEX_OAUTH_TOKEN to control Yandex Alice smart speakers."
+      "Run 'npm run auth' to log in via browser and save the token automatically."
     );
   }
 
@@ -29,8 +30,6 @@ async function main() {
     const client = new YandexIoTClient(token);
     stationService = new StationService(client);
   } catch (err: any) {
-    console.error(`⚠️ [mctl-alice] Init warning: ${err.message}`);
-    // Still allow server to start, requests will fail with informative message
     stationService = new StationService();
   }
 
@@ -62,6 +61,26 @@ async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error("🚀 [mctl-alice] Server started on stdio transport");
+}
+
+async function runHttpServer(port: number) {
+  const server = createHttpServer(port);
+  server.listen(port, "0.0.0.0", () => {
+    console.log(`🚀 [mctl-alice] HTTP server listening on http://0.0.0.0:${port}`);
+    console.log(`   - MCP JSON-RPC: POST /mcp`);
+    console.log(`   - Health check: GET /healthz`);
+    console.log(`   - Web login:    GET /auth/login`);
+  });
+}
+
+async function main() {
+  const isHttpMode = Boolean(process.env.PORT) || process.argv.includes("--http");
+  if (isHttpMode) {
+    const port = parseInt(process.env.PORT || "8080", 10);
+    await runHttpServer(port);
+  } else {
+    await runStdioServer();
+  }
 }
 
 main().catch((err) => {

@@ -240,7 +240,17 @@
       }
     });
 
-    // Update lang toggle button label (shows the next language to switch to)
+    // Update segmented lang switcher buttons
+    Array.prototype.forEach.call(document.querySelectorAll(".lang-btn[data-lang]"), function (btn) {
+      var btnLang = btn.getAttribute("data-lang");
+      if (btnLang === lang) {
+        btn.classList.add("is-active");
+      } else {
+        btn.classList.remove("is-active");
+      }
+    });
+
+    // Update single lang toggle button label (shows the next language to switch to)
     var langBtn = document.getElementById("lang-toggle");
     if (langBtn) {
       langBtn.textContent = lang === "ru" ? "EN" : "RU";
@@ -249,6 +259,9 @@
 
     updateUrls();
   }
+
+  // Expose globally for programmatic access and verification
+  window.mctlAliceSetLanguage = applyLanguage;
 
   // Determine initial language
   var initialLang = "ru";
@@ -259,9 +272,20 @@
     }
   } catch (e) {}
 
-  var langBtn = document.getElementById("lang-toggle");
-  if (langBtn) {
-    langBtn.addEventListener("click", function () {
+  // Wire segmented lang buttons
+  Array.prototype.forEach.call(document.querySelectorAll(".lang-btn[data-lang]"), function (btn) {
+    btn.addEventListener("click", function () {
+      var targetLang = btn.getAttribute("data-lang");
+      if (targetLang) {
+        applyLanguage(targetLang);
+      }
+    });
+  });
+
+  // Wire single toggle button fallback
+  var singleLangBtn = document.getElementById("lang-toggle");
+  if (singleLangBtn) {
+    singleLangBtn.addEventListener("click", function () {
       var currentLang = root.getAttribute("lang") || "ru";
       var nextLang = currentLang === "ru" ? "en" : "ru";
       applyLanguage(nextLang);

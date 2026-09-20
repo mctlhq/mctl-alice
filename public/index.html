@@ -23,8 +23,8 @@ try {
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap">
-<link rel="stylesheet" href="/assets/tokens.css">
-<link rel="stylesheet" href="/assets/components.css">
+<link rel="stylesheet" href="/assets/tokens.css?v=1.8.2">
+<link rel="stylesheet" href="/assets/components.css?v=1.8.2">
 </head>
 <body>
 
@@ -41,7 +41,10 @@ try {
     <a href="/auth/login" data-i18n="nav_login">Вход (OAuth)</a>
     <a href="/auth/cookie" data-i18n="nav_cookie">Quasar Cookie</a>
     <a href="https://github.com/mctlhq/mctl-alice" target="_blank" rel="noopener" data-i18n="nav_github">GitHub</a>
-    <button class="lang-toggle" id="lang-toggle" type="button" aria-label="Switch language to English">EN</button>
+    <div class="lang-switcher" id="lang-switcher" role="group" aria-label="Выбор языка / Language selection">
+      <button class="lang-btn is-active" id="lang-btn-ru" type="button" data-lang="ru" aria-label="Русский">RU</button>
+      <button class="lang-btn" id="lang-btn-en" type="button" data-lang="en" aria-label="English">EN</button>
+    </div>
     <button class="theme-toggle" id="theme-toggle" type="button" hidden aria-label="Переключить тему оформления">
       <svg class="icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
         <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>
@@ -276,6 +279,6 @@ try {
   </div>
 </footer>
 
-<script src="/assets/site.js"></script>
+<script src="/assets/site.js?v=1.8.2"></script>
 </body>
 </html>

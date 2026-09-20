@@ -269,7 +269,7 @@ describe("HTTP Server & ChatGPT REST API", () => {
     expect(text).toContain('data-lang="ru"');
     expect(text).toContain('data-lang="en"');
     expect(text).toContain("data-i18n=");
-    expect(text).toContain("/assets/site.js?v=1.8.2");
+    expect(text).toContain("/assets/site.js?v=1.8.3");
     // Should NOT contain openapi link in navigation or hero GitHub CTA button
     expect(text).not.toContain('<a href="/openapi.json">OpenAPI</a>');
     expect(text).not.toContain('>Репозиторий на GitHub</a>');
@@ -325,25 +325,29 @@ describe("HTTP Server & ChatGPT REST API", () => {
     expect(res.status).toBe(404);
   });
 
-  it("should serve Quasar cookie configuration page at /auth/cookie with unified styling", async () => {
+  it("should serve Quasar cookie configuration page at /auth/cookie with unified styling and i18n", async () => {
     const res = await fetch(`${baseUrl}/auth/cookie`);
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toContain("mctl-alice — Настройка Quasar");
     expect(html).toContain("Session_id");
-    expect(html).toContain("/assets/tokens.css");
-    expect(html).toContain("/assets/components.css");
+    expect(html).toContain("/assets/tokens.css?v=1.8.3");
+    expect(html).toContain("/assets/components.css?v=1.8.3");
     expect(html).toContain('id="theme-toggle"');
+    expect(html).toContain('id="lang-switcher"');
+    expect(html).toContain('data-i18n="cookie_title"');
   });
 
-  it("should serve unified styled page on /auth/callback without code", async () => {
+  it("should serve unified styled page on /auth/callback without code with i18n", async () => {
     const res = await fetch(`${baseUrl}/auth/callback`);
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toContain("mctl-alice — Авторизация");
-    expect(html).toContain("/assets/tokens.css");
-    expect(html).toContain("/assets/components.css");
+    expect(html).toContain("/assets/tokens.css?v=1.8.3");
+    expect(html).toContain("/assets/components.css?v=1.8.3");
     expect(html).toContain('id="theme-toggle"');
+    expect(html).toContain('id="lang-switcher"');
+    expect(html).toContain('data-i18n="callback_success_title"');
   });
 
   it("should validate missing cookie on /auth/save-cookie", async () => {

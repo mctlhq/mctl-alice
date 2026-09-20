@@ -9,6 +9,71 @@ import {
 } from "../client/types.js";
 import { TelemetryStorage, TelemetryHistoryResult } from "../storage/telemetry-storage.js";
 
+export interface LightControlOptions {
+  device: string;
+  room?: string;
+  state?: "on" | "off";
+  brightness?: number;
+  color_temp_k?: number;
+  scene?: string;
+}
+
+export interface RoomControlOptions {
+  room: string;
+  action: "turn_on" | "turn_off";
+  device_type?: "light" | "socket" | "climate" | "all";
+}
+
+export interface HomeSummaryResult {
+  scope: string;
+  timestamp: string;
+  totalDevices: number;
+  climate: Array<{
+    room: string;
+    temperature?: number;
+    humidity?: number;
+    pressure?: number;
+    devices: string[];
+  }>;
+  security: Array<{
+    name: string;
+    room: string;
+    type: string;
+    status: string;
+    details?: any;
+  }>;
+  lights: {
+    total: number;
+    onCount: number;
+    offCount: number;
+    activeLights: Array<{ name: string; room: string; brightness?: number }>;
+  };
+  sockets: {
+    total: number;
+    onCount: number;
+    totalPowerW: number;
+    devices: Array<{
+      name: string;
+      room: string;
+      isOn: boolean;
+      powerW?: number;
+      voltageV?: number;
+      amperageA?: number;
+    }>;
+  };
+  batteries: Array<{
+    name: string;
+    room: string;
+    level: number;
+    warning: boolean;
+  }>;
+  offlineDevices: Array<{
+    name: string;
+    room: string;
+    type: string;
+  }>;
+}
+
 export interface DeviceListResult {
   speakers: Array<{
     id: string;
@@ -605,6 +670,454 @@ export class StationService {
       device: { id: device.id, name: device.name, room: roomName },
       actionsApplied: actions,
       apiResponse: response,
+    };
+  }
+
+  /**
+   * Control smart lighting (power, brightness, color temperature, scenes)
+   */
+  async setLight(options: LightControlOptions) {
+    const { device, roomName } = await this.resolveDevice(options.device, options.room);
+    const actions: Array<{
+      type: string;
+      state: { instance: string; value: any };
+    }> = [];
+
+    // 1. On / Off capability
+    if (options.state) {
+      const onOffCap = device.capabilities?.find(
+        (c) => c.type === "devices.capabilities.on_off"
+      );
+      if (onOffCap) {
+        actions.push({
+          type: "devices.capabilities.on_off",
+          state: {
+            instance: "on",
+            value: options.state === "on",
+          },
+        });
+      }
+    }
+
+    // 2. Brightness capability
+    if (typeof options.brightness === "number" && !isNaN(options.brightness)) {
+      const brightnessCap = device.capabilities?.find(
+        (c) =>
+          c.type === "devices.capabilities.range" &&
+          c.parameters?.instance === "brightness"
+      );
+      if (brightnessCap) {
+        let val = Math.round(options.brightness);
+        const min = brightnessCap.parameters?.range?.min ?? 1;
+        const max = brightnessCap.parameters?.range?.max ?? 100;
+        val = Math.min(Math.max(val, min), max);
+        actions.push({
+          type: "devices.capabilities.range",
+          state: {
+            instance: "brightness",
+            value: val,
+          },
+        });
+      }
+    }
+
+    // 3. Color temperature capability (Kelvin)
+    if (typeof options.color_temp_k === "number" && !isNaN(options.color_temp_k)) {
+      const colorCap = device.capabilities?.find(
+        (c) => c.type === "devices.capabilities.color_setting"
+      );
+      if (colorCap) {
+        let val = Math.round(options.color_temp_k);
+        const min = colorCap.parameters?.temperature_k?.min ?? 1500;
+        const max = colorCap.parameters?.temperature_k?.max ?? 6500;
+        val = Math.min(Math.max(val, min), max);
+        actions.push({
+          type: "devices.capabilities.color_setting",
+          state: {
+            instance: "temperature_k",
+            value: val,
+          },
+        });
+      }
+    }
+
+    // 4. Lighting scene capability (night, reading, party, candle, etc.)
+    if (options.scene) {
+      const colorCap = device.capabilities?.find(
+        (c) => c.type === "devices.capabilities.color_setting"
+      );
+      if (colorCap) {
+        const sceneId = options.scene.trim().toLowerCase();
+        actions.push({
+          type: "devices.capabilities.color_setting",
+          state: {
+            instance: "scene",
+            value: sceneId,
+          },
+        });
+      }
+    }
+
+    if (actions.length === 0) {
+      throw new YandexApiError(
+        `Device "${device.name}" does not support the requested light actions. Device type: ${device.type}.`
+      );
+    }
+
+    const response = await this.getClient().sendDeviceActions([
+      {
+        id: device.id,
+        actions,
+      },
+    ]);
+
+    return {
+      status: "ok",
+      device: { id: device.id, name: device.name, room: roomName },
+      actionsApplied: actions,
+      apiResponse: response,
+    };
+  }
+
+  /**
+   * Batch control devices within a room or the entire home
+   */
+  async controlRoom(options: RoomControlOptions) {
+    const info = await this.getUserInfo();
+    const roomMap = this.buildRoomMap(info.rooms);
+    const devices = info.devices || [];
+
+    const roomNorm = options.room.trim().toLowerCase();
+    const isAllRooms = ["all", "все", "весь дом", "всё"].includes(roomNorm);
+
+    let targetRoomName = "Весь дом";
+    let targetRoomId: string | undefined;
+
+    if (!isAllRooms) {
+      const matchedRoom = (info.rooms || []).find(
+        (r) =>
+          r.id === options.room ||
+          r.name.toLowerCase() === roomNorm ||
+          r.name.toLowerCase().includes(roomNorm)
+      );
+      if (!matchedRoom) {
+        const available = (info.rooms || []).map((r) => r.name).join(", ");
+        throw new YandexApiError(
+          `Room "${options.room}" not found. Available rooms: ${available || "none"}`
+        );
+      }
+      targetRoomName = matchedRoom.name;
+      targetRoomId = matchedRoom.id;
+    }
+
+    const devicesInScope = isAllRooms
+      ? devices
+      : devices.filter((d) => d.room === targetRoomId);
+
+    const filterType = options.device_type || "all";
+    const controllable = devicesInScope.filter((d) => {
+      // Exclude smart speakers from mass power actions
+      if (this.isSpeaker(d)) return false;
+
+      // Must support on_off capability
+      const hasOnOff = d.capabilities?.some(
+        (c) => c.type === "devices.capabilities.on_off"
+      );
+      if (!hasOnOff) return false;
+
+      const t = (d.type || "").toLowerCase();
+      if (filterType === "light") {
+        return t.includes("light") || t.includes("lamp");
+      }
+      if (filterType === "socket") {
+        return t.includes("socket") || t.includes("switch");
+      }
+      if (filterType === "climate") {
+        return (
+          t.includes("thermostat") ||
+          t.includes("ac") ||
+          t.includes("heater") ||
+          t.includes("humidifier") ||
+          t.includes("fan")
+        );
+      }
+      return true; // "all"
+    });
+
+    if (controllable.length === 0) {
+      throw new YandexApiError(
+        `No controllable ${filterType === "all" ? "" : filterType + " "}devices found in ${
+          isAllRooms ? "the house" : `room "${targetRoomName}"`
+        }.`
+      );
+    }
+
+    const turnOn = options.action === "turn_on";
+    const batchRequests = controllable.map((d) => ({
+      id: d.id,
+      actions: [
+        {
+          type: "devices.capabilities.on_off",
+          state: {
+            instance: "on",
+            value: turnOn,
+          },
+        },
+      ],
+    }));
+
+    const response = await this.getClient().sendDeviceActions(batchRequests);
+
+    return {
+      status: "ok",
+      room: targetRoomName,
+      action: options.action,
+      deviceType: filterType,
+      affectedCount: controllable.length,
+      affectedDevices: controllable.map((d) => ({
+        id: d.id,
+        name: d.name,
+        room: (d.room && roomMap.get(d.room)) || "Не указана",
+        type: d.type,
+      })),
+      apiResponse: response,
+    };
+  }
+
+  /**
+   * Get an aggregated summary of the entire home or a specific room
+   */
+  async getHomeSummary(roomQuery?: string): Promise<HomeSummaryResult> {
+    const info = await this.getUserInfo();
+    const roomMap = this.buildRoomMap(info.rooms);
+    let devices = info.devices || [];
+
+    let scope = "Весь дом";
+    if (roomQuery && !["all", "все", "весь дом"].includes(roomQuery.trim().toLowerCase())) {
+      const q = roomQuery.trim().toLowerCase();
+      const matchedRoom = (info.rooms || []).find(
+        (r) => r.id === roomQuery || r.name.toLowerCase() === q || r.name.toLowerCase().includes(q)
+      );
+      if (matchedRoom) {
+        scope = matchedRoom.name;
+        devices = devices.filter((d) => d.room === matchedRoom.id);
+      } else {
+        const available = (info.rooms || []).map((r) => r.name).join(", ");
+        throw new YandexApiError(
+          `Room "${roomQuery}" not found. Available rooms: ${available || "none"}`
+        );
+      }
+    }
+
+    // 1. Climate aggregation by room
+    const climateByRoom = new Map<
+      string,
+      { room: string; temperature?: number; humidity?: number; pressure?: number; devices: string[] }
+    >();
+
+    for (const d of devices) {
+      const rName = (d.room && roomMap.get(d.room)) || "Без комнаты";
+      let hasClimate = false;
+      let temp: number | undefined;
+      let hum: number | undefined;
+      let press: number | undefined;
+
+      if (d.properties) {
+        for (const p of d.properties) {
+          const inst = p.state?.instance || p.parameters?.instance;
+          const val = p.state?.value;
+          if (inst === "temperature" && typeof val === "number") {
+            temp = Math.round(val * 10) / 10;
+            hasClimate = true;
+          } else if (inst === "humidity" && typeof val === "number") {
+            hum = Math.round(val * 10) / 10;
+            hasClimate = true;
+          } else if (inst === "pressure" && typeof val === "number") {
+            press = Math.round(val);
+            hasClimate = true;
+          }
+        }
+      }
+
+      if (hasClimate) {
+        const existing = climateByRoom.get(rName) || {
+          room: rName,
+          devices: [],
+        };
+        if (temp !== undefined) existing.temperature = temp;
+        if (hum !== undefined) existing.humidity = hum;
+        if (press !== undefined) existing.pressure = press;
+        if (!existing.devices.includes(d.name)) existing.devices.push(d.name);
+        climateByRoom.set(rName, existing);
+      }
+    }
+
+    // 2. Security & Sensors
+    const security: HomeSummaryResult["security"] = [];
+    for (const d of devices) {
+      const rName = (d.room && roomMap.get(d.room)) || "Без комнаты";
+      if (d.properties) {
+        for (const p of d.properties) {
+          const inst = p.state?.instance || p.parameters?.instance;
+          const val = p.state?.value;
+          if (inst === "open") {
+            security.push({
+              name: d.name,
+              room: rName,
+              type: "Датчик открытия",
+              status: val ? "Открыто 🔴" : "Закрыто 🟢",
+              details: { open: val },
+            });
+          } else if (inst === "motion") {
+            const detected = val === "detected" || val === true;
+            security.push({
+              name: d.name,
+              room: rName,
+              type: "Датчик движения",
+              status: detected ? "Движение обнаружено ⚠️" : "Спокойно 🟢",
+              details: { motion: val },
+            });
+          } else if (inst === "illumination") {
+            const lux = typeof val === "number" ? Math.round(val * 10) / 10 : val;
+            security.push({
+              name: d.name,
+              room: rName,
+              type: "Освещенность",
+              status: `${lux} люкс`,
+              details: { illumination: lux },
+            });
+          } else if (inst === "vibration") {
+            security.push({
+              name: d.name,
+              room: rName,
+              type: "Датчик вибрации",
+              status: String(val),
+            });
+          } else if (inst === "water_leak") {
+            const leak = val === "leak" || val === true;
+            security.push({
+              name: d.name,
+              room: rName,
+              type: "Датчик протечки",
+              status: leak ? "ПРОТЕЧКА 🚨" : "Сухо 🟢",
+            });
+          }
+        }
+      }
+    }
+
+    // 3. Lights
+    const lightDevices = devices.filter((d) => (d.type || "").toLowerCase().includes("light"));
+    let lightsOn = 0;
+    const activeLights: Array<{ name: string; room: string; brightness?: number }> = [];
+
+    for (const d of lightDevices) {
+      const onOff = d.capabilities?.find((c) => c.type === "devices.capabilities.on_off");
+      const isOn = onOff?.state?.value === true;
+      if (isOn) {
+        lightsOn++;
+        const brightCap = d.capabilities?.find(
+          (c) => c.type === "devices.capabilities.range" && c.parameters?.instance === "brightness"
+        );
+        activeLights.push({
+          name: d.name,
+          room: (d.room && roomMap.get(d.room)) || "Не указана",
+          brightness: brightCap?.state?.value,
+        });
+      }
+    }
+
+    // 4. Sockets & Power
+    const socketDevices = devices.filter(
+      (d) => (d.type || "").toLowerCase().includes("socket") || (d.type || "").toLowerCase().includes("switch")
+    );
+    let totalPowerW = 0;
+    let socketsOn = 0;
+    const socketDetails: HomeSummaryResult["sockets"]["devices"] = [];
+
+    for (const d of socketDevices) {
+      const onOff = d.capabilities?.find((c) => c.type === "devices.capabilities.on_off");
+      const isOn = onOff?.state?.value === true;
+      if (isOn) socketsOn++;
+
+      let powerW: number | undefined;
+      let voltageV: number | undefined;
+      let amperageA: number | undefined;
+
+      if (d.properties) {
+        for (const p of d.properties) {
+          const inst = p.state?.instance || p.parameters?.instance;
+          const val = p.state?.value;
+          if (inst === "power" && typeof val === "number") {
+            powerW = Math.round(val * 10) / 10;
+            totalPowerW += val;
+          } else if (inst === "voltage" && typeof val === "number") {
+            voltageV = Math.round(val * 10) / 10;
+          } else if (inst === "amperage" && typeof val === "number") {
+            amperageA = Math.round(val * 100) / 100;
+          }
+        }
+      }
+
+      socketDetails.push({
+        name: d.name,
+        room: (d.room && roomMap.get(d.room)) || "Не указана",
+        isOn,
+        powerW,
+        voltageV,
+        amperageA,
+      });
+    }
+
+    // 5. Battery levels
+    const batteries: HomeSummaryResult["batteries"] = [];
+    for (const d of devices) {
+      if (d.properties) {
+        const batProp = d.properties.find(
+          (p) => (p.state?.instance || p.parameters?.instance) === "battery_level"
+        );
+        if (batProp && typeof batProp.state?.value === "number") {
+          const level = Math.round(batProp.state.value * 10) / 10;
+          batteries.push({
+            name: d.name,
+            room: (d.room && roomMap.get(d.room)) || "Не указана",
+            level,
+            warning: level < 20,
+          });
+        }
+      }
+    }
+    batteries.sort((a, b) => a.level - b.level);
+
+    // 6. Offline devices
+    const offlineDevices = devices
+      .filter((d) => d.state === "offline")
+      .map((d) => ({
+        name: d.name,
+        room: (d.room && roomMap.get(d.room)) || "Не указана",
+        type: d.type,
+      }));
+
+    return {
+      scope,
+      timestamp: new Date().toISOString(),
+      totalDevices: devices.length,
+      climate: Array.from(climateByRoom.values()),
+      security,
+      lights: {
+        total: lightDevices.length,
+        onCount: lightsOn,
+        offCount: lightDevices.length - lightsOn,
+        activeLights,
+      },
+      sockets: {
+        total: socketDevices.length,
+        onCount: socketsOn,
+        totalPowerW: Math.round(totalPowerW * 10) / 10,
+        devices: socketDetails,
+      },
+      batteries,
+      offlineDevices,
     };
   }
 

@@ -86,6 +86,53 @@ describe("handleToolCall", () => {
           },
         ],
       }),
+      setLight: vi.fn().mockResolvedValue({
+        status: "ok",
+        device: { id: "light-1", name: "Люстра", room: "Гостиная" },
+        actionsApplied: [
+          { type: "devices.capabilities.on_off", state: { instance: "on", value: true } },
+          { type: "devices.capabilities.range", state: { instance: "brightness", value: 60 } },
+          { type: "devices.capabilities.color_setting", state: { instance: "temperature_k", value: 3500 } },
+        ],
+      }),
+      controlRoom: vi.fn().mockResolvedValue({
+        status: "ok",
+        room: "Кухня",
+        action: "turn_off",
+        deviceType: "socket",
+        affectedCount: 2,
+        affectedDevices: [
+          { id: "s-1", name: "Розетка 1", room: "Кухня", type: "devices.types.socket" },
+          { id: "s-2", name: "Розетка 2", room: "Кухня", type: "devices.types.socket" },
+        ],
+      }),
+      getHomeSummary: vi.fn().mockResolvedValue({
+        scope: "Весь дом",
+        timestamp: "2026-09-20T10:00:00Z",
+        totalDevices: 10,
+        climate: [
+          { room: "Кухня", temperature: 23.5, humidity: 45, pressure: 760, devices: ["Датчик климата"] },
+        ],
+        security: [
+          { name: "Датчик двери", room: "Прихожая", type: "Датчик открытия", status: "Закрыто 🟢" },
+        ],
+        lights: {
+          total: 3,
+          onCount: 1,
+          offCount: 2,
+          activeLights: [{ name: "Люстра", room: "Гостиная", brightness: 60 }],
+        },
+        sockets: {
+          total: 2,
+          onCount: 1,
+          totalPowerW: 42.5,
+          devices: [{ name: "Розетка 1", room: "Кухня", isOn: true, powerW: 42.5 }],
+        },
+        batteries: [
+          { name: "Датчик двери", room: "Прихожая", level: 18, warning: true },
+        ],
+        offlineDevices: [],
+      }),
     } as unknown as StationService;
   });
 
@@ -197,6 +244,46 @@ describe("handleToolCall", () => {
     );
     expect(res.isError).toBe(true);
     expect(res.content[0].text).toContain("параметр 'device' обязателен");
+  });
+
+  it("should handle alice_set_light", async () => {
+    const res = await handleToolCall(
+      "alice_set_light",
+      { device: "Люстра", room: "Гостиная", state: "on", brightness: 60, color_temp_k: 3500 },
+      mockService
+    );
+    expect(res.isError).toBeFalsy();
+    expect(res.content[0].text).toContain("Управление светом: Люстра");
+    expect(res.content[0].text).toContain("Питание: **Включено**");
+    expect(res.content[0].text).toContain("Яркость: **60%**");
+    expect(res.content[0].text).toContain("Цветовая температура: **3500 K**");
+  });
+
+  it("should handle alice_control_room", async () => {
+    const res = await handleToolCall(
+      "alice_control_room",
+      { room: "Кухня", action: "turn_off", device_type: "socket" },
+      mockService
+    );
+    expect(res.isError).toBeFalsy();
+    expect(res.content[0].text).toContain("Пакетное управление: Кухня");
+    expect(res.content[0].text).toContain("Успешно **выключены** устройства (2 шт., категория: `socket`)");
+    expect(res.content[0].text).toContain("Розетка 1");
+  });
+
+  it("should handle alice_get_home_summary", async () => {
+    const res = await handleToolCall(
+      "alice_get_home_summary",
+      {},
+      mockService
+    );
+    expect(res.isError).toBeFalsy();
+    expect(res.content[0].text).toContain("Сводка умного дома: Весь дом");
+    expect(res.content[0].text).toContain("Климат и температура");
+    expect(res.content[0].text).toContain("23.5°C");
+    expect(res.content[0].text).toContain("Датчик открытия");
+    expect(res.content[0].text).toContain("Текущая суммарная мощность: **42.5 Вт**");
+    expect(res.content[0].text).toContain("18%");
   });
 
   it("should return error for unknown tool", async () => {

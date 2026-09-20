@@ -50,7 +50,68 @@ describe("StationService", () => {
         name: "Люстра",
         room: "room-living",
         type: "devices.types.light",
+        capabilities: [
+          {
+            type: "devices.capabilities.on_off",
+            state: { instance: "on", value: true },
+          },
+          {
+            type: "devices.capabilities.range",
+            parameters: {
+              instance: "brightness",
+              range: { min: 1, max: 100, precision: 1 },
+            },
+            state: { instance: "brightness", value: 80 },
+          },
+          {
+            type: "devices.capabilities.color_setting",
+            parameters: {
+              temperature_k: { min: 1500, max: 6500 },
+              color_scene: {
+                scenes: [{ id: "night" }, { id: "reading" }, { id: "party" }],
+              },
+            },
+            state: { instance: "temperature_k", value: 3000 },
+          },
+        ],
+      },
+      {
+        id: "socket-kitchen",
+        name: "Розетка на кухне",
+        room: "room-kitchen",
+        type: "devices.types.socket",
+        capabilities: [
+          {
+            type: "devices.capabilities.on_off",
+            state: { instance: "on", value: true },
+          },
+        ],
+        properties: [
+          {
+            type: "devices.properties.float",
+            parameters: { instance: "power", unit: "unit.watt" },
+            state: { instance: "power", value: 125.5 },
+          },
+        ],
+      },
+      {
+        id: "sensor-door",
+        name: "Датчик двери",
+        room: "room-living",
+        type: "devices.types.sensor",
         capabilities: [],
+        properties: [
+          {
+            type: "devices.properties.event",
+            parameters: { instance: "open" },
+            state: { instance: "open", value: false },
+          },
+          {
+            type: "devices.properties.float",
+            parameters: { instance: "battery_level", unit: "unit.percent" },
+            state: { instance: "battery_level", value: 15 },
+          },
+        ],
       },
       {
         id: "ac-kitchen",
@@ -75,6 +136,13 @@ describe("StationService", () => {
               instance: "thermostat",
               modes: [{ value: "cool" }, { value: "heat" }],
             },
+          },
+        ],
+        properties: [
+          {
+            type: "devices.properties.float",
+            parameters: { instance: "temperature", unit: "unit.temperature.celsius" },
+            state: { instance: "temperature", value: 21.5 },
           },
         ],
       },
@@ -106,7 +174,7 @@ describe("StationService", () => {
     expect(list.speakers.length).toBe(2);
     expect(list.speakers[0].name).toBe("Станция Макс");
     expect(list.speakers[0].room).toBe("Гостиная");
-    expect(list.otherDevices?.length).toBe(2);
+    expect(list.otherDevices?.length).toBe(4);
     expect(list.rooms.length).toBe(2);
     expect(list.scenarios.length).toBe(2);
   });
@@ -377,6 +445,92 @@ describe("StationService", () => {
     expect(res.totalEnergyKWh).toBeGreaterThan(0);
     memoryStorage.close();
   });
+
+  it("should control light brightness, color temperature, and scene via setLight", async () => {
+    mockClient.sendDeviceActions = vi.fn().mockResolvedValue({ status: "ok" });
+
+    const res = await service.setLight({
+      device: "Люстра",
+      room: "Гостиная",
+      state: "on",
+      brightness: 75,
+      color_temp_k: 4000,
+      scene: "reading",
+    });
+
+    expect(res.status).toBe("ok");
+    expect(res.device.name).toBe("Люстра");
+    expect(res.device.room).toBe("Гостиная");
+    expect(mockClient.sendDeviceActions).toHaveBeenCalledWith([
+      {
+        id: "light-living",
+        actions: [
+          {
+            type: "devices.capabilities.on_off",
+            state: { instance: "on", value: true },
+          },
+          {
+            type: "devices.capabilities.range",
+            state: { instance: "brightness", value: 75 },
+          },
+          {
+            type: "devices.capabilities.color_setting",
+            state: { instance: "temperature_k", value: 4000 },
+          },
+          {
+            type: "devices.capabilities.color_setting",
+            state: { instance: "scene", value: "reading" },
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("should batch control devices in a room via controlRoom", async () => {
+    mockClient.sendDeviceActions = vi.fn().mockResolvedValue({ status: "ok" });
+
+    const res = await service.controlRoom({
+      room: "Кухня",
+      action: "turn_off",
+      device_type: "socket",
+    });
+
+    expect(res.status).toBe("ok");
+    expect(res.room).toBe("Кухня");
+    expect(res.action).toBe("turn_off");
+    expect(res.affectedCount).toBe(1);
+    expect(res.affectedDevices[0].id).toBe("socket-kitchen");
+
+    expect(mockClient.sendDeviceActions).toHaveBeenCalledWith([
+      {
+        id: "socket-kitchen",
+        actions: [
+          {
+            type: "devices.capabilities.on_off",
+            state: { instance: "on", value: false },
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("should generate comprehensive home summary via getHomeSummary", async () => {
+    const summary = await service.getHomeSummary();
+
+    expect(summary.scope).toBe("Весь дом");
+    expect(summary.totalDevices).toBe(6);
+    expect(summary.climate.length).toBeGreaterThan(0);
+    expect(summary.climate.find((c) => c.room === "Кухня")?.temperature).toBe(21.5);
+    expect(summary.security.some((s) => s.type === "Датчик открытия")).toBe(true);
+    expect(summary.lights.total).toBe(1);
+    expect(summary.lights.onCount).toBe(1);
+    expect(summary.sockets.total).toBe(1);
+    expect(summary.sockets.totalPowerW).toBe(125.5);
+    expect(summary.batteries.length).toBe(1);
+    expect(summary.batteries[0].name).toBe("Датчик двери");
+    expect(summary.batteries[0].warning).toBe(true); // 15% < 20%
+  });
 });
+
 
 

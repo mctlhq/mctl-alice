@@ -26,9 +26,9 @@ import {
   getCookieFromKeychain,
 } from "../auth/token-storage.js";
 import { getOpenApiSpec } from "./openapi.js";
-import { TelemetryStorage } from "../storage/telemetry-storage.js";
+import { TelemetryStorage, ITelemetryStorage } from "../storage/telemetry-storage.js";
 import { TelemetrySampler } from "../services/telemetry-sampler.js";
-import { IStorage, createStorage, OAuthStorage } from "../storage/index.js";
+import { IStorage, createStorage, createTelemetryStorage, OAuthStorage } from "../storage/index.js";
 import { OAuthController } from "../auth/oauth-controller.js";
 import { initQrAuth, checkQrAuthStatus } from "../auth/yandex-qr-auth.js";
 import { fetchYandexProfile } from "../auth/oauth-helper.js";
@@ -303,7 +303,7 @@ export function authenticateRequest(
   defaultService: StationService,
   defaultQuasar?: QuasarClient,
   oauthStorage?: IStorage,
-  telemetryStorage?: TelemetryStorage,
+  telemetryStorage?: ITelemetryStorage,
   authRequired = false
 ): AuthResult {
   const authHeader = req.headers.authorization;
@@ -420,16 +420,18 @@ export function authenticateRequest(
   return { authenticated: true, service: defaultService };
 }
 
-function getServiceForRequest(
+export function getAuthenticatedService(
   req: http.IncomingMessage,
   defaultService: StationService,
   defaultQuasar?: QuasarClient,
   oauthStorage?: IStorage,
-  telemetryStorage?: TelemetryStorage
+  telemetryStorage?: ITelemetryStorage
 ): StationService {
   const auth = authenticateRequest(req, defaultService, defaultQuasar, oauthStorage, telemetryStorage, false);
   return auth.service || defaultService;
 }
+
+const getServiceForRequest = getAuthenticatedService;
 
 export function createMcpServer(
   service: StationService | (() => StationService),
@@ -466,9 +468,9 @@ export interface HttpServerOptions {
   clientId?: string;
   clientSecret?: string;
   publicBaseUrl?: string;
-  storage?: TelemetryStorage;
+  storage?: ITelemetryStorage;
   enableSampler?: boolean;
-  oauthStorage?: OAuthStorage;
+  oauthStorage?: IStorage;
   yandexCallbackUri?: string;
   authRequired?: boolean;
 }
@@ -496,7 +498,7 @@ export function createHttpServer(
     process.env.YANDEX_CALLBACK_URL ||
     redirectUri;
 
-  const oauthStorage = options.oauthStorage || new OAuthStorage();
+  const oauthStorage = options.oauthStorage || createStorage();
   const oauthController = new OAuthController({
     baseUrl,
     yandexClientId: clientId,

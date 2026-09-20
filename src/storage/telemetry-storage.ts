@@ -51,7 +51,15 @@ export interface QueryHistoryOptions {
   resolution?: "max" | "1m" | "5m" | "15m" | "1h";
 }
 
-export class TelemetryStorage {
+export interface ITelemetryStorage {
+  saveSamples(samples: TelemetrySample[]): Promise<void> | void;
+  queryHistory(options: QueryHistoryOptions): Promise<TelemetryHistoryResult> | TelemetryHistoryResult;
+  pruneOld(retentionDays?: number): Promise<number> | number;
+  getStats(): Promise<{ totalSamples: number; oldestTimestamp: number | null; newestTimestamp: number | null }> | { totalSamples: number; oldestTimestamp: number | null; newestTimestamp: number | null };
+  close(): Promise<void> | void;
+}
+
+export class TelemetryStorage implements ITelemetryStorage {
   private db: DatabaseSync;
   private insertStmt: StatementSync;
 
@@ -300,6 +308,15 @@ export class TelemetryStorage {
     const stmt = this.db.prepare("DELETE FROM telemetry_samples WHERE timestamp < ?");
     const info = stmt.run(cutoff);
     return Number(info.changes);
+  }
+
+  getStats(): { totalSamples: number; oldestTimestamp: number | null; newestTimestamp: number | null } {
+    const row = this.db.prepare("SELECT COUNT(*) as total, MIN(timestamp) as oldest, MAX(timestamp) as newest FROM telemetry_samples").get() as any;
+    return {
+      totalSamples: row?.total ? Number(row.total) : 0,
+      oldestTimestamp: row?.oldest ? Number(row.oldest) : null,
+      newestTimestamp: row?.newest ? Number(row.newest) : null,
+    };
   }
 
   close(): void {

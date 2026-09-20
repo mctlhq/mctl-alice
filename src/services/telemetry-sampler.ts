@@ -1,5 +1,5 @@
 import { StationService } from "./station-service.js";
-import { TelemetryStorage, TelemetrySample } from "../storage/telemetry-storage.js";
+import { ITelemetryStorage, TelemetrySample } from "../storage/telemetry-storage.js";
 
 export interface TelemetrySamplerOptions {
   intervalMs?: number;
@@ -17,7 +17,7 @@ export class TelemetrySampler {
 
   constructor(
     private stationService: StationService,
-    private storage: TelemetryStorage,
+    private storage: ITelemetryStorage,
     options: TelemetrySamplerOptions = {}
   ) {
     this.intervalMs =
@@ -63,9 +63,9 @@ export class TelemetrySampler {
     }, this.intervalMs);
 
     // Prune old samples once every 24 hours
-    this.pruneTimer = setInterval(() => {
+    this.pruneTimer = setInterval(async () => {
       try {
-        const deleted = this.storage.pruneOld(this.retentionDays);
+        const deleted = await this.storage.pruneOld(this.retentionDays);
         if (deleted > 0) {
           console.log(`🧹 [TelemetrySampler] Pruned ${deleted} old telemetry samples.`);
         }
@@ -147,7 +147,7 @@ export class TelemetrySampler {
       }
 
       if (samples.length > 0) {
-        this.storage.saveSamples(samples);
+        await this.storage.saveSamples(samples);
       }
 
       return samples.length;

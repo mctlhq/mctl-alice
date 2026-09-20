@@ -128,7 +128,35 @@
       faq_a3: "Официальный IoT API Яндекса позволяет опрашивать статус устройств и запускать заранее подготовленные сценарии. Quasar API предоставляет прямой доступ к воспроизведению произвольного текста через встроенный синтезатор речи (TTS) и эмуляции живых голосовых команд.",
       faq_q4: "Можно ли управлять устройствами умного дома других брендов?",
       faq_a4: "Да! Любое устройство (лампочки, розетки, реле, роботы-пылесосы, кондиционеры), привязанное к вашему умному дому в приложении «Дом с Алисой», доступно для симуляции команд и запуска через сценарии.",
-      footer_part: "mctl-alice — часть платформы <a href=\"https://mctl.ai\" target=\"_blank\" rel=\"noopener\">mctl</a>."
+      footer_part: "mctl-alice — часть платформы <a href=\"https://mctl.ai\" target=\"_blank\" rel=\"noopener\">mctl</a>.",
+      nav_home: "Главная",
+      cookie_page_title: "mctl-alice — Настройка Quasar Cookie",
+      cookie_title: "mctl-alice — Настройка Quasar (Динамический голос и команды)",
+      cookie_lead: "Официальный IoT API Яндекса не позволяет произвольно воспроизводить текст (TTS) или выполнять динамические текстовые команды на колонках Алиса без заранее созданных вручную сценариев.<br>Quasar API подключается через веб-сессию Яндекса и разблокирует прямой синтез речи и произвольные команды на всех ваших колонках.",
+      cookie_instructions_title: "Инструкция по настройке:",
+      cookie_step1: "Откройте <a href=\"https://yandex.ru/quasar\" target=\"_blank\" rel=\"noopener\">yandex.ru/quasar</a> или <a href=\"https://yandex.ru\" target=\"_blank\" rel=\"noopener\">yandex.ru</a> в браузере под вашим аккаунтом Яндекса.",
+      cookie_step2: "Откройте консоль разработчика DevTools (нажмите <code>F12</code> или <code>Cmd + Option + I</code> на Mac).",
+      cookie_step3: "Перейдите на вкладку <strong>Application</strong> (или <strong>Storage</strong>) → <strong>Cookies</strong> → <code>https://yandex.ru</code>.",
+      cookie_step4: "Найдите строку с куки <code>Session_id</code> и скопируйте её значение (или скопируйте всю строку заголовка Cookie).",
+      cookie_step5: "Вставьте в поле ввода ниже и нажмите <strong>Сохранить и проверить</strong>.",
+      cookie_label: "Значение Cookie (Session_id):",
+      cookie_placeholder: "Session_id=3:17... или значение Session_id",
+      cookie_btn_save: "Сохранить и проверить",
+      cookie_btn_home: "Вернуться на главную",
+      callback_success_page_title: "mctl-alice — Авторизация успешна",
+      callback_success_title: "mctl-alice — Успешный вход",
+      callback_success_msg: "✅ Авторизация успешна! Получен постоянный Refresh-токен для автообновления.",
+      callback_speakers_found: "Найденные колонки:",
+      callback_no_speakers: "Колонки не найдены в умном доме, но токен успешно получен и сохранен.",
+      callback_btn_home: "На главную",
+      callback_btn_cookie: "Настроить Quasar Cookie",
+      callback_btn_retry: "Попробовать снова",
+      callback_error_page_title: "mctl-alice — Ошибка авторизации",
+      callback_error_title: "mctl-alice — Ошибка авторизации",
+      callback_status_obtaining: "Получение токена...",
+      callback_status_connecting: "Токен получен. Подключение к колонкам...",
+      callback_status_connected: "✅ Успешно! Умный дом подключен к mctl-alice.",
+      callback_status_token_missing: "❌ Токен не найден в URL редиректа."
     },
     en: {
       meta_title: "mctl-alice — Yandex Station & Smart Home Control via AI (MCP)",
@@ -198,7 +226,35 @@
       faq_a3: "The official Yandex IoT API queries device status and runs pre-made routines. The Quasar API unlocks direct arbitrary text-to-speech (TTS) playback and live voice command emulation.",
       faq_q4: "Can I control smart home devices from other brands?",
       faq_a4: "Yes! Any device (lights, plugs, relays, robot vacuums, ACs) connected to your smart home in the 'Home with Alice' app can be controlled via command simulation and routines.",
-      footer_part: "mctl-alice is part of the <a href=\"https://mctl.ai\" target=\"_blank\" rel=\"noopener\">mctl</a> platform."
+      footer_part: "mctl-alice is part of the <a href=\"https://mctl.ai\" target=\"_blank\" rel=\"noopener\">mctl</a>.",
+      nav_home: "Home",
+      cookie_page_title: "mctl-alice — Quasar Cookie Setup",
+      cookie_title: "mctl-alice — Quasar Setup (Dynamic Voice & Commands)",
+      cookie_lead: "The official Yandex IoT API does not allow arbitrary speech playback (TTS) or dynamic text voice commands on Alice speakers without pre-created routines.<br>The Quasar API connects via Yandex web session and unlocks direct speech synthesis and arbitrary commands on all your speakers.",
+      cookie_instructions_title: "Setup Instructions:",
+      cookie_step1: "Open <a href=\"https://yandex.ru/quasar\" target=\"_blank\" rel=\"noopener\">yandex.ru/quasar</a> or <a href=\"https://yandex.ru\" target=\"_blank\" rel=\"noopener\">yandex.ru</a> in your browser under your Yandex account.",
+      cookie_step2: "Open Developer Tools (press <code>F12</code> or <code>Cmd + Option + I</code> on Mac).",
+      cookie_step3: "Switch to <strong>Application</strong> (or <strong>Storage</strong>) → <strong>Cookies</strong> → <code>https://yandex.ru</code>.",
+      cookie_step4: "Locate the row with cookie <code>Session_id</code> and copy its value (or copy the entire Cookie header string).",
+      cookie_step5: "Paste into the input field below and click <strong>Save and verify</strong>.",
+      cookie_label: "Cookie Value (Session_id):",
+      cookie_placeholder: "Session_id=3:17... or Session_id value",
+      cookie_btn_save: "Save and verify",
+      cookie_btn_home: "Back to Home",
+      callback_success_page_title: "mctl-alice — Authorization Successful",
+      callback_success_title: "mctl-alice — Successful Sign In",
+      callback_success_msg: "✅ Authorization successful! Permanent refresh token obtained for auto-renewal.",
+      callback_speakers_found: "Discovered speakers:",
+      callback_no_speakers: "No speakers found in smart home, but token was obtained and saved successfully.",
+      callback_btn_home: "Go to Home",
+      callback_btn_cookie: "Configure Quasar Cookie",
+      callback_btn_retry: "Try again",
+      callback_error_page_title: "mctl-alice — Authorization Error",
+      callback_error_title: "mctl-alice — Authorization Error",
+      callback_status_obtaining: "Obtaining token...",
+      callback_status_connecting: "Token obtained. Connecting to speakers...",
+      callback_status_connected: "✅ Success! Smart home connected to mctl-alice.",
+      callback_status_token_missing: "❌ Token not found in redirect URL."
     }
   };
 
@@ -211,9 +267,17 @@
     try { localStorage.setItem("alice-lang", lang); } catch (e) {}
 
     // Update document title and meta description
-    if (dict.meta_title) document.title = dict.meta_title;
+    if (dict.meta_title && document.querySelector('meta[name="description"]')) {
+      document.title = dict.meta_title;
+    }
     var metaDesc = document.querySelector('meta[name="description"]');
     if (metaDesc && dict.meta_desc) metaDesc.setAttribute("content", dict.meta_desc);
+
+    // Update page titles if data-i18n exists on title or body
+    var pageTitleKey = document.documentElement.getAttribute("data-page-title-key");
+    if (pageTitleKey && dict[pageTitleKey]) {
+      document.title = dict[pageTitleKey];
+    }
 
     // Update copy button dataset
     if (copy) {
@@ -240,6 +304,14 @@
       }
     });
 
+    // Update placeholders
+    Array.prototype.forEach.call(document.querySelectorAll("[data-i18n-placeholder]"), function (el) {
+      var key = el.getAttribute("data-i18n-placeholder");
+      if (dict[key] !== undefined) {
+        el.setAttribute("placeholder", dict[key]);
+      }
+    });
+
     // Update segmented lang switcher buttons
     Array.prototype.forEach.call(document.querySelectorAll(".lang-btn[data-lang]"), function (btn) {
       var btnLang = btn.getAttribute("data-lang");
@@ -262,6 +334,10 @@
 
   // Expose globally for programmatic access and verification
   window.mctlAliceSetLanguage = applyLanguage;
+  window.mctlAliceTranslations = translations;
+  window.mctlAliceCurrentLang = function () {
+    return root.getAttribute("lang") || "ru";
+  };
 
   // Determine initial language
   var initialLang = "ru";

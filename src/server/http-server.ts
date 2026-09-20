@@ -158,15 +158,17 @@ function escapeHtml(str: string): string {
 
 function renderAuthPage({
   title,
+  titleKey,
   contentHtml,
   scriptHtml = "",
 }: {
   title: string;
+  titleKey?: string;
   contentHtml: string;
   scriptHtml?: string;
 }): string {
   return `<!doctype html>
-<html lang="ru">
+<html lang="ru"${titleKey ? ` data-page-title-key="${escapeHtml(titleKey)}"` : ""}>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -183,8 +185,8 @@ try {
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap">
-<link rel="stylesheet" href="/assets/tokens.css?v=1.8.2">
-<link rel="stylesheet" href="/assets/components.css?v=1.8.2">
+<link rel="stylesheet" href="/assets/tokens.css?v=1.8.3">
+<link rel="stylesheet" href="/assets/components.css?v=1.8.3">
 </head>
 <body>
 <header class="wrap topbar">
@@ -197,10 +199,14 @@ try {
     <span class="chip-beta">BETA</span>
   </a>
   <nav class="topbar-links">
-    <a href="/">Главная</a>
-    <a href="/auth/login">Вход (OAuth)</a>
-    <a href="/auth/cookie">Quasar Cookie</a>
-    <a href="https://github.com/mctlhq/mctl-alice" target="_blank" rel="noopener">GitHub</a>
+    <a href="/" data-i18n="nav_home">Главная</a>
+    <a href="/auth/login" data-i18n="nav_login">Вход (OAuth)</a>
+    <a href="/auth/cookie" data-i18n="nav_cookie">Quasar Cookie</a>
+    <a href="https://github.com/mctlhq/mctl-alice" target="_blank" rel="noopener" data-i18n="nav_github">GitHub</a>
+    <div class="lang-switcher" id="lang-switcher" role="group" aria-label="Выбор языка / Language selection">
+      <button class="lang-btn is-active" id="lang-btn-ru" type="button" data-lang="ru" aria-label="Русский">RU</button>
+      <button class="lang-btn" id="lang-btn-en" type="button" data-lang="en" aria-label="English">EN</button>
+    </div>
     <button class="theme-toggle" id="theme-toggle" type="button" hidden aria-label="Переключить тему оформления">
       <svg class="icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
         <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>
@@ -219,16 +225,16 @@ try {
 </main>
 <footer class="wrap">
   <div class="footer-row">
-    <span>mctl-alice — часть платформы <a href="https://mctl.ai" target="_blank" rel="noopener">mctl</a>.</span>
+    <span data-i18n-html="footer_part">mctl-alice — часть платформы <a href="https://mctl.ai" target="_blank" rel="noopener">mctl</a>.</span>
     <span>
-      <a href="/">Главная</a> ·
-      <a href="/auth/login">Вход (OAuth)</a> ·
-      <a href="/auth/cookie">Quasar Cookie</a> ·
-      <a href="https://github.com/mctlhq/mctl-alice" target="_blank" rel="noopener">GitHub</a>
+      <a href="/" data-i18n="nav_home">Главная</a> ·
+      <a href="/auth/login" data-i18n="nav_login">Вход (OAuth)</a> ·
+      <a href="/auth/cookie" data-i18n="nav_cookie">Quasar Cookie</a> ·
+      <a href="https://github.com/mctlhq/mctl-alice" target="_blank" rel="noopener" data-i18n="nav_github">GitHub</a>
     </span>
   </div>
 </footer>
-<script src="/assets/site.js?v=1.8.2"></script>
+<script src="/assets/site.js?v=1.8.3"></script>
 ${scriptHtml}
 </body>
 </html>`;
@@ -954,14 +960,14 @@ export function createHttpServer(
           console.error(`[OAuth] /auth/callback (pending) failed: ${err.message}`);
           res.writeHead(500, { "Content-Type": "text/html; charset=utf-8" });
           const content = `
-            <h2>Ошибка авторизации Яндекс</h2>
+            <h2 data-i18n="callback_error_title">Ошибка авторизации Яндекс</h2>
             <div class="alert alert-error">❌ ${escapeHtml(err.message)}</div>
             <div style="margin-top: 24px; display: flex; gap: 12px; flex-wrap: wrap;">
-              <a href="${baseUrl}/auth/login" class="btn btn-primary">Попробовать снова</a>
-              <a href="/" class="btn btn-secondary">На главную</a>
+              <a href="${baseUrl}/auth/login" class="btn btn-primary" data-i18n="callback_btn_retry">Попробовать снова</a>
+              <a href="/" class="btn btn-secondary" data-i18n="callback_btn_home">На главную</a>
             </div>
           `;
-          res.end(renderAuthPage({ title: "mctl-alice — Ошибка авторизации", contentHtml: content }));
+          res.end(renderAuthPage({ title: "mctl-alice — Ошибка авторизации", titleKey: "callback_error_page_title", contentHtml: content }));
           return;
         }
       }
@@ -997,43 +1003,43 @@ export function createHttpServer(
 
           const speakerHtml =
             speakerNames.length > 0
-              ? `<div class="speakers" style="margin-top: 16px; padding: 14px 16px; background: var(--surface-elevated); border: 1px solid var(--surface-line); border-radius: var(--mctl-radius-md);"><strong>Найденные колонки:</strong><br>${speakerNames.map((s) => "• " + escapeHtml(s)).join("<br>")}</div>`
-              : `<div class="speakers" style="margin-top: 16px; padding: 14px 16px; background: var(--surface-elevated); border: 1px solid var(--surface-line); border-radius: var(--mctl-radius-md); color: var(--surface-fg-muted);"><em>Колонки не найдены в умном доме, но токен успешно получен и сохранен.</em></div>`;
+              ? `<div class="speakers" style="margin-top: 16px; padding: 14px 16px; background: var(--surface-elevated); border: 1px solid var(--surface-line); border-radius: var(--mctl-radius-md);"><strong data-i18n="callback_speakers_found">Найденные колонки:</strong><br>${speakerNames.map((s) => "• " + escapeHtml(s)).join("<br>")}</div>`
+              : `<div class="speakers" style="margin-top: 16px; padding: 14px 16px; background: var(--surface-elevated); border: 1px solid var(--surface-line); border-radius: var(--mctl-radius-md); color: var(--surface-fg-muted);"><em data-i18n="callback_no_speakers">Колонки не найдены в умном доме, но токен успешно получен и сохранен.</em></div>`;
 
           const content = `
-            <h2>mctl-alice — Успешный вход</h2>
-            <div class="alert alert-success">✅ Авторизация успешна! Получен постоянный Refresh-токен для автообновления.</div>
+            <h2 data-i18n="callback_success_title">mctl-alice — Успешный вход</h2>
+            <div class="alert alert-success" data-i18n="callback_success_msg">✅ Авторизация успешна! Получен постоянный Refresh-токен для автообновления.</div>
             ${speakerHtml}
             <div style="margin-top: 24px; display: flex; gap: 12px; flex-wrap: wrap;">
-              <a href="/" class="btn btn-primary">На главную</a>
-              <a href="/auth/cookie" class="btn btn-secondary">Настроить Quasar Cookie</a>
+              <a href="/" class="btn btn-primary" data-i18n="callback_btn_home">На главную</a>
+              <a href="/auth/cookie" class="btn btn-secondary" data-i18n="callback_btn_cookie">Настроить Quasar Cookie</a>
             </div>
           `;
           res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-          res.end(renderAuthPage({ title: "mctl-alice — Авторизация успешна", contentHtml: content }));
+          res.end(renderAuthPage({ title: "mctl-alice — Авторизация успешна", titleKey: "callback_success_page_title", contentHtml: content }));
           return;
         } catch (err: any) {
           res.writeHead(500, { "Content-Type": "text/html; charset=utf-8" });
           const content = `
-            <h2>mctl-alice — Ошибка авторизации</h2>
+            <h2 data-i18n="callback_error_title">mctl-alice — Ошибка авторизации</h2>
             <div class="alert alert-error">❌ Ошибка обмена кода: ${escapeHtml(err.message)}</div>
             <div style="margin-top: 24px; display: flex; gap: 12px; flex-wrap: wrap;">
-              <a href="${baseUrl}/auth/login" class="btn btn-primary">Попробовать снова</a>
-              <a href="/" class="btn btn-secondary">На главную</a>
+              <a href="${baseUrl}/auth/login" class="btn btn-primary" data-i18n="callback_btn_retry">Попробовать снова</a>
+              <a href="/" class="btn btn-secondary" data-i18n="callback_btn_home">На главную</a>
             </div>
           `;
-          res.end(renderAuthPage({ title: "mctl-alice — Ошибка", contentHtml: content }));
+          res.end(renderAuthPage({ title: "mctl-alice — Ошибка", titleKey: "callback_error_page_title", contentHtml: content }));
           return;
         }
       }
 
       const content = `
-        <h2>mctl-alice — Успешный вход</h2>
-        <div id="status" class="alert alert-info">Получение токена...</div>
+        <h2 data-i18n="callback_success_title">mctl-alice — Успешный вход</h2>
+        <div id="status" class="alert alert-info" data-i18n="callback_status_obtaining">Получение токена...</div>
         <div id="speakers" class="speakers" style="display:none; margin-top: 16px; padding: 14px 16px; background: var(--surface-elevated); border: 1px solid var(--surface-line); border-radius: var(--mctl-radius-md);"></div>
         <div id="actions" style="margin-top: 24px; display: none; gap: 12px; flex-wrap: wrap;">
-          <a href="/" class="btn btn-primary">На главную</a>
-          <a href="/auth/cookie" class="btn btn-secondary">Настроить Quasar Cookie</a>
+          <a href="/" class="btn btn-primary" data-i18n="callback_btn_home">На главную</a>
+          <a href="/auth/cookie" class="btn btn-secondary" data-i18n="callback_btn_cookie">Настроить Quasar Cookie</a>
         </div>
       `;
       const script = `
@@ -1045,8 +1051,16 @@ export function createHttpServer(
         const speakersEl = document.getElementById('speakers');
         const actionsEl = document.getElementById('actions');
 
+        function getI18nText(key, fallback) {
+          const lang = document.documentElement.getAttribute('lang') || 'ru';
+          if (window.mctlAliceTranslations && window.mctlAliceTranslations[lang] && window.mctlAliceTranslations[lang][key]) {
+            return window.mctlAliceTranslations[lang][key];
+          }
+          return fallback;
+        }
+
         if (token) {
-          statusEl.innerText = 'Токен получен. Подключение к колонкам...';
+          statusEl.innerText = getI18nText('callback_status_connecting', 'Токен получен. Подключение к колонкам...');
           fetch('/auth/save-token', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -1056,29 +1070,35 @@ export function createHttpServer(
           .then(data => {
             if (data.status === 'ok') {
               statusEl.className = 'alert alert-success';
-              statusEl.innerText = '✅ Успешно! Умный дом подключен к mctl-alice.';
+              statusEl.innerText = getI18nText('callback_status_connected', '✅ Успешно! Умный дом подключен к mctl-alice.');
               actionsEl.style.display = 'flex';
               if (data.speakers && data.speakers.length > 0) {
                 speakersEl.style.display = 'block';
-                speakersEl.innerHTML = '<strong>Найденные колонки:</strong><br>' + data.speakers.map(s => '• ' + s).join('<br>');
+                const prefix = getI18nText('callback_speakers_found', 'Найденные колонки:');
+                speakersEl.innerHTML = '<strong>' + prefix + '</strong><br>' + data.speakers.map(s => '• ' + s).join('<br>');
               }
             } else {
               statusEl.className = 'alert alert-error';
-              statusEl.innerText = '❌ Ошибка проверки: ' + (data.message || 'неизвестная ошибка');
+              const lang = document.documentElement.getAttribute('lang') || 'ru';
+              const errPrefix = lang === 'en' ? '❌ Verification error: ' : '❌ Ошибка проверки: ';
+              const unknownErr = lang === 'en' ? 'unknown error' : 'неизвестная ошибка';
+              statusEl.innerText = errPrefix + (data.message || unknownErr);
             }
           })
           .catch(err => {
+            const lang = document.documentElement.getAttribute('lang') || 'ru';
+            const errPrefix = lang === 'en' ? '❌ Error: ' : '❌ Ошибка: ';
             statusEl.className = 'alert alert-error';
-            statusEl.innerText = '❌ Ошибка: ' + err.message;
+            statusEl.innerText = errPrefix + err.message;
           });
         } else {
           statusEl.className = 'alert alert-error';
-          statusEl.innerText = '❌ Токен не найден в URL редиректа.';
+          statusEl.innerText = getI18nText('callback_status_token_missing', '❌ Токен не найден в URL редиректа.');
         }
       </script>
       `;
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-      res.end(renderAuthPage({ title: "mctl-alice — Авторизация", contentHtml: content, scriptHtml: script }));
+      res.end(renderAuthPage({ title: "mctl-alice — Авторизация", titleKey: "callback_success_page_title", contentHtml: content, scriptHtml: script }));
       return;
 
     }
@@ -1125,25 +1145,25 @@ export function createHttpServer(
     // Quasar Cookie Setup Page
     if (url.pathname === "/auth/cookie" && req.method === "GET") {
       const content = `
-        <h2>mctl-alice — Настройка Quasar (Динамический голос и команды)</h2>
-        <p style="color: var(--surface-fg-muted); margin-bottom: 24px;">
+        <h2 data-i18n="cookie_title">mctl-alice — Настройка Quasar (Динамический голос и команды)</h2>
+        <p style="color: var(--surface-fg-muted); margin-bottom: 24px;" data-i18n-html="cookie_lead">
           Официальный IoT API Яндекса не позволяет произвольно воспроизводить текст (TTS) или выполнять динамические текстовые команды на колонках Алиса без заранее созданных вручную сценариев.<br>
           Quasar API подключается через веб-сессию Яндекса и разблокирует прямой синтез речи и произвольные команды на всех ваших колонках.
         </p>
-        <h3 style="margin-top: 24px; margin-bottom: 12px;">Инструкция по настройке:</h3>
+        <h3 style="margin-top: 24px; margin-bottom: 12px;" data-i18n="cookie_instructions_title">Инструкция по настройке:</h3>
         <ol class="steps">
-          <li>Откройте <a href="https://yandex.ru/quasar" target="_blank" rel="noopener">yandex.ru/quasar</a> или <a href="https://yandex.ru" target="_blank" rel="noopener">yandex.ru</a> в браузере под вашим аккаунтом Яндекса.</li>
-          <li>Откройте консоль разработчика DevTools (нажмите <code>F12</code> или <code>Cmd + Option + I</code> на Mac).</li>
-          <li>Перейдите на вкладку <strong>Application</strong> (или <strong>Storage</strong>) → <strong>Cookies</strong> → <code>https://yandex.ru</code>.</li>
-          <li>Найдите строку с куки <code>Session_id</code> и скопируйте её значение (или скопируйте всю строку заголовка Cookie).</li>
-          <li>Вставьте в поле ввода ниже и нажмите <strong>Сохранить и проверить</strong>.</li>
+          <li data-i18n-html="cookie_step1">Откройте <a href="https://yandex.ru/quasar" target="_blank" rel="noopener">yandex.ru/quasar</a> или <a href="https://yandex.ru" target="_blank" rel="noopener">yandex.ru</a> в браузере под вашим аккаунтом Яндекса.</li>
+          <li data-i18n-html="cookie_step2">Откройте консоль разработчика DevTools (нажмите <code>F12</code> или <code>Cmd + Option + I</code> на Mac).</li>
+          <li data-i18n-html="cookie_step3">Перейдите на вкладку <strong>Application</strong> (или <strong>Storage</strong>) → <strong>Cookies</strong> → <code>https://yandex.ru</code>.</li>
+          <li data-i18n-html="cookie_step4">Найдите строку с куки <code>Session_id</code> и скопируйте её значение (или скопируйте всю строку заголовка Cookie).</li>
+          <li data-i18n-html="cookie_step5">Вставьте в поле ввода ниже и нажмите <strong>Сохранить и проверить</strong>.</li>
         </ol>
         <form id="cookieForm" style="margin-top: 20px;">
-          <label for="cookieInput" style="display: block; font-weight: 500; font-size: 14px; margin-bottom: 6px;">Значение Cookie (Session_id):</label>
-          <textarea id="cookieInput" class="form-textarea" placeholder="Session_id=3:17... или значение Session_id" required spellcheck="false"></textarea>
+          <label for="cookieInput" style="display: block; font-weight: 500; font-size: 14px; margin-bottom: 6px;" data-i18n="cookie_label">Значение Cookie (Session_id):</label>
+          <textarea id="cookieInput" class="form-textarea" placeholder="Session_id=3:17... или значение Session_id" data-i18n-placeholder="cookie_placeholder" required spellcheck="false"></textarea>
           <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
-            <button type="submit" id="saveBtn" class="btn btn-primary">Сохранить и проверить</button>
-            <a href="/" class="btn btn-secondary">Вернуться на главную</a>
+            <button type="submit" id="saveBtn" class="btn btn-primary" data-i18n="cookie_btn_save">Сохранить и проверить</button>
+            <a href="/" class="btn btn-secondary" data-i18n="cookie_btn_home">Вернуться на главную</a>
           </div>
         </form>
         <div id="status" class="alert" style="display: none;"></div>
@@ -1164,7 +1184,8 @@ export function createHttpServer(
           btn.disabled = true;
           statusEl.style.display = 'block';
           statusEl.className = 'alert alert-info';
-          statusEl.innerText = 'Проверка сессии в Yandex Quasar...';
+          const lang = document.documentElement.getAttribute('lang') || 'ru';
+          statusEl.innerText = lang === 'en' ? 'Verifying session with Yandex Quasar...' : 'Проверка сессии в Yandex Quasar...';
 
           try {
             const res = await fetch('/auth/save-cookie', {
@@ -1173,16 +1194,21 @@ export function createHttpServer(
               body: JSON.stringify({ cookie })
             });
             const data = await res.json();
+            const currentLang = document.documentElement.getAttribute('lang') || 'ru';
             if (res.ok && data.status === 'ok') {
               statusEl.className = 'alert alert-success';
-              statusEl.innerText = '✅ Куки успешно проверены и сохранены! Теперь доступны динамический TTS (произвольный текст) и текстовые голосовые команды.';
+              statusEl.innerText = currentLang === 'en'
+                ? '✅ Cookie verified and saved successfully! Dynamic TTS and voice text commands are now available.'
+                : '✅ Куки успешно проверены и сохранены! Теперь доступны динамический TTS (произвольный текст) и текстовые голосовые команды.';
             } else {
               statusEl.className = 'alert alert-error';
-              statusEl.innerText = '❌ Ошибка проверки куки: ' + (data.message || 'не удалось получить CSRF токен');
+              const errMsg = data.message || (currentLang === 'en' ? 'failed to obtain CSRF token' : 'не удалось получить CSRF токен');
+              statusEl.innerText = (currentLang === 'en' ? '❌ Cookie verification error: ' : '❌ Ошибка проверки куки: ') + errMsg;
             }
           } catch (err) {
+            const currentLang = document.documentElement.getAttribute('lang') || 'ru';
             statusEl.className = 'alert alert-error';
-            statusEl.innerText = '❌ Ошибка сети: ' + err.message;
+            statusEl.innerText = (currentLang === 'en' ? '❌ Network error: ' : '❌ Ошибка сети: ') + err.message;
           } finally {
             btn.disabled = false;
           }
@@ -1191,7 +1217,7 @@ export function createHttpServer(
       `;
 
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-      res.end(renderAuthPage({ title: "mctl-alice — Настройка Quasar Cookie", contentHtml: content, scriptHtml: script }));
+      res.end(renderAuthPage({ title: "mctl-alice — Настройка Quasar Cookie", titleKey: "cookie_page_title", contentHtml: content, scriptHtml: script }));
       return;
     }
 

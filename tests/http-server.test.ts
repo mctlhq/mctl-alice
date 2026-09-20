@@ -271,7 +271,7 @@ describe("HTTP Server & ChatGPT REST API", () => {
     expect(text).toContain('data-lang="ru"');
     expect(text).toContain('data-lang="en"');
     expect(text).toContain("data-i18n=");
-    expect(text).toContain("/assets/site.js?v=1.9.2");
+    expect(text).toContain("/assets/site.js?v=2.0.0");
     // Should NOT contain openapi link in navigation or hero GitHub CTA button
     expect(text).not.toContain('<a href="/openapi.json">OpenAPI</a>');
     expect(text).not.toContain('>Репозиторий на GitHub</a>');

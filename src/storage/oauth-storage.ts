@@ -18,6 +18,7 @@ export interface PendingAuth {
   codeChallenge?: string;
   codeChallengeMethod?: string;
   scope: string;
+  yandexCallbackUri?: string;
   createdAt: number;
   expiresAt: number;
 }
@@ -97,6 +98,7 @@ export class OAuthStorage {
         code_challenge TEXT,
         code_challenge_method TEXT,
         scope TEXT NOT NULL,
+        yandex_callback_uri TEXT,
         created_at INTEGER NOT NULL,
         expires_at INTEGER NOT NULL
       );
@@ -131,6 +133,13 @@ export class OAuthStorage {
       CREATE INDEX IF NOT EXISTS idx_codes_expires ON oauth_codes(expires_at);
       CREATE INDEX IF NOT EXISTS idx_tokens_expires ON oauth_tokens(expires_at);
     `);
+
+    // Migration: add column yandex_callback_uri if upgrading existing database
+    try {
+      this.db.exec(`ALTER TABLE oauth_pending ADD COLUMN yandex_callback_uri TEXT;`);
+    } catch {
+      // Column already exists
+    }
   }
 
   private prepareStatements() {
@@ -145,12 +154,12 @@ export class OAuthStorage {
     `);
 
     this.insertPendingStmt = this.db.prepare(`
-      INSERT OR REPLACE INTO oauth_pending (state, client_id, redirect_uri, client_state, code_challenge, code_challenge_method, scope, created_at, expires_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT OR REPLACE INTO oauth_pending (state, client_id, redirect_uri, client_state, code_challenge, code_challenge_method, scope, yandex_callback_uri, created_at, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     this.getPendingStmt = this.db.prepare(`
-      SELECT state, client_id, redirect_uri, client_state, code_challenge, code_challenge_method, scope, created_at, expires_at
+      SELECT state, client_id, redirect_uri, client_state, code_challenge, code_challenge_method, scope, yandex_callback_uri, created_at, expires_at
       FROM oauth_pending WHERE state = ?
     `);
 
@@ -231,6 +240,7 @@ export class OAuthStorage {
       pending.codeChallenge || null,
       pending.codeChallengeMethod || null,
       pending.scope,
+      pending.yandexCallbackUri || null,
       pending.createdAt,
       pending.expiresAt
     );
@@ -251,6 +261,7 @@ export class OAuthStorage {
       codeChallenge: row.code_challenge || undefined,
       codeChallengeMethod: row.code_challenge_method || undefined,
       scope: row.scope,
+      yandexCallbackUri: row.yandex_callback_uri || undefined,
       createdAt: row.created_at,
       expiresAt: row.expires_at,
     };

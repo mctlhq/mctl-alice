@@ -7,6 +7,7 @@ export interface OAuthControllerOptions {
   yandexClientId: string;
   yandexClientSecret?: string;
   storage: OAuthStorage;
+  yandexCallbackUri?: string;
 }
 
 export class OAuthController {
@@ -14,12 +15,17 @@ export class OAuthController {
   private yandexClientId: string;
   private yandexClientSecret?: string;
   private storage: OAuthStorage;
+  private yandexCallbackUri: string;
 
   constructor(options: OAuthControllerOptions) {
     this.baseUrl = options.baseUrl.replace(/\/+$/, "");
     this.yandexClientId = options.yandexClientId;
     this.yandexClientSecret = options.yandexClientSecret;
     this.storage = options.storage;
+    this.yandexCallbackUri =
+      options.yandexCallbackUri ||
+      process.env.YANDEX_CALLBACK_URL ||
+      `${this.baseUrl}/auth/callback`;
   }
 
   /**
@@ -148,6 +154,8 @@ export class OAuthController {
     const clientState = params.state || "";
     const scope = params.scope || "iot:view iot:control";
 
+    const yandexCallbackUri = this.yandexCallbackUri;
+
     this.storage.savePendingAuth({
       state,
       clientId: params.client_id,
@@ -156,11 +164,11 @@ export class OAuthController {
       codeChallenge: params.code_challenge,
       codeChallengeMethod: params.code_challenge_method || "S256",
       scope,
+      yandexCallbackUri,
       createdAt: Date.now(),
       expiresAt: Date.now() + 10 * 60 * 1000, // 10 minutes
     });
 
-    const yandexCallbackUri = `${this.baseUrl}/oauth/yandex/callback`;
     const yandexAuthUrl =
       `https://oauth.yandex.ru/authorize?response_type=code` +
       `&client_id=${encodeURIComponent(this.yandexClientId)}` +
@@ -206,13 +214,13 @@ export class OAuthController {
       throw new Error("Yandex client_secret is not configured on server");
     }
 
-    // Exchange Yandex code for Yandex tokens
-    const yandexCallbackUri = `${this.baseUrl}/oauth/yandex/callback`;
+    // Exchange Yandex code for Yandex tokens using the callback URI used during authorization
+    const callbackUri = pending.yandexCallbackUri || this.yandexCallbackUri;
     const yandexTokens = await exchangeCodeForToken({
       code: query.code,
       clientId: this.yandexClientId,
       clientSecret: this.yandexClientSecret,
-      redirectUri: yandexCallbackUri,
+      redirectUri: callbackUri,
     });
 
     // Generate ChatGPT authorization code
@@ -384,5 +392,12 @@ export class OAuthController {
       this.storage.revokeToken(token);
     }
     return { status: "ok" };
+  }
+
+  /**
+   * Get the active Yandex callback URI
+   */
+  getYandexCallbackUri(): string {
+    return this.yandexCallbackUri;
   }
 }

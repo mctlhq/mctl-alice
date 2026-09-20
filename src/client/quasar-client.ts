@@ -254,6 +254,12 @@ export class QuasarClient {
     return res.json();
   }
 
+  async getUserDevices(): Promise<any> {
+    return this.request("https://iot.quasar.yandex.ru/m/user/devices", {
+      method: "GET",
+    });
+  }
+
   async getScenarios(): Promise<any[]> {
     const data = await this.request("https://iot.quasar.yandex.ru/m/user/scenarios", {
       method: "GET",

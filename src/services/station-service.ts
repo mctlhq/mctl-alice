@@ -158,17 +158,73 @@ export class StationService {
   }
 
   /**
-   * Fetch user info with simple in-memory caching
+   * Fetch user info with simple in-memory caching and fallback to Quasar client if IoT token is missing/forbidden
    */
   async getUserInfo(forceRefresh = false): Promise<YandexUserInfo> {
     const now = Date.now();
     if (!forceRefresh && this.cachedUserInfo && now - this.cacheTimestamp < this.CACHE_TTL_MS) {
       return this.cachedUserInfo;
     }
-    const info = await this.getClient().getUserInfo();
-    this.cachedUserInfo = info;
-    this.cacheTimestamp = now;
-    return info;
+    try {
+      const info = await this.getClient().getUserInfo();
+      this.cachedUserInfo = info;
+      this.cacheTimestamp = now;
+      return info;
+    } catch (err: any) {
+      if (this.quasarClient && this.quasarClient.hasCookie()) {
+        try {
+          const quasarInfo = await this.getUserInfoFromQuasar();
+          this.cachedUserInfo = quasarInfo;
+          this.cacheTimestamp = now;
+          return quasarInfo;
+        } catch {
+          // fall through
+        }
+      }
+      throw err;
+    }
+  }
+
+  private async getUserInfoFromQuasar(): Promise<YandexUserInfo> {
+    if (!this.quasarClient || !this.quasarClient.hasCookie()) {
+      throw new Error("Quasar client not configured with cookie");
+    }
+
+    const [quasarData, scenarios] = await Promise.all([
+      this.quasarClient.getUserDevices(),
+      this.quasarClient.getScenarios().catch(() => []),
+    ]);
+
+    const devices: YandexDevice[] = [];
+    const rooms: YandexRoom[] = (quasarData.rooms || []).map((r: any) => {
+      const roomDeviceIds: string[] = [];
+      for (const d of r.devices || []) {
+        devices.push({ ...d, room: r.id });
+        roomDeviceIds.push(d.id);
+      }
+      return {
+        id: r.id,
+        name: r.name,
+        devices: roomDeviceIds,
+      };
+    });
+
+    for (const s of quasarData.speakers || []) {
+      devices.push(s);
+    }
+
+    return {
+      status: quasarData.status || "ok",
+      request_id: quasarData.request_id || "",
+      rooms,
+      groups: quasarData.groups || [],
+      devices,
+      scenarios: scenarios.map((s: any) => ({
+        id: s.id,
+        name: s.name,
+        is_active: s.is_active ?? true,
+      })),
+    };
   }
 
   /**

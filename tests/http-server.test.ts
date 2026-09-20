@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import http from "node:http";
 import { createHttpServer } from "../src/server/http-server.js";
 import { getOpenApiSpec } from "../src/server/openapi.js";
+import { OAuthStorage } from "../src/storage/oauth-storage.js";
 
 describe("HTTP Server & ChatGPT REST API", () => {
   let server: http.Server;
@@ -467,5 +468,142 @@ describe("HTTP Server & ChatGPT REST API", () => {
     expect(res.status).toBe(302);
     const location = res.headers.get("location");
     expect(location).toContain("https://oauth.yandex.ru/authorize");
+  });
+});
+
+describe("HTTP Server with authRequired: true (OAuth & RFC 9728 discovery)", () => {
+  let authServer: http.Server;
+  const AUTH_PORT = 8191;
+  const authBaseUrl = `http://localhost:${AUTH_PORT}`;
+  let oauthStorage: OAuthStorage;
+  const validBearerToken = "valid_mcp_access_token_xyz";
+
+  beforeAll(async () => {
+    oauthStorage = new OAuthStorage(":memory:");
+    oauthStorage.saveToken({
+      accessToken: validBearerToken,
+      clientId: "test_client",
+      yandexAccessToken: "mock_yandex_token",
+      scope: "iot:view iot:control",
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 3600000,
+    });
+
+    authServer = createHttpServer(AUTH_PORT, {
+      publicBaseUrl: authBaseUrl,
+      authRequired: true,
+      oauthStorage,
+      enableSampler: false,
+    });
+    await new Promise<void>((resolve) => authServer.listen(AUTH_PORT, resolve));
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve) => authServer.close(() => resolve()));
+  });
+
+  it("should return 401 with WWW-Authenticate header on unauthenticated GET /mcp (RFC 9728 probe)", async () => {
+    const res = await fetch(`${authBaseUrl}/mcp`, {
+      method: "GET",
+      headers: { Accept: "*/*" },
+    });
+    expect(res.status).toBe(401);
+    const authHeader = res.headers.get("www-authenticate");
+    expect(authHeader).toBeDefined();
+    expect(authHeader).toContain(`Bearer realm="mctl-alice"`);
+    expect(authHeader).toContain(`resource_metadata="${authBaseUrl}/.well-known/oauth-protected-resource/mcp"`);
+    const data = await res.json();
+    expect(data.error).toBe("authentication required");
+  });
+
+  it("should return 401 with WWW-Authenticate header on unauthenticated POST /mcp", async () => {
+    const res = await fetch(`${authBaseUrl}/mcp`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "test", version: "1.0" } },
+      }),
+    });
+    expect(res.status).toBe(401);
+    const authHeader = res.headers.get("www-authenticate");
+    expect(authHeader).toBeDefined();
+    expect(authHeader).toContain(`Bearer realm="mctl-alice"`);
+    expect(authHeader).toContain(`resource_metadata="${authBaseUrl}/.well-known/oauth-protected-resource/mcp"`);
+  });
+
+  it("should return 401 with WWW-Authenticate on unauthenticated GET /sse", async () => {
+    const res = await fetch(`${authBaseUrl}/sse`, {
+      method: "GET",
+      headers: { Accept: "text/event-stream" },
+    });
+    expect(res.status).toBe(401);
+    const authHeader = res.headers.get("www-authenticate");
+    expect(authHeader).toContain(`Bearer realm="mctl-alice"`);
+  });
+
+  it("should return 401 with error=invalid_token on invalid Bearer token", async () => {
+    const res = await fetch(`${authBaseUrl}/mcp`, {
+      method: "GET",
+      headers: { Authorization: "Bearer bad_invalid_token" },
+    });
+    expect(res.status).toBe(401);
+    const authHeader = res.headers.get("www-authenticate");
+    expect(authHeader).toContain(`error="invalid_token"`);
+  });
+
+  it("should return 200 JSON on GET /mcp with valid Bearer token and Accept: application/json (not hang in SSE)", async () => {
+    const res = await fetch(`${authBaseUrl}/mcp`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${validBearerToken}`,
+        Accept: "application/json",
+      },
+    });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.service).toBe("mctl-alice");
+    expect(data.endpoint).toBe("/mcp");
+    expect(data.status).toBe("ready");
+  });
+
+  it("should succeed with POST /mcp using valid Bearer token", async () => {
+    const res = await fetch(`${authBaseUrl}/mcp`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${validBearerToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 42,
+        method: "tools/list",
+      }),
+    });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.id).toBe(42);
+    expect(data.result.tools).toBeDefined();
+  });
+
+  it("should return 401 on unauthenticated /api/devices when authRequired: true", async () => {
+    const res = await fetch(`${authBaseUrl}/api/devices`);
+    expect(res.status).toBe(401);
+  });
+
+  it("should keep /api/info, /.well-known/*, and / public even when authRequired: true", async () => {
+    const infoRes = await fetch(`${authBaseUrl}/api/info`);
+    expect(infoRes.status).toBe(200);
+
+    const prmRes = await fetch(`${authBaseUrl}/.well-known/oauth-protected-resource/mcp`);
+    expect(prmRes.status).toBe(200);
+
+    const asmRes = await fetch(`${authBaseUrl}/.well-known/oauth-authorization-server`);
+    expect(asmRes.status).toBe(200);
+
+    const landingRes = await fetch(`${authBaseUrl}/`);
+    expect(landingRes.status).toBe(200);
   });
 });

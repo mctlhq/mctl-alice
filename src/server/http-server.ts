@@ -122,7 +122,7 @@ export function createMcpServer(service: StationService | (() => StationService)
   const server = new Server(
     {
       name: "mctl-alice",
-      version: "1.7.2",
+      version: "1.7.3",
     },
     {
       capabilities: {
@@ -256,7 +256,7 @@ export function createHttpServer(
         result: {
           protocolVersion: rpcReq.params?.protocolVersion || "2024-11-05",
           capabilities: { tools: {} },
-          serverInfo: { name: "mctl-alice", version: "1.7.2" },
+          serverInfo: { name: "mctl-alice", version: "1.7.3" },
         },
       };
     }
@@ -324,7 +324,7 @@ export function createHttpServer(
     // Health check for Kubernetes probes
     if (url.pathname === "/healthz" || url.pathname === "/readyz") {
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ status: "ok", service: "mctl-alice", version: "1.7.2" }));
+      res.end(JSON.stringify({ status: "ok", service: "mctl-alice", version: "1.7.3" }));
       return;
     }
 
@@ -388,7 +388,7 @@ export function createHttpServer(
       const state = url.searchParams.get("state") || "";
       console.log(`[OAuth] /oauth/authorize client_id=${clientId}, redirect_uri=${redirectUri}, state=${state}`);
 
-      const result = oauthController.handleAuthorize({
+      const result = await oauthController.handleAuthorize({
         client_id: clientId,
         redirect_uri: redirectUri,
         response_type: url.searchParams.get("response_type") || undefined,
@@ -1089,7 +1089,7 @@ export function createHttpServer(
       JSON.stringify({
         service: "mctl-alice",
         description: "Yandex Alice Smart Speaker MCP & REST Server for ChatGPT",
-        version: "1.7.2",
+        version: "1.7.3",
         endpoints: {
           openapi: "/openapi.json",
           sse: "/sse",

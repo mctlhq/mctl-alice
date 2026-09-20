@@ -104,16 +104,30 @@ export class OAuthController {
 
     try {
       const u = new URL(redirectUri);
-      // Allow OpenAI / ChatGPT domains
+      // Allow OpenAI / ChatGPT and Anthropic / Claude domains
       if (
         u.hostname === "chatgpt.com" ||
         u.hostname.endsWith(".chatgpt.com") ||
         u.hostname === "chat.openai.com" ||
         u.hostname === "platform.openai.com" ||
+        u.hostname === "claude.ai" ||
+        u.hostname.endsWith(".claude.ai") ||
+        u.hostname === "anthropic.com" ||
+        u.hostname.endsWith(".anthropic.com") ||
         u.hostname === "localhost" ||
         u.hostname === "127.0.0.1"
       ) {
         return true;
+      }
+
+      // If clientId is a URL, allow redirect to the same origin
+      if (clientId && (clientId.startsWith("https://") || clientId.startsWith("http://"))) {
+        try {
+          const clientUrl = new URL(clientId);
+          if (clientUrl.origin === u.origin) {
+            return true;
+          }
+        } catch {}
       }
     } catch {
       return false;
@@ -130,10 +144,62 @@ export class OAuthController {
   }
 
   /**
-   * Handle /oauth/authorize from ChatGPT
+   * Resolve and cache Client ID Metadata Document (draft-ietf-oauth-client-id-metadata-document)
+   * if clientId is an HTTPS URL.
+   */
+  async resolveClientMetadata(clientId: string): Promise<boolean> {
+    if (!clientId.startsWith("https://")) return false;
+
+    // Check if already in storage
+    const existing = this.storage.getClient(clientId);
+    if (existing) return true;
+
+    // Fast-path known clients like Claude to avoid remote network latency
+    if (clientId === "https://claude.ai/oauth/mcp-oauth-client-metadata") {
+      this.storage.saveClient({
+        clientId,
+        clientSecret: "",
+        clientName: "Claude",
+        redirectUris: ["https://claude.ai/api/mcp/auth_callback"],
+        createdAt: Date.now(),
+      });
+      return true;
+    }
+
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 4000);
+      const res = await fetch(clientId, {
+        headers: { Accept: "application/json" },
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+
+      if (!res.ok) return false;
+      const data = (await res.json()) as any;
+      if (data && typeof data === "object") {
+        const redirectUris = Array.isArray(data.redirect_uris) ? data.redirect_uris : [];
+        const clientName = data.client_name || "Remote MCP Client";
+        this.storage.saveClient({
+          clientId,
+          clientSecret: "",
+          clientName,
+          redirectUris,
+          createdAt: Date.now(),
+        });
+        return true;
+      }
+    } catch (err: any) {
+      console.warn(`[OAuth] Failed to resolve client metadata document for ${clientId}:`, err.message);
+    }
+    return false;
+  }
+
+  /**
+   * Handle /oauth/authorize from ChatGPT / Claude
    * Returns redirect URL to Yandex OAuth
    */
-  handleAuthorize(params: {
+  async handleAuthorize(params: {
     client_id: string;
     redirect_uri: string;
     response_type?: string;
@@ -141,9 +207,13 @@ export class OAuthController {
     code_challenge?: string;
     code_challenge_method?: string;
     scope?: string;
-  }): { redirectUrl: string } | { error: string; description: string; status: number } {
+  }): Promise<{ redirectUrl: string } | { error: string; description: string; status: number }> {
     if (!params.client_id) {
       return { error: "invalid_request", description: "client_id is required", status: 400 };
+    }
+
+    if (params.client_id.startsWith("https://")) {
+      await this.resolveClientMetadata(params.client_id);
     }
 
     if (!params.redirect_uri || !this.isAllowedRedirectUri(params.redirect_uri, params.client_id)) {
@@ -203,6 +273,7 @@ export class OAuthController {
       errUrl.searchParams.set("error", query.error);
       if (query.error_description) errUrl.searchParams.set("error_description", query.error_description);
       if (pending.clientState) errUrl.searchParams.set("state", pending.clientState);
+      errUrl.searchParams.set("iss", this.baseUrl);
       return { redirectUrl: errUrl.toString() };
     }
 
@@ -223,7 +294,7 @@ export class OAuthController {
       redirectUri: callbackUri,
     });
 
-    // Generate ChatGPT authorization code
+    // Generate ChatGPT / Claude authorization code
     const chatgptCode = `code_${crypto.randomUUID().replace(/-/g, "")}`;
     const expiresAt = Date.now() + 5 * 60 * 1000; // 5 minutes TTL
 
@@ -241,12 +312,13 @@ export class OAuthController {
       expiresAt,
     });
 
-    // Redirect user back to ChatGPT
+    // Redirect user back to ChatGPT / Claude with RFC 9207 iss
     const redirectUrl = new URL(pending.redirectUri);
     redirectUrl.searchParams.set("code", chatgptCode);
     if (pending.clientState) {
       redirectUrl.searchParams.set("state", pending.clientState);
     }
+    redirectUrl.searchParams.set("iss", this.baseUrl);
 
     return { redirectUrl: redirectUrl.toString() };
   }
@@ -296,6 +368,11 @@ export class OAuthController {
         if (!this.verifyPkce(body.code_verifier, authCode.codeChallenge)) {
           throw new Error("PKCE verification failed: code_verifier does not match code_challenge");
         }
+      }
+
+      // Optional redirect_uri validation (RFC 6749 section 4.1.3)
+      if (body.redirect_uri && authCode.redirectUri && body.redirect_uri !== authCode.redirectUri) {
+        throw new Error("Parameter 'redirect_uri' does not match the authorization request");
       }
 
       // Issue Bearer tokens

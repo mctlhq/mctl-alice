@@ -349,5 +349,16 @@ describe("HTTP Server & ChatGPT REST API", () => {
     expect(clientRedirect.pathname).toBe("/callback");
     expect(clientRedirect.searchParams.get("error")).toBe("access_denied");
     expect(clientRedirect.searchParams.get("state")).toBe("client_state_val");
+    expect(clientRedirect.searchParams.get("iss")).toBe(baseUrl);
+  });
+
+  it("should handle Claude.ai MCP OAuth authorization on /oauth/authorize", async () => {
+    const res = await fetch(
+      `${baseUrl}/oauth/authorize?response_type=code&client_id=https%3A%2F%2Fclaude.ai%2Foauth%2Fmcp-oauth-client-metadata&redirect_uri=https%3A%2F%2Fclaude.ai%2Fapi%2Fmcp%2Fauth_callback&code_challenge=test&code_challenge_method=S256&state=claude_state_test`,
+      { redirect: "manual" }
+    );
+    expect(res.status).toBe(302);
+    const location = res.headers.get("location");
+    expect(location).toContain("https://oauth.yandex.ru/authorize");
   });
 });

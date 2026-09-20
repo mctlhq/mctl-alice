@@ -30,6 +30,7 @@ import { TelemetryStorage } from "../storage/telemetry-storage.js";
 import { TelemetrySampler } from "../services/telemetry-sampler.js";
 import { OAuthStorage } from "../storage/oauth-storage.js";
 import { OAuthController } from "../auth/oauth-controller.js";
+import { initQrAuth, checkQrAuthStatus } from "../auth/yandex-qr-auth.js";
 
 const DEFAULT_CLIENT_ID = "c0ebe342af7d48fbbbfcf2d2eedb8f9e";
 
@@ -185,8 +186,8 @@ try {
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap">
-<link rel="stylesheet" href="/assets/tokens.css?v=1.8.3">
-<link rel="stylesheet" href="/assets/components.css?v=1.8.3">
+<link rel="stylesheet" href="/assets/tokens.css?v=1.9.0">
+<link rel="stylesheet" href="/assets/components.css?v=1.9.0">
 </head>
 <body>
 <header class="wrap topbar">
@@ -234,7 +235,7 @@ try {
     </span>
   </div>
 </footer>
-<script src="/assets/site.js?v=1.8.3"></script>
+<script src="/assets/site.js?v=1.9.0"></script>
 ${scriptHtml}
 </body>
 </html>`;
@@ -1150,27 +1151,137 @@ export function createHttpServer(
           Официальный IoT API Яндекса не позволяет произвольно воспроизводить текст (TTS) или выполнять динамические текстовые команды на колонках Алиса без заранее созданных вручную сценариев.<br>
           Quasar API подключается через веб-сессию Яндекса и разблокирует прямой синтез речи и произвольные команды на всех ваших колонках.
         </p>
-        <h3 style="margin-top: 24px; margin-bottom: 12px;" data-i18n="cookie_instructions_title">Инструкция по настройке:</h3>
-        <ol class="steps">
-          <li data-i18n-html="cookie_step1">Откройте <a href="https://yandex.ru/quasar" target="_blank" rel="noopener">yandex.ru/quasar</a> или <a href="https://yandex.ru" target="_blank" rel="noopener">yandex.ru</a> в браузере под вашим аккаунтом Яндекса.</li>
-          <li data-i18n-html="cookie_step2">Откройте консоль разработчика DevTools (нажмите <code>F12</code> или <code>Cmd + Option + I</code> на Mac).</li>
-          <li data-i18n-html="cookie_step3">Перейдите на вкладку <strong>Application</strong> (или <strong>Storage</strong>) → <strong>Cookies</strong> → <code>https://yandex.ru</code>.</li>
-          <li data-i18n-html="cookie_step4">Найдите строку с куки <code>Session_id</code> и скопируйте её значение (или скопируйте всю строку заголовка Cookie).</li>
-          <li data-i18n-html="cookie_step5">Вставьте в поле ввода ниже и нажмите <strong>Сохранить и проверить</strong>.</li>
-        </ol>
-        <form id="cookieForm" style="margin-top: 20px;">
-          <label for="cookieInput" style="display: block; font-weight: 500; font-size: 14px; margin-bottom: 6px;" data-i18n="cookie_label">Значение Cookie (Session_id):</label>
-          <textarea id="cookieInput" class="form-textarea" placeholder="Session_id=3:17... или значение Session_id" data-i18n-placeholder="cookie_placeholder" required spellcheck="false"></textarea>
-          <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
-            <button type="submit" id="saveBtn" class="btn btn-primary" data-i18n="cookie_btn_save">Сохранить и проверить</button>
-            <a href="/" class="btn btn-secondary" data-i18n="cookie_btn_home">Вернуться на главную</a>
+
+        <div class="qr-card">
+          <h3 style="margin: 0 0 8px;" data-i18n="cookie_qr_title">Быстрая настройка через QR-код (Рекомендуется)</h3>
+          <p style="color: var(--surface-fg-muted); margin: 0 0 16px; max-width: 540px; font-size: 14px;" data-i18n="cookie_qr_desc">
+            Отсканируйте QR-код камерой телефона или приложением Яндекс. Сессия будет настроена автоматически без ручного поиска кук.
+          </p>
+          <div class="qr-frame" id="qr-frame">
+            <div class="qr-spinner" id="qr-spinner"></div>
           </div>
-        </form>
-        <div id="status" class="alert" style="display: none;"></div>
+          <div id="qr-status" class="alert alert-info" style="margin-top: 12px; max-width: 480px; width: 100%;" data-i18n="cookie_qr_waiting">
+            Ожидание сканирования QR-кода...
+          </div>
+          <div style="display: flex; gap: 10px; margin-top: 14px; flex-wrap: wrap; justify-content: center;">
+            <a id="qr-mobile-btn" href="#" target="_blank" rel="noopener" class="btn btn-primary" style="display: none;" data-i18n="cookie_qr_mobile_btn">Открыть в приложении Яндекс</a>
+            <button id="qr-refresh-btn" type="button" class="btn btn-secondary" style="display: none;" data-i18n="cookie_qr_refresh">Обновить QR-код</button>
+            <a id="qr-home-btn" href="/" class="btn btn-primary" style="display: none;" data-i18n="cookie_btn_home">Вернуться на главную</a>
+          </div>
+        </div>
+
+        <details class="faq-item" style="margin-top: 24px; border: 1px solid var(--surface-line); border-radius: var(--mctl-radius-md); padding: 14px 18px;">
+          <summary style="font-weight: 500; cursor: pointer;" data-i18n="cookie_manual_toggle">Или настроить вручную через DevTools...</summary>
+          <div style="margin-top: 16px;">
+            <h4 style="margin: 0 0 8px;" data-i18n="cookie_instructions_title">Инструкция по настройке:</h4>
+            <ol class="steps" style="font-size: 14px;">
+              <li data-i18n-html="cookie_step1">Откройте <a href="https://yandex.ru/quasar" target="_blank" rel="noopener">yandex.ru/quasar</a> или <a href="https://yandex.ru" target="_blank" rel="noopener">yandex.ru</a> в браузере под вашим аккаунтом Яндекса.</li>
+              <li data-i18n-html="cookie_step2">Откройте консоль разработчика DevTools (нажмите <code>F12</code> или <code>Cmd + Option + I</code> на Mac).</li>
+              <li data-i18n-html="cookie_step3">Перейдите на вкладку <strong>Application</strong> (или <strong>Storage</strong>) → <strong>Cookies</strong> → <code>https://yandex.ru</code>.</li>
+              <li data-i18n-html="cookie_step4">Найдите строку с куки <code>Session_id</code> и скопируйте её значение (или скопируйте всю строку заголовка Cookie).</li>
+              <li data-i18n-html="cookie_step5">Вставьте в поле ввода ниже и нажмите <strong>Сохранить и проверить</strong>.</li>
+            </ol>
+            <form id="cookieForm" style="margin-top: 16px;">
+              <label for="cookieInput" style="display: block; font-weight: 500; font-size: 14px; margin-bottom: 6px;" data-i18n="cookie_label">Значение Cookie (Session_id):</label>
+              <textarea id="cookieInput" class="form-textarea" placeholder="Session_id=3:17... или значение Session_id" data-i18n-placeholder="cookie_placeholder" required spellcheck="false"></textarea>
+              <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 12px;">
+                <button type="submit" id="saveBtn" class="btn btn-primary" data-i18n="cookie_btn_save">Сохранить и проверить</button>
+                <a href="/" class="btn btn-secondary" data-i18n="cookie_btn_home">Вернуться на главную</a>
+              </div>
+            </form>
+            <div id="status" class="alert" style="display: none; margin-top: 12px;"></div>
+          </div>
+        </details>
       `;
 
       const script = `
       <script>
+        // QR Code Flow
+        const qrFrame = document.getElementById('qr-frame');
+        const qrStatus = document.getElementById('qr-status');
+        const qrMobileBtn = document.getElementById('qr-mobile-btn');
+        const qrRefreshBtn = document.getElementById('qr-refresh-btn');
+        const qrHomeBtn = document.getElementById('qr-home-btn');
+
+        let pollTimer = null;
+        let currentSessionId = null;
+
+        function getI18nMsg(key, fallback) {
+          const lang = document.documentElement.getAttribute('lang') || 'ru';
+          if (window.mctlAliceTranslations && window.mctlAliceTranslations[lang] && window.mctlAliceTranslations[lang][key]) {
+            return window.mctlAliceTranslations[lang][key];
+          }
+          return fallback;
+        }
+
+        async function loadQrCode() {
+          if (pollTimer) clearInterval(pollTimer);
+          qrFrame.innerHTML = '<div class="qr-spinner"></div>';
+          qrStatus.className = 'alert alert-info';
+          qrStatus.innerText = getI18nMsg('cookie_qr_waiting', 'Ожидание сканирования QR-кода...');
+          qrMobileBtn.style.display = 'none';
+          qrRefreshBtn.style.display = 'none';
+          qrHomeBtn.style.display = 'none';
+
+          try {
+            const res = await fetch('/auth/qr-code');
+            const data = await res.json();
+            if (data.status === 'ok' && data.qrSvg) {
+              qrFrame.innerHTML = data.qrSvg;
+              currentSessionId = data.sessionId;
+              if (data.link) {
+                qrMobileBtn.href = data.link;
+                qrMobileBtn.style.display = 'inline-flex';
+              }
+              qrRefreshBtn.style.display = 'inline-flex';
+              startPolling(data.sessionId);
+            } else {
+              qrFrame.innerHTML = '<div style="color: var(--surface-fg-muted); padding: 20px;">❌</div>';
+              qrStatus.className = 'alert alert-error';
+              qrStatus.innerText = (data.message || 'Ошибка загрузки QR-кода');
+              qrRefreshBtn.style.display = 'inline-flex';
+            }
+          } catch (err) {
+            qrFrame.innerHTML = '<div style="color: var(--surface-fg-muted); padding: 20px;">❌</div>';
+            qrStatus.className = 'alert alert-error';
+            qrStatus.innerText = 'Ошибка сети: ' + err.message;
+            qrRefreshBtn.style.display = 'inline-flex';
+          }
+        }
+
+        function startPolling(sessionId) {
+          pollTimer = setInterval(async () => {
+            try {
+              const res = await fetch('/auth/qr-status?sessionId=' + encodeURIComponent(sessionId));
+              const data = await res.json();
+              if (data.status === 'ok') {
+                clearInterval(pollTimer);
+                qrStatus.className = 'alert alert-success';
+                qrStatus.innerText = getI18nMsg('cookie_qr_success', '✅ Авторизация успешна! Quasar Cookie настроены автоматически.');
+                qrMobileBtn.style.display = 'none';
+                qrRefreshBtn.style.display = 'none';
+                qrHomeBtn.style.display = 'inline-flex';
+              } else if (data.status === 'expired') {
+                clearInterval(pollTimer);
+                qrStatus.className = 'alert alert-error';
+                qrStatus.innerText = getI18nMsg('cookie_qr_expired', 'Срок действия QR-кода истёк. Нажмите «Обновить QR-код».');
+                qrRefreshBtn.style.display = 'inline-flex';
+              } else if (data.status === 'error') {
+                clearInterval(pollTimer);
+                qrStatus.className = 'alert alert-error';
+                qrStatus.innerText = '❌ ' + (data.message || 'Ошибка авторизации');
+                qrRefreshBtn.style.display = 'inline-flex';
+              }
+            } catch (e) {
+              // network hiccup, retry next tick
+            }
+          }, 2000);
+        }
+
+        qrRefreshBtn.addEventListener('click', loadQrCode);
+        loadQrCode();
+
+        // Manual Form Flow
         const form = document.getElementById('cookieForm');
         const input = document.getElementById('cookieInput');
         const statusEl = document.getElementById('status');
@@ -1221,6 +1332,79 @@ export function createHttpServer(
       return;
     }
 
+    // QR Code generation endpoint
+    if (url.pathname === "/auth/qr-code" && req.method === "GET") {
+      try {
+        const qrData = await initQrAuth();
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ status: "ok", ...qrData }));
+      } catch (err: any) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ status: "error", message: err.message }));
+      }
+      return;
+    }
+
+    // QR Code status check endpoint
+    if (url.pathname === "/auth/qr-status" && req.method === "GET") {
+      const sessionId = url.searchParams.get("sessionId");
+      if (!sessionId) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ status: "error", message: "sessionId missing" }));
+        return;
+      }
+      try {
+        const result = await checkQrAuthStatus(sessionId);
+        if (result.status === "ok" && result.cookie) {
+          const cookie = result.cookie;
+          saveCookieToEnvFile(cookie);
+          saveCookieToKeychain(cookie);
+
+          quasarClient = new QuasarClient({ cookie, useKeychain: true, persistEnv: true });
+          stationService = new StationService(undefined, quasarClient);
+
+          // Optionally populate OAuth token via token_by_sessionid if token missing
+          try {
+            const tokenRes = await fetch(
+              "https://mobileproxy.passport.yandex.net/1/bundle/oauth/token_by_sessionid",
+              {
+                method: "POST",
+                headers: {
+                  "Ya-Client-Host": "passport.yandex.ru",
+                  "Ya-Client-Cookie": cookie,
+                  "Content-Type": "application/x-www-form-urlencoded",
+                  "User-Agent":
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+                },
+                body: new URLSearchParams({
+                  client_id: "c0ebe342af7d48fbbbfcf2d2eedb8f9e",
+                  client_secret: "ad0a908f0aa341a182a37ecd75bc319e",
+                }).toString(),
+              }
+            );
+            if (tokenRes.ok) {
+              const tokenData = (await tokenRes.json()) as any;
+              if (tokenData.access_token) {
+                saveTokenToEnvFile(tokenData.access_token);
+                saveTokenToKeychain(tokenData.access_token, "mctl-alice");
+                if (tokenData.refresh_token) {
+                  saveRefreshTokenToEnvFile(tokenData.refresh_token);
+                  saveTokenToKeychain(tokenData.refresh_token, "mctl-alice-refresh-token");
+                }
+              }
+            }
+          } catch {
+            // ignore optional token autofill
+          }
+        }
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(result));
+      } catch (err: any) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ status: "error", message: err.message }));
+      }
+      return;
+    }
 
     // Save Quasar Cookie Endpoint
     if (url.pathname === "/auth/save-cookie" && req.method === "POST") {

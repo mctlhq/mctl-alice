@@ -580,3 +580,55 @@ footer a {
     justify-content: center;
   }
 }
+
+/* ── QR code auth ────────────────────────────────────────────────────── */
+
+.qr-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 28px 24px;
+  background: var(--surface-card);
+  border: 1px solid var(--surface-line);
+  border-radius: var(--mctl-radius-lg);
+  margin-block: 20px 28px;
+}
+
+.qr-frame {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: #ffffff;
+  border-radius: var(--mctl-radius-md);
+  border: 1px solid var(--surface-line);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+  margin-block: 18px;
+  width: 220px;
+  height: 220px;
+  overflow: hidden;
+}
+
+.qr-frame svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.qr-spinner {
+  display: inline-block;
+  width: 38px;
+  height: 38px;
+  border: 3px solid var(--surface-line);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: qr-spin 0.85s linear infinite;
+}
+
+@keyframes qr-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+

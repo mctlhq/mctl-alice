@@ -1350,7 +1350,7 @@ export function createHttpServer(
       const creds = user ? await oauthStorage.getUserCredentials(user.id) : null;
       const grants =
         user && (oauthStorage as any).listUserGrants
-          ? (oauthStorage as any).listUserGrants(user.id)
+          ? await (oauthStorage as any).listUserGrants(user.id)
           : [];
 
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
@@ -1409,7 +1409,7 @@ export function createHttpServer(
       const body = await parseRequestBody(req);
       const clientIdParam = body?.client_id;
       if (user && clientIdParam && (oauthStorage as any).deleteUserClientTokens) {
-        (oauthStorage as any).deleteUserClientTokens(user.id, clientIdParam);
+        await (oauthStorage as any).deleteUserClientTokens(user.id, clientIdParam);
       }
       res.writeHead(302, { Location: "/account?grant_revoked=true" });
       res.end();

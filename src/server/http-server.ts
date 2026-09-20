@@ -1,6 +1,8 @@
 import http from "node:http";
+import { randomUUID } from "node:crypto";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
@@ -73,11 +75,12 @@ function getServiceForRequest(
   return defaultService;
 }
 
-export function createMcpServer(service: StationService): Server {
+export function createMcpServer(service: StationService | (() => StationService)): Server {
+  const getService = typeof service === "function" ? service : () => service;
   const server = new Server(
     {
       name: "mctl-alice",
-      version: "1.0.0",
+      version: "1.2.1",
     },
     {
       capabilities: {
@@ -94,7 +97,7 @@ export function createMcpServer(service: StationService): Server {
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
-    return handleToolCall(name, args, service);
+    return handleToolCall(name, args, getService());
   });
 
   return server;
@@ -119,7 +122,14 @@ export function createHttpServer(
   let quasarClient = new QuasarClient();
   let stationService = new StationService(undefined, quasarClient);
 
-  // Keep track of active SSE transports
+  // Streamable HTTP transport for ChatGPT Connectors & modern MCP clients
+  const streamableTransport = new StreamableHTTPServerTransport({
+    sessionIdGenerator: () => randomUUID(),
+  });
+  const streamableMcp = createMcpServer(() => stationService);
+  streamableMcp.connect(streamableTransport);
+
+  // Keep track of active legacy SSE transports
   const sseTransports = new Map<string, SSEServerTransport>();
 
   const server = http.createServer(async (req, res) => {
@@ -127,8 +137,9 @@ export function createHttpServer(
 
     // CORS headers
     res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Yandex-Cookie");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS, HEAD");
+    res.setHeader("Access-Control-Allow-Headers", "*");
+    res.setHeader("Access-Control-Expose-Headers", "*");
 
     if (req.method === "OPTIONS") {
       res.writeHead(204);
@@ -150,8 +161,34 @@ export function createHttpServer(
       return;
     }
 
+    // Modern MCP Streamable HTTP endpoint (for ChatGPT Connectors & Streamable HTTP clients)
+    const isStreamableHttp =
+      url.pathname === "/mcp" || url.pathname === "/sse" || url.pathname === "/mcp/sse";
+    const acceptsStreamable =
+      req.headers.accept?.includes("application/json") &&
+      req.headers.accept?.includes("text/event-stream");
+
+    if (isStreamableHttp && (acceptsStreamable || req.headers["mcp-session-id"])) {
+      try {
+        await streamableTransport.handleRequest(req, res);
+      } catch (err: any) {
+        if (!res.headersSent) {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      }
+      return;
+    }
+
     // MCP SSE endpoint for ChatGPT Connectors / remote MCP clients
-    if ((url.pathname === "/sse" || url.pathname === "/mcp/sse") && req.method === "GET") {
+    const isSseRequest =
+      (url.pathname === "/sse" ||
+        url.pathname === "/mcp/sse" ||
+        url.pathname === "/mcp" ||
+        (url.pathname === "/" && req.headers.accept?.includes("text/event-stream"))) &&
+      req.method === "GET";
+
+    if (isSseRequest) {
       try {
         const svc = getServiceForRequest(req, stationService, quasarClient);
         const transport = new SSEServerTransport("/messages", res);
@@ -174,7 +211,13 @@ export function createHttpServer(
     }
 
     // MCP messages endpoint for SSE transport
-    if ((url.pathname === "/messages" || url.pathname === "/mcp/messages") && req.method === "POST") {
+    const isMessagePost =
+      (url.pathname === "/messages" ||
+        url.pathname === "/mcp/messages" ||
+        (url.pathname === "/mcp" && url.searchParams.has("sessionId"))) &&
+      req.method === "POST";
+
+    if (isMessagePost) {
       const sessionId = url.searchParams.get("sessionId");
       const transport = sessionId ? sseTransports.get(sessionId) : undefined;
       if (!transport) {

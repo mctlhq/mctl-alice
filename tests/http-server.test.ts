@@ -127,6 +127,78 @@ describe("HTTP Server & ChatGPT REST API", () => {
     controller.abort();
   });
 
+  it("should handle modern ChatGPT Streamable HTTP initialize and tools/list", async () => {
+    // 1. initialize
+    const initRes = await fetch(`${baseUrl}/mcp`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2024-11-05",
+          capabilities: {},
+          clientInfo: { name: "chatgpt", version: "1.0.0" },
+        },
+      }),
+    });
+    expect(initRes.status).toBe(200);
+    const sessionId = initRes.headers.get("mcp-session-id");
+    expect(sessionId).toBeDefined();
+
+    // 2. notifications/initialized
+    const notifRes = await fetch(`${baseUrl}/mcp`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream",
+        "mcp-session-id": sessionId!,
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        method: "notifications/initialized",
+        params: {},
+      }),
+    });
+    expect(notifRes.status).toBe(202);
+
+    // 3. tools/list
+    const toolsRes = await fetch(`${baseUrl}/mcp`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream",
+        "mcp-session-id": sessionId!,
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/list",
+        params: {},
+      }),
+    });
+    expect(toolsRes.status).toBe(200);
+    const toolsBody = await toolsRes.text();
+    expect(toolsBody).toContain("alice_say_phrase");
+    expect(toolsBody).toContain("alice_send_command");
+  });
+
+  it("should handle SSE connection on /mcp as well", async () => {
+    const controller = new AbortController();
+    const res = await fetch(`${baseUrl}/mcp`, {
+      signal: controller.signal,
+      headers: { Accept: "text/event-stream" },
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/event-stream");
+    controller.abort();
+  });
+
   it("should return 404 for unknown session on /messages", async () => {
     const res = await fetch(`${baseUrl}/messages?sessionId=non-existent-session`, {
       method: "POST",

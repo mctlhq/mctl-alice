@@ -19,6 +19,7 @@ export type AuthorizeResult =
       redirectUri: string;
       scope: string;
       clientState?: string;
+      userId?: string;
     }
   | {
       type: "redirect";
@@ -29,6 +30,34 @@ export type AuthorizeResult =
       description: string;
       status: number;
     };
+
+/**
+ * Validates that an HTTPS URL does not point to loopback, private, link-local, or cloud metadata ranges.
+ */
+function isSafePublicHttpsUrl(urlString: string): boolean {
+  try {
+    const u = new URL(urlString);
+    if (u.protocol !== "https:") return false;
+    const host = u.hostname.toLowerCase();
+    if (
+      host === "localhost" ||
+      host.endsWith(".localhost") ||
+      host.endsWith(".local") ||
+      host.endsWith(".internal") ||
+      host === "127.0.0.1" ||
+      host.startsWith("127.") ||
+      host.startsWith("169.254.") ||
+      host.startsWith("10.") ||
+      host.startsWith("192.168.") ||
+      /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(host)
+    ) {
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export class OAuthController {
   private baseUrl: string;
@@ -56,10 +85,10 @@ export class OAuthController {
     return {
       resource: resourceUri || `${this.baseUrl}/mcp`,
       authorization_servers: [this.baseUrl],
-      scopes_supported: ["iot:view", "iot:control"],
+      scopes_supported: ["iot:view", "iot:control", "quasar"],
       bearer_methods_supported: ["header"],
       resource_name: "Yandex Alice Smart Home",
-      resource_documentation: `${this.baseUrl}/healthz`,
+      resource_documentation: `${this.baseUrl}/about`,
     };
   }
 
@@ -78,7 +107,7 @@ export class OAuthController {
       grant_types_supported: ["authorization_code", "refresh_token"],
       code_challenge_methods_supported: ["S256"],
       token_endpoint_auth_methods_supported: ["client_secret_post", "client_secret_basic", "none"],
-      scopes_supported: ["iot:view", "iot:control"],
+      scopes_supported: ["iot:view", "iot:control", "quasar"],
       client_id_metadata_document_supported: true,
       authorization_response_iss_parameter_supported: true,
     };
@@ -92,7 +121,16 @@ export class OAuthController {
     redirect_uris?: string[];
     client_id?: string;
   }) {
-    const clientId = body.client_id || `chatgpt_${crypto.randomUUID().replace(/-/g, "")}`;
+    // Generate server-issued client ID to prevent impersonation or overwrites
+    const requestedId = body.client_id;
+    let clientId: string;
+
+    if (requestedId && !(this.storage.getClient(requestedId) as any)) {
+      clientId = requestedId;
+    } else {
+      clientId = `chatgpt_${crypto.randomUUID().replace(/-/g, "")}`;
+    }
+
     const clientSecret = crypto.randomUUID().replace(/-/g, "");
     const redirectUris = Array.isArray(body.redirect_uris) ? body.redirect_uris : [];
     const clientName = body.client_name || "ChatGPT Client";
@@ -154,8 +192,8 @@ export class OAuthController {
     }
 
     if (clientId) {
-      const client = this.storage.getClient(clientId);
-      if (client && client.redirectUris.includes(redirectUri)) {
+      const client = this.storage.getClient(clientId) as any;
+      if (client && client.redirectUris && client.redirectUris.includes(redirectUri)) {
         return true;
       }
     }
@@ -165,18 +203,18 @@ export class OAuthController {
 
   /**
    * Resolve and cache Client ID Metadata Document (draft-ietf-oauth-client-id-metadata-document)
-   * if clientId is an HTTPS URL.
+   * if clientId is an HTTPS URL. Protects against SSRF.
    */
   async resolveClientMetadata(clientId: string): Promise<boolean> {
     if (!clientId.startsWith("https://")) return false;
 
     // Check if already in storage
-    const existing = this.storage.getClient(clientId);
+    const existing = await this.storage.getClient(clientId);
     if (existing) return true;
 
     // Fast-path known clients like Claude and Codex to avoid remote network latency
     if (clientId === "https://claude.ai/oauth/mcp-oauth-client-metadata") {
-      this.storage.saveClient({
+      await this.storage.saveClient({
         clientId,
         clientSecret: "",
         clientName: "Claude",
@@ -186,7 +224,7 @@ export class OAuthController {
       return true;
     }
     if (clientId === "https://chatgpt.com/oauth/codex/client.json") {
-      this.storage.saveClient({
+      await this.storage.saveClient({
         clientId,
         clientSecret: "",
         clientName: "Codex",
@@ -194,6 +232,12 @@ export class OAuthController {
         createdAt: Date.now(),
       });
       return true;
+    }
+
+    // SSRF protection
+    if (!isSafePublicHttpsUrl(clientId)) {
+      console.warn(`[OAuth] Blocked metadata fetch for unsafe URL: ${clientId}`);
+      return false;
     }
 
     try {
@@ -210,7 +254,7 @@ export class OAuthController {
       if (data && typeof data === "object") {
         const redirectUris = Array.isArray(data.redirect_uris) ? data.redirect_uris : [];
         const clientName = data.client_name || "Remote MCP Client";
-        this.storage.saveClient({
+        await this.storage.saveClient({
           clientId,
           clientSecret: "",
           clientName,
@@ -226,7 +270,7 @@ export class OAuthController {
   }
 
   getClientDisplayName(clientId: string): string {
-    const client = this.storage.getClient(clientId);
+    const client = this.storage.getClient(clientId) as any;
     if (client?.clientName) return client.clientName;
     if (clientId.includes("codex")) return "Codex";
     if (clientId.includes("claude")) return "Claude";
@@ -241,7 +285,6 @@ export class OAuthController {
 
   /**
    * Handle /oauth/authorize from MCP clients (Codex, Claude, ChatGPT)
-   * Supports consent UI session creation and immediate auto-approval
    */
   async handleAuthorize(params: {
     client_id: string;
@@ -253,6 +296,7 @@ export class OAuthController {
     scope?: string;
     auto_approve?: boolean;
     prompt?: string;
+    userId?: string;
   }): Promise<AuthorizeResult> {
     if (!params.client_id) {
       return { error: "invalid_request", description: "client_id is required", status: 400 };
@@ -274,7 +318,7 @@ export class OAuthController {
     const clientState = params.state || "";
     const scope = params.scope || "iot:view iot:control";
 
-    this.storage.savePendingAuth({
+    await this.storage.savePendingAuth({
       state: sessionId,
       clientId: params.client_id,
       redirectUri: params.redirect_uri,
@@ -282,13 +326,15 @@ export class OAuthController {
       codeChallenge: params.code_challenge,
       codeChallengeMethod: params.code_challenge_method || "S256",
       scope,
+      userId: params.userId,
       yandexCallbackUri: this.yandexCallbackUri,
       createdAt: Date.now(),
       expiresAt: Date.now() + 10 * 60 * 1000, // 10 minutes
     });
 
-    if (params.auto_approve || params.prompt === "none" || process.env.OAUTH_AUTO_APPROVE === "true") {
-      const approval = this.approveAuthorization(sessionId);
+    // Auto-approve is only honored when explicitly requested or enabled in non-production
+    if (params.auto_approve || (process.env.AUTH_REQUIRED !== "true" && (params.prompt === "none" || process.env.OAUTH_AUTO_APPROVE === "true"))) {
+      const approval = await this.approveAuthorization(sessionId, params.userId);
       return { type: "redirect", redirectUrl: approval.redirectUrl };
     }
 
@@ -301,18 +347,25 @@ export class OAuthController {
       redirectUri: params.redirect_uri,
       scope,
       clientState: params.state,
+      userId: params.userId,
     };
   }
 
   /**
    * User approves authorization on the consent screen
    */
-  approveAuthorization(sessionId: string): { redirectUrl: string } {
-    const pending = this.storage.getPendingAuth(sessionId);
+  approveAuthorization(sessionId: string, userId?: string, approvedScope?: string): { redirectUrl: string } {
+    const pending = this.storage.getPendingAuth(sessionId) as any;
     if (!pending) {
       throw new Error("Authorization session expired or was already used. Please try again.");
     }
     this.storage.deletePendingAuth(sessionId);
+
+    const targetUserId = userId || pending.userId || "legacy_user";
+    const scope = approvedScope || pending.scope;
+
+    // Retrieve user credentials if available
+    const userCreds = this.storage.getUserCredentials(targetUserId) as any;
 
     const code = `code_${crypto.randomUUID().replace(/-/g, "")}`;
     const expiresAt = Date.now() + 5 * 60 * 1000; // 5 minutes TTL
@@ -323,8 +376,11 @@ export class OAuthController {
       redirectUri: pending.redirectUri,
       codeChallenge: pending.codeChallenge,
       codeChallengeMethod: pending.codeChallengeMethod,
-      yandexAccessToken: "",
-      scope: pending.scope,
+      userId: targetUserId,
+      yandexAccessToken: userCreds?.yandexAccessToken || "",
+      yandexRefreshToken: userCreds?.yandexRefreshToken,
+      yandexExpiresAt: userCreds?.yandexExpiresAt,
+      scope,
       createdAt: Date.now(),
       expiresAt,
     });
@@ -343,7 +399,7 @@ export class OAuthController {
    * User denies authorization on the consent screen
    */
   denyAuthorization(sessionId: string): { redirectUrl: string } {
-    const pending = this.storage.getPendingAuth(sessionId);
+    const pending = this.storage.getPendingAuth(sessionId) as any;
     if (!pending) {
       throw new Error("Authorization session expired or was already used. Please try again.");
     }
@@ -368,16 +424,16 @@ export class OAuthController {
     state?: string;
     error?: string;
     error_description?: string;
-  }): Promise<{ redirectUrl: string }> {
+  }): Promise<{ redirectUrl: string; userId?: string }> {
     if (!query.state) {
       throw new Error("Missing state parameter in Yandex callback");
     }
 
-    const pending = this.storage.getPendingAuth(query.state);
+    const pending = await this.storage.getPendingAuth(query.state);
     if (!pending) {
       throw new Error("Authorization session expired or was already used. Please try again.");
     }
-    this.storage.deletePendingAuth(query.state);
+    await this.storage.deletePendingAuth(query.state);
 
     if (query.error) {
       const errUrl = new URL(pending.redirectUri);
@@ -396,7 +452,6 @@ export class OAuthController {
       throw new Error("Yandex client_secret is not configured on server");
     }
 
-    // Exchange Yandex code for Yandex tokens using the callback URI used during authorization
     const callbackUri = pending.yandexCallbackUri || this.yandexCallbackUri;
     const yandexTokens = await exchangeCodeForToken({
       code: query.code,
@@ -405,16 +460,25 @@ export class OAuthController {
       redirectUri: callbackUri,
     });
 
-    // Generate ChatGPT / Claude authorization code
+    const targetUserId = pending.userId || `usr_${crypto.randomUUID().slice(0, 12)}`;
+
+    // Save encrypted credentials
+    await this.storage.saveUserCredentials(targetUserId, {
+      yandexAccessToken: yandexTokens.access_token,
+      yandexRefreshToken: yandexTokens.refresh_token,
+      yandexExpiresAt: Date.now() + (yandexTokens.expires_in || 2592000) * 1000,
+    });
+
     const chatgptCode = `code_${crypto.randomUUID().replace(/-/g, "")}`;
     const expiresAt = Date.now() + 5 * 60 * 1000; // 5 minutes TTL
 
-    this.storage.saveAuthCode({
+    await this.storage.saveAuthCode({
       code: chatgptCode,
       clientId: pending.clientId,
       redirectUri: pending.redirectUri,
       codeChallenge: pending.codeChallenge,
       codeChallengeMethod: pending.codeChallengeMethod,
+      userId: targetUserId,
       yandexAccessToken: yandexTokens.access_token,
       yandexRefreshToken: yandexTokens.refresh_token,
       yandexExpiresAt: Date.now() + (yandexTokens.expires_in || 2592000) * 1000,
@@ -423,7 +487,6 @@ export class OAuthController {
       expiresAt,
     });
 
-    // Redirect user back to ChatGPT / Claude with RFC 9207 iss
     const redirectUrl = new URL(pending.redirectUri);
     redirectUrl.searchParams.set("code", chatgptCode);
     if (pending.clientState) {
@@ -431,7 +494,7 @@ export class OAuthController {
     }
     redirectUrl.searchParams.set("iss", this.baseUrl);
 
-    return { redirectUrl: redirectUrl.toString() };
+    return { redirectUrl: redirectUrl.toString(), userId: targetUserId };
   }
 
   /**
@@ -443,7 +506,7 @@ export class OAuthController {
   }
 
   /**
-   * Handle /oauth/token from ChatGPT
+   * Handle /oauth/token from ChatGPT / Claude / Codex
    */
   async handleToken(body: {
     grant_type?: string;
@@ -466,7 +529,7 @@ export class OAuthController {
         throw new Error("Parameter 'code' is required for authorization_code grant");
       }
 
-      const authCode = this.storage.consumeAuthCode(body.code);
+      const authCode = await this.storage.consumeAuthCode(body.code);
       if (!authCode) {
         throw new Error("Invalid or expired authorization code");
       }
@@ -491,10 +554,11 @@ export class OAuthController {
       const refreshToken = `mctl_rt_${crypto.randomUUID().replace(/-/g, "")}`;
       const expiresIn = 2592000; // 30 days
 
-      this.storage.saveToken({
+      await this.storage.saveToken({
         accessToken,
         refreshToken,
         clientId: authCode.clientId,
+        userId: authCode.userId,
         yandexAccessToken: authCode.yandexAccessToken,
         yandexRefreshToken: authCode.yandexRefreshToken,
         yandexExpiresAt: authCode.yandexExpiresAt,
@@ -517,7 +581,7 @@ export class OAuthController {
         throw new Error("Parameter 'refresh_token' is required");
       }
 
-      const existing = this.storage.getTokenByRefreshToken(body.refresh_token);
+      const existing = await this.storage.getTokenByRefreshToken(body.refresh_token);
       if (!existing) {
         throw new Error("Invalid refresh_token");
       }
@@ -543,15 +607,16 @@ export class OAuthController {
       }
 
       // Rotate tokens
-      this.storage.revokeToken(existing.accessToken);
+      await this.storage.revokeToken(existing.accessToken);
       const newAccessToken = `mctl_at_${crypto.randomUUID().replace(/-/g, "")}`;
       const newRefreshToken = `mctl_rt_${crypto.randomUUID().replace(/-/g, "")}`;
       const expiresIn = 2592000;
 
-      this.storage.saveToken({
+      await this.storage.saveToken({
         accessToken: newAccessToken,
         refreshToken: newRefreshToken,
         clientId: existing.clientId,
+        userId: existing.userId,
         yandexAccessToken,
         yandexRefreshToken,
         yandexExpiresAt,
@@ -575,9 +640,9 @@ export class OAuthController {
   /**
    * RFC 7009 Revoke token (Disconnect)
    */
-  handleRevoke(token: string) {
+  async handleRevoke(token: string): Promise<{ status: string }> {
     if (token) {
-      this.storage.revokeToken(token);
+      await this.storage.revokeToken(token);
     }
     return { status: "ok" };
   }

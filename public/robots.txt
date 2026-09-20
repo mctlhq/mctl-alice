@@ -1,2 +1,5 @@
 User-agent: *
+Disallow: /auth/
+Disallow: /oauth/
+Disallow: /account
 Allow: /

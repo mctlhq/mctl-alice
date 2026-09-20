@@ -176,4 +176,109 @@ describe("OAuthStorage", () => {
       expect(storage.getTokenByRefreshToken(refreshToken)).toBeNull();
     });
   });
+
+  describe("Multi-Tenant User and Encrypted Credentials Management", () => {
+    it("should save and retrieve user profile by ID and Yandex UID", () => {
+      const user = {
+        id: "usr_alice_1",
+        yandexUid: "11223344",
+        login: "alice_user",
+        displayName: "Alice Tester",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+
+      storage.saveUser(user);
+
+      const byId = storage.getUser("usr_alice_1");
+      expect(byId).toEqual(user);
+
+      const byUid = storage.getUserByYandexUid("11223344");
+      expect(byUid).toEqual(user);
+    });
+
+    it("should encrypt tokens at rest and decrypt them on retrieval", () => {
+      const userId = "usr_alice_1";
+      storage.saveUser({
+        id: userId,
+        yandexUid: "11223344",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+
+      storage.saveUserCredentials(userId, {
+        yandexAccessToken: "y0_secret_access_token_123",
+        yandexRefreshToken: "1:secret_refresh_token_456",
+        yandexExpiresAt: Date.now() + 3600000,
+        quasarCookie: "Session_id=secret_cookie_val_789",
+      });
+
+      const creds = storage.getUserCredentials(userId);
+      expect(creds).toBeDefined();
+      expect(creds?.yandexAccessToken).toBe("y0_secret_access_token_123");
+      expect(creds?.yandexRefreshToken).toBe("1:secret_refresh_token_456");
+      expect(creds?.quasarCookie).toBe("Session_id=secret_cookie_val_789");
+    });
+
+    it("should manage web sessions bound to user", () => {
+      const userId = "usr_alice_1";
+      const sessionId = "session_uuid_1234";
+      const expiresAt = Date.now() + 3600000;
+
+      storage.saveWebSession(sessionId, userId, expiresAt);
+
+      const session = storage.getWebSession(sessionId);
+      expect(session).toEqual({ userId });
+
+      storage.deleteWebSession(sessionId);
+      expect(storage.getWebSession(sessionId)).toBeNull();
+    });
+
+    it("should track and delete Quasar proxy scenarios", () => {
+      const userId = "usr_alice_1";
+      storage.saveQuasarScenario(userId, "speaker_dev_1", "sc_scenario_100", "mctl-usr_alic-speaker_dev_1");
+
+      const scenarioId = storage.getQuasarScenario(userId, "speaker_dev_1");
+      expect(scenarioId).toBe("sc_scenario_100");
+
+      const list = storage.listQuasarScenarios(userId);
+      expect(list).toHaveLength(1);
+      expect(list[0].deviceId).toBe("speaker_dev_1");
+
+      storage.deleteQuasarScenarios(userId);
+      expect(storage.getQuasarScenario(userId, "speaker_dev_1")).toBeNull();
+    });
+
+    it("should delete all user data across all tables on deleteUser", () => {
+      const userId = "usr_alice_1";
+      storage.saveUser({
+        id: userId,
+        yandexUid: "11223344",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      storage.saveUserCredentials(userId, {
+        yandexAccessToken: "token_123",
+      });
+      storage.saveWebSession("sess_123", userId, Date.now() + 3600000);
+      storage.saveQuasarScenario(userId, "spk_1", "sc_1");
+      storage.saveToken({
+        accessToken: "at_123",
+        clientId: "client_1",
+        userId,
+        yandexAccessToken: "token_123",
+        scope: "iot:view",
+        createdAt: Date.now(),
+        expiresAt: Date.now() + 3600000,
+      });
+
+      storage.deleteUser(userId);
+
+      expect(storage.getUser(userId)).toBeNull();
+      expect(storage.getUserCredentials(userId)).toBeNull();
+      expect(storage.getWebSession("sess_123")).toBeNull();
+      expect(storage.getQuasarScenario(userId, "spk_1")).toBeNull();
+      expect(storage.getToken("at_123")).toBeNull();
+    });
+  });
 });

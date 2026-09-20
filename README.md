@@ -2,141 +2,68 @@
 
 Model Context Protocol (MCP) server for controlling **Yandex Station (Алиса)** smart speakers and smart home devices via the Yandex Cloud IoT API.
 
-Enables AI assistants (Claude, Antigravity, OpenClaw, Cursor, etc.) to speak through your Alice speakers, send voice commands, control volume and playback, and run smart home scenarios.
+Enables AI assistants (Claude, ChatGPT, Codex, Antigravity, OpenClaw, Cursor, etc.) to speak through your Alice speakers, send voice commands, control volume and playback, and manage your smart home.
 
 ---
 
-## Features
+## Deployment Modes
 
-- 🗣️ **Voice command simulation (`alice_send_command`)**: Send any voice command as text (e.g. «Включи джаз», «Какая погода завтра», «Поставь таймер на 15 минут», «Выключи свет везде»). Alice executes it exactly as if you spoke it aloud.
-- 📢 **Text-to-Speech (`alice_say_phrase`)**: Make Alice speak arbitrary text through any speaker (TTS announcements, notifications, reminders).
-- 🔊 **Volume control (`alice_set_volume`)**: Set speaker volume level (1 to 10).
-- ⏯️ **Media playback (`alice_media_control`)**: Pause, play, stop, next track, previous track.
-- 🏠 **Smart home discovery (`alice_list_devices`)**: List all speakers, rooms, and devices.
-- ⚡ **Scenarios (`alice_trigger_scenario`)**: Trigger predefined smart home automation scenarios (e.g. «Доброе утро», «Ушел из дома»).
+### 1. Hosted Multi-Tenant SaaS (Recommended)
+You can connect your AI assistant directly to our hosted cloud gateway at **`https://alice.mctl.ai`**:
 
----
+1. Open **`https://alice.mctl.ai`** in your browser.
+2. Click **Войти через Яндекс ID** to authenticate your Yandex Smart Home.
+3. Configure **Quasar Cookie** (via QR code) if you wish to control smart speakers with TTS phrases.
+4. Add the MCP endpoint to your client:
+   - **Claude Desktop / Codex / ChatGPT MCP**: `https://alice.mctl.ai/mcp`
+   - Complete the standard OAuth 2.1 consent screen in your client.
 
-## Quick Setup
-
-### 1. Obtain a Yandex OAuth Token
-
-To allow the server to talk to Yandex Smart Home on your behalf, you need a Yandex OAuth token with `iot:view` and `iot:control` permissions:
-
-1. Go to [Yandex OAuth Client Registration](https://oauth.yandex.ru/client/new).
-2. Set **App Name**: `mctl-alice` (or any name you prefer).
-3. Under **Platforms**, select **Web services** and set **Redirect URI** to:
-   ```
-   https://oauth.yandex.ru/verification_code
-   ```
-4. Under **Data access (Permissions)**, find and add:
-   - `iot:view` (Умный дом: чтение информации об устройствах)
-   - `iot:control` (Умный дом: управление устройствами)
-5. Save the app and copy your **Client ID**.
-6. Open this link in your browser (replace `<CLIENT_ID>` with your Client ID):
-   ```
-   https://oauth.yandex.ru/authorize?response_type=token&client_id=<CLIENT_ID>
-   ```
-7. Click **Allow** and copy the resulting `access_token`.
-
-*(Alternatively, if you already use third-party smart home integrations like Home Assistant or Yandex Dialogs, you can reuse an existing Yandex OAuth token).*
-
----
-
-### 2. Configuration
-
-Set the environment variable `YANDEX_OAUTH_TOKEN`:
+### 2. Self-Hosted (Docker)
+You can deploy your own instance of `mctl-alice` using Docker:
 
 ```bash
-cp .env.example .env
-# Edit .env and paste your token:
-# YANDEX_OAUTH_TOKEN=y0_AgAAAA...
-```
-
----
-
-### 3. Connect to Claude Desktop / Cursor / Antigravity
-
-#### Option A: Stdio (Local Node)
-
-Add to your `claude_desktop_config.json` or `mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "alice": {
-      "command": "node",
-      "args": ["/path/to/mctlhq/mctl-alice/dist/index.js"],
-      "env": {
-        "YANDEX_OAUTH_TOKEN": "y0_AgAAAA..."
-      }
-    }
-  }
-}
-```
-
-#### Option B: Via `npx tsx` (Development mode)
-
-```json
-{
-  "mcpServers": {
-    "alice": {
-      "command": "npx",
-      "args": ["-y", "tsx", "/path/to/mctlhq/mctl-alice/src/index.ts"],
-      "env": {
-        "YANDEX_OAUTH_TOKEN": "y0_AgAAAA..."
-      }
-    }
-  }
-}
+docker run -d \
+  --name mctl-alice \
+  -p 8080:8080 \
+  -v $(pwd)/data:/app/data \
+  -e AUTH_REQUIRED=true \
+  -e PUBLIC_BASE_URL=https://your-domain.com \
+  -e ENCRYPTION_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
+  -e YANDEX_CLIENT_ID=your_yandex_client_id \
+  -e YANDEX_CLIENT_SECRET=your_yandex_client_secret \
+  ghcr.io/mctlhq/mctl-alice:2.0.0
 ```
 
 ---
 
 ## Available MCP Tools
 
-| Tool | Description | Parameters |
-| --- | --- | --- |
-| `alice_list_devices` | List all Alice smart speakers, rooms, and smart devices | `only_speakers?: boolean` |
-| `alice_send_command` | Execute any voice command via text simulation | `command: string`, `device?: string` |
-| `alice_say_phrase` | Make Alice speak arbitrary text out loud (TTS) | `phrase: string`, `device?: string` |
-| `alice_set_volume` | Set speaker volume level (1 to 10) | `level: number`, `device?: string` |
-| `alice_media_control` | Control playback (`play`, `pause`, `stop`, `next`, `prev`) | `action: string`, `device?: string` |
-| `alice_trigger_scenario` | Trigger an automation scenario by name or ID | `scenario: string` |
-
-> **Note on targeting speakers**: The `device` parameter can be a device ID, speaker name (e.g. `"Станция Макс"`), or room name (e.g. `"Кухня"`). If omitted, the server automatically routes to your default or primary speaker.
-
----
-
-## Example AI Assistant Prompts
-
-Once connected, you can ask your AI assistant:
-
-- *«Какие колонки Алиса у меня подключены?»*
-- *«Включи джаз на колонке в гостиной»*
-- *«Сделай громкость 4 на кухне»*
-- *«Скажи через колонку детям, что ужин готов»*
-- *«Поставь музыку на паузу»*
-- *«Запусти сценарий Спокойной ночи»*
+| Tool Name | Scope | Description |
+| :--- | :--- | :--- |
+| `alice_list_devices` | `iot:view` | Discovers all smart speakers, rooms, household appliances, and scenarios. |
+| `alice_get_device_state` | `iot:view` | Fetches real-time status, capabilities, and sensor values for a device. |
+| `alice_get_home_summary` | `iot:view` | Returns a human-readable overview of rooms and devices. |
+| `alice_get_device_history` | `iot:view` | Returns historical telemetry readings (sensor samples over time). |
+| `alice_control_device` | `iot:control` | Turns devices on/off, sets temperature, mode, or brightness. |
+| `alice_control_devices_batch`| `iot:control` | Dispatches batch control actions across multiple devices simultaneously. |
+| `alice_control_room` | `iot:control` | Controls all devices in a specified room (e.g. turn off all lights). |
+| `alice_execute_scenario` | `iot:control` | Triggers a predefined smart home automation scenario. |
+| `alice_set_volume` | `iot:control` | Adjusts speaker volume (1 to 10). |
+| `alice_playback_control` | `iot:control` | Media playback commands (play, pause, stop, next, prev). |
+| `alice_say_phrase` | `quasar` | Makes a Yandex Station speak arbitrary text (TTS). |
+| `alice_send_command` | `quasar` | Simulates a voice command as text (e.g. "Включи джаз"). |
 
 ---
 
-## Development
+## Security Architecture & Threat Model
 
-```bash
-# Install dependencies
-npm install
+- **Multi-Tenant Cryptographic Isolation**: All upstream access tokens, refresh tokens, and Quasar session cookies are encrypted at rest using **AES-256-GCM**. The `userId` is passed as Additional Authenticated Data (AAD), cryptographically binding ciphertext to the user's record.
+- **Granular Scopes**: AI client grants are scoped to `iot:view`, `iot:control`, and `quasar`.
+- **Operator Trust Boundary**: Because `mctl-alice` acts as an MCP proxy to Yandex Cloud, upstream tokens must be held in process memory at the moment of request dispatch. We transparently disclose that the infrastructure operator has access to the runtime environment, and envelope encryption protects data-at-rest.
+- **Data Erasure**: Users can revoke AI client access and permanently delete all stored data with a single click at `/account`.
 
-# Run tests
-npm test
-
-# Build TypeScript
-npm run build
-
-# Start server manually
-npm start
-```
+---
 
 ## License
 
-Apache-2.0
+Apache-2.0. See [LICENSE](LICENSE) for details.

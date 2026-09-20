@@ -1,4 +1,5 @@
 import http from "node:http";
+import crypto from "node:crypto";
 import { YandexIoTClient } from "../client/yandex-api.js";
 import { StationService } from "../services/station-service.js";
 import {
@@ -274,3 +275,58 @@ export function startAuthServer(options: AuthServerOptions): Promise<{
     });
   });
 }
+
+export interface YandexProfile {
+  id: string;
+  yandexUid: string;
+  login: string;
+  displayName: string;
+}
+
+export async function fetchYandexProfile(accessToken: string): Promise<YandexProfile> {
+  try {
+    const res = await fetch("https://login.yandex.ru/info?format=json", {
+      headers: { Authorization: `OAuth ${accessToken}` },
+    });
+    if (res.ok) {
+      const data = (await res.json()) as any;
+      if (data && data.id) {
+        return {
+          id: `usr_${data.id}`,
+          yandexUid: String(data.id),
+          login: data.login || data.default_email || "user",
+          displayName: data.display_name || data.real_name || data.login || "Пользователь",
+        };
+      }
+    }
+  } catch (err: any) {
+    console.warn("[OAuth] Failed to fetch profile from login.yandex.ru:", err.message);
+  }
+
+  // Fallback: smart home API user info
+  try {
+    const res = await fetch("https://api.iot.yandex.net/v1.0/user/info", {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (res.ok) {
+      const data = (await res.json()) as any;
+      const householdId = data.households?.[0]?.id || "default";
+      const hash = crypto.createHash("sha256").update(accessToken).digest("hex").slice(0, 12);
+      return {
+        id: `usr_${hash}`,
+        yandexUid: `iot_${householdId}_${hash}`,
+        login: "yandex_user",
+        displayName: "Владелец умного дома",
+      };
+    }
+  } catch {}
+
+  const fallbackHash = crypto.createHash("sha256").update(accessToken).digest("hex").slice(0, 12);
+  return {
+    id: `usr_${fallbackHash}`,
+    yandexUid: fallbackHash,
+    login: "user",
+    displayName: "Пользователь",
+  };
+}
+

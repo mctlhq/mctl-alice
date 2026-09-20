@@ -260,11 +260,36 @@ export class QuasarClient {
     });
   }
 
+  async getDevice(deviceId: string): Promise<any> {
+    return this.request(`https://iot.quasar.yandex.ru/m/user/devices/${encodeURIComponent(deviceId)}`, {
+      method: "GET",
+    });
+  }
+
+  async sendDeviceActions(
+    deviceId: string,
+    actions: Array<{ type: string; state: { instance: string; value: any } }>
+  ): Promise<any> {
+    return this.request(
+      `https://iot.quasar.yandex.ru/m/user/devices/${encodeURIComponent(deviceId)}/actions`,
+      {
+        method: "POST",
+        body: JSON.stringify({ actions }),
+      }
+    );
+  }
+
   async getScenarios(): Promise<any[]> {
     const data = await this.request("https://iot.quasar.yandex.ru/m/user/scenarios", {
       method: "GET",
     });
     return data.scenarios || [];
+  }
+
+  async triggerScenario(scenarioId: string): Promise<any> {
+    return this.request(`https://iot.quasar.yandex.ru/m/user/scenarios/${encodeURIComponent(scenarioId)}/actions`, {
+      method: "POST",
+    });
   }
 
   async getOrCreateSpeakerScenario(deviceId: string): Promise<string> {
@@ -278,19 +303,30 @@ export class QuasarClient {
     // Check existing scenarios
     try {
       const scenarios = await this.getScenarios();
+      // 1. Look for exact matching speaker scenario
       for (const sc of scenarios) {
         if (sc.name === name || sc.triggers?.[0]?.value === trigger) {
           this.scenarioCache.set(deviceId, sc.id);
           return sc.id;
         }
       }
+
+      // 2. Look for any existing mctl scenario to adopt/reuse
+      const adoptable = scenarios.find(
+        (sc) => sc.name && sc.name.startsWith("mctl-")
+      );
+      if (adoptable) {
+        this.scenarioCache.set(deviceId, adoptable.id);
+        return adoptable.id;
+      }
     } catch {
       // ignore, try create
     }
 
-    // Create a new proxy scenario
-    const payload = buildTtsScenarioPayload(name, trigger, deviceId, "готов");
-    const res = await this.request("https://iot.quasar.yandex.ru/m/v4/user/scenarios", {
+    // 3. Create a new proxy scenario on /m/user/scenarios (not /v4/)
+    const uniqueTrigger = `${trigger}${Date.now().toString().slice(-4)}`;
+    const payload = buildTtsScenarioPayload(name, uniqueTrigger, deviceId, "готов");
+    const res = await this.request("https://iot.quasar.yandex.ru/m/user/scenarios", {
       method: "POST",
       body: JSON.stringify(payload),
     });
@@ -326,12 +362,14 @@ export class QuasarClient {
     }
 
     if (triggerCallback) {
-      return triggerCallback(scenarioId);
+      try {
+        return await triggerCallback(scenarioId);
+      } catch {
+        // Fallback to direct Quasar trigger if triggerCallback fails
+      }
     }
 
-    return this.request(`https://iot.quasar.yandex.ru/m/user/scenarios/${scenarioId}/actions`, {
-      method: "POST",
-    });
+    return this.triggerScenario(scenarioId);
   }
 
   async sendCommand(
@@ -357,11 +395,13 @@ export class QuasarClient {
     }
 
     if (triggerCallback) {
-      return triggerCallback(scenarioId);
+      try {
+        return await triggerCallback(scenarioId);
+      } catch {
+        // Fallback to direct Quasar trigger if triggerCallback fails
+      }
     }
 
-    return this.request(`https://iot.quasar.yandex.ru/m/user/scenarios/${scenarioId}/actions`, {
-      method: "POST",
-    });
+    return this.triggerScenario(scenarioId);
   }
 }

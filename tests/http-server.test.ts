@@ -269,4 +269,61 @@ describe("HTTP Server & ChatGPT REST API", () => {
     const data = await res.json();
     expect(data.message).toContain("Cookie missing");
   });
+
+  it("should serve RFC 9728 Protected Resource Metadata at /.well-known/oauth-protected-resource", async () => {
+    const res = await fetch(`${baseUrl}/.well-known/oauth-protected-resource`);
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.resource).toBe(`${baseUrl}/mcp`);
+    expect(data.authorization_servers).toEqual([baseUrl]);
+    expect(data.scopes_supported).toContain("iot:view");
+  });
+
+  it("should serve RFC 8414 Authorization Server Metadata at /.well-known/oauth-authorization-server", async () => {
+    const res = await fetch(`${baseUrl}/.well-known/oauth-authorization-server`);
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.issuer).toBe(baseUrl);
+    expect(data.authorization_endpoint).toBe(`${baseUrl}/oauth/authorize`);
+    expect(data.token_endpoint).toBe(`${baseUrl}/oauth/token`);
+    expect(data.revocation_endpoint).toBe(`${baseUrl}/oauth/revoke`);
+    expect(data.code_challenge_methods_supported).toEqual(["S256"]);
+  });
+
+  it("should handle RFC 7591 Dynamic Client Registration at /oauth/register", async () => {
+    const res = await fetch(`${baseUrl}/oauth/register`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        client_name: "ChatGPT OpenAI Test",
+        redirect_uris: ["https://chatgpt.com/aip/g-123/oauth/callback"],
+      }),
+    });
+    expect(res.status).toBe(201);
+    const data = await res.json();
+    expect(data.client_id).toBeDefined();
+    expect(data.client_name).toBe("ChatGPT OpenAI Test");
+  });
+
+  it("should redirect to Yandex OAuth on /oauth/authorize", async () => {
+    const res = await fetch(
+      `${baseUrl}/oauth/authorize?client_id=test_client&redirect_uri=https://chatgpt.com/callback&response_type=code&state=xyz`,
+      { redirect: "manual" }
+    );
+    expect(res.status).toBe(302);
+    const location = res.headers.get("location");
+    expect(location).toContain("https://oauth.yandex.ru/authorize");
+    expect(location).toContain("redirect_uri=");
+  });
+
+  it("should handle token revocation at /oauth/revoke", async () => {
+    const res = await fetch(`${baseUrl}/oauth/revoke`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "token=dummy_token_to_revoke",
+    });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.status).toBe("ok");
+  });
 });

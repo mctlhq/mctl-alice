@@ -122,7 +122,7 @@ export function createMcpServer(service: StationService | (() => StationService)
   const server = new Server(
     {
       name: "mctl-alice",
-      version: "1.7.1",
+      version: "1.7.2",
     },
     {
       capabilities: {
@@ -256,7 +256,7 @@ export function createHttpServer(
         result: {
           protocolVersion: rpcReq.params?.protocolVersion || "2024-11-05",
           capabilities: { tools: {} },
-          serverInfo: { name: "mctl-alice", version: "1.7.1" },
+          serverInfo: { name: "mctl-alice", version: "1.7.2" },
         },
       };
     }
@@ -324,9 +324,11 @@ export function createHttpServer(
     // Health check for Kubernetes probes
     if (url.pathname === "/healthz" || url.pathname === "/readyz") {
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ status: "ok", service: "mctl-alice", version: "1.7.1" }));
+      res.end(JSON.stringify({ status: "ok", service: "mctl-alice", version: "1.7.2" }));
       return;
     }
+
+    console.log(`[HTTP] ${req.method} ${url.pathname}${url.search}`);
 
     // OpenAPI 3.1 schema for ChatGPT Actions and external integrators
     if (url.pathname === "/openapi.json" || url.pathname === "/openapi.yaml") {
@@ -381,22 +383,29 @@ export function createHttpServer(
 
     // OAuth: Authorize Endpoint
     if (url.pathname === "/oauth/authorize" && req.method === "GET") {
+      const clientId = url.searchParams.get("client_id") || "";
+      const redirectUri = url.searchParams.get("redirect_uri") || "";
+      const state = url.searchParams.get("state") || "";
+      console.log(`[OAuth] /oauth/authorize client_id=${clientId}, redirect_uri=${redirectUri}, state=${state}`);
+
       const result = oauthController.handleAuthorize({
-        client_id: url.searchParams.get("client_id") || "",
-        redirect_uri: url.searchParams.get("redirect_uri") || "",
+        client_id: clientId,
+        redirect_uri: redirectUri,
         response_type: url.searchParams.get("response_type") || undefined,
-        state: url.searchParams.get("state") || undefined,
+        state: state || undefined,
         code_challenge: url.searchParams.get("code_challenge") || undefined,
         code_challenge_method: url.searchParams.get("code_challenge_method") || undefined,
         scope: url.searchParams.get("scope") || undefined,
       });
 
       if ("error" in result) {
+        console.warn(`[OAuth] /oauth/authorize rejected: error=${result.error}, desc=${result.description}`);
         res.writeHead(result.status || 400, { "Content-Type": "application/json; charset=utf-8" });
         res.end(JSON.stringify({ error: result.error, error_description: result.description }));
         return;
       }
 
+      console.log(`[OAuth] /oauth/authorize redirecting user to Yandex: ${result.redirectUrl}`);
       res.writeHead(302, { Location: result.redirectUrl });
       res.end();
       return;
@@ -404,16 +413,24 @@ export function createHttpServer(
 
     // OAuth: Yandex Callback Endpoint
     if (url.pathname === "/oauth/yandex/callback" && req.method === "GET") {
+      const code = url.searchParams.get("code");
+      const state = url.searchParams.get("state");
+      const error = url.searchParams.get("error");
+      const errorDescription = url.searchParams.get("error_description");
+      console.log(`[OAuth] /oauth/yandex/callback code=${code ? "present" : "missing"}, state=${state}, error=${error || "none"}`);
+
       try {
         const result = await oauthController.handleYandexCallback({
-          code: url.searchParams.get("code") || undefined,
-          state: url.searchParams.get("state") || undefined,
-          error: url.searchParams.get("error") || undefined,
-          error_description: url.searchParams.get("error_description") || undefined,
+          code: code || undefined,
+          state: state || undefined,
+          error: error || undefined,
+          error_description: errorDescription || undefined,
         });
+        console.log(`[OAuth] /oauth/yandex/callback success, redirecting to: ${result.redirectUrl}`);
         res.writeHead(302, { Location: result.redirectUrl });
         res.end();
       } catch (err: any) {
+        console.error(`[OAuth] /oauth/yandex/callback failed: ${err.message}`);
         res.writeHead(500, { "Content-Type": "text/html; charset=utf-8" });
         res.end(`<!DOCTYPE html>
 <html lang="ru">
@@ -432,7 +449,9 @@ export function createHttpServer(
     if (url.pathname === "/oauth/token" && req.method === "POST") {
       try {
         const body = await parseRequestBody(req);
+        console.log(`[OAuth] /oauth/token grant_type=${body?.grant_type}, client_id=${body?.client_id}`);
         const tokens = await oauthController.handleToken(body);
+        console.log(`[OAuth] /oauth/token issued tokens successfully`);
         res.writeHead(200, {
           "Content-Type": "application/json; charset=utf-8",
           "Cache-Control": "no-store",
@@ -440,6 +459,7 @@ export function createHttpServer(
         });
         res.end(JSON.stringify(tokens));
       } catch (err: any) {
+        console.error(`[OAuth] /oauth/token error: ${err.message}`);
         res.writeHead(400, {
           "Content-Type": "application/json; charset=utf-8",
           "Cache-Control": "no-store",
@@ -454,10 +474,12 @@ export function createHttpServer(
       try {
         const body = await parseRequestBody(req);
         const token = body?.token || url.searchParams.get("token") || "";
+        console.log(`[OAuth] /oauth/revoke token=${token ? "present" : "missing"}`);
         oauthController.handleRevoke(token);
         res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
         res.end(JSON.stringify({ status: "ok" }));
-      } catch {
+      } catch (err: any) {
+        console.error(`[OAuth] /oauth/revoke error: ${err.message}`);
         res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
         res.end(JSON.stringify({ status: "ok" }));
       }
@@ -721,18 +743,25 @@ export function createHttpServer(
     // Auth callback HTML / Code exchange
     if (url.pathname === "/auth/callback") {
       const state = url.searchParams.get("state");
+      const code = url.searchParams.get("code");
+      const error = url.searchParams.get("error");
+      const isPending = Boolean(state && oauthStorage.getPendingAuth(state));
+      console.log(`[OAuth] /auth/callback received: code=${code ? "present" : "missing"}, state=${state}, error=${error || "none"}, isPending=${isPending}`);
+
       if (state && oauthStorage.getPendingAuth(state)) {
         try {
           const result = await oauthController.handleYandexCallback({
-            code: url.searchParams.get("code") || undefined,
+            code: code || undefined,
             state,
-            error: url.searchParams.get("error") || undefined,
+            error: error || undefined,
             error_description: url.searchParams.get("error_description") || undefined,
           });
+          console.log(`[OAuth] /auth/callback (pending) redirected to: ${result.redirectUrl}`);
           res.writeHead(302, { Location: result.redirectUrl });
           res.end();
           return;
         } catch (err: any) {
+          console.error(`[OAuth] /auth/callback (pending) failed: ${err.message}`);
           res.writeHead(500, { "Content-Type": "text/html; charset=utf-8" });
           res.end(`<!DOCTYPE html>
 <html lang="ru">
@@ -747,7 +776,6 @@ export function createHttpServer(
         }
       }
 
-      const code = url.searchParams.get("code");
       if (code && clientSecret) {
         try {
           const tokens = await exchangeCodeForToken({
@@ -1061,7 +1089,7 @@ export function createHttpServer(
       JSON.stringify({
         service: "mctl-alice",
         description: "Yandex Alice Smart Speaker MCP & REST Server for ChatGPT",
-        version: "1.7.1",
+        version: "1.7.2",
         endpoints: {
           openapi: "/openapi.json",
           sse: "/sse",

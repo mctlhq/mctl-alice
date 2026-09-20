@@ -242,13 +242,30 @@ ${scriptHtml}
 }
 
 
-function getServiceForRequest(
+export interface AuthResult {
+  authenticated: boolean;
+  service?: StationService;
+  error?: "invalid_token" | "invalid_request";
+  errorMessage?: string;
+}
+
+export function buildWwwAuthenticate(baseUrl: string, error?: "invalid_token" | "invalid_request"): string {
+  const metadataUrl = `${baseUrl.replace(/\/+$/, "")}/.well-known/oauth-protected-resource/mcp`;
+  let challenge = `Bearer realm="mctl-alice", resource_metadata="${metadataUrl}"`;
+  if (error) {
+    challenge += `, error="${error}"`;
+  }
+  return challenge;
+}
+
+export function authenticateRequest(
   req: http.IncomingMessage,
   defaultService: StationService,
   defaultQuasar?: QuasarClient,
   oauthStorage?: OAuthStorage,
-  telemetryStorage?: TelemetryStorage
-): StationService {
+  telemetryStorage?: TelemetryStorage,
+  authRequired = false
+): AuthResult {
   const authHeader = req.headers.authorization;
   const cookieHeader = req.headers["x-yandex-cookie"] as string | undefined;
 
@@ -257,41 +274,84 @@ function getServiceForRequest(
     customQuasar = new QuasarClient({ cookie: cookieHeader, useKeychain: false, persistEnv: false });
   }
 
-  if (authHeader && authHeader.startsWith("Bearer ")) {
+  if (authHeader) {
+    if (!authHeader.startsWith("Bearer ") && !authHeader.startsWith("bearer ")) {
+      return { authenticated: false, error: "invalid_request", errorMessage: "Bearer scheme required" };
+    }
     const rawToken = authHeader.replace(/^Bearer\s+/i, "").trim();
-    if (rawToken) {
-      // 1. Check if rawToken is an issued OAuth Bearer token in oauthStorage
-      if (oauthStorage) {
-        const tokenRecord = oauthStorage.getToken(rawToken);
-        if (tokenRecord) {
-          try {
-            const client = new YandexIoTClient(tokenRecord.yandexAccessToken, {
-              useKeychain: false,
-              persistEnv: false,
-              refreshToken: tokenRecord.yandexRefreshToken,
-            });
-            return new StationService(client, customQuasar, telemetryStorage);
-          } catch {
-            // fall through
-          }
+    if (!rawToken) {
+      return { authenticated: false, error: "invalid_request", errorMessage: "Token is empty" };
+    }
+
+    // 1. Check if rawToken is an issued OAuth Bearer token in oauthStorage
+    if (oauthStorage) {
+      const tokenRecord = oauthStorage.getToken(rawToken);
+      if (tokenRecord) {
+        if (tokenRecord.expiresAt && tokenRecord.expiresAt < Date.now()) {
+          return { authenticated: false, error: "invalid_token", errorMessage: "The access token has expired" };
+        }
+        try {
+          const client = new YandexIoTClient(tokenRecord.yandexAccessToken, {
+            useKeychain: false,
+            persistEnv: false,
+            refreshToken: tokenRecord.yandexRefreshToken,
+          });
+          return {
+            authenticated: true,
+            service: new StationService(client, customQuasar, telemetryStorage),
+          };
+        } catch (err: any) {
+          return { authenticated: false, error: "invalid_token", errorMessage: err.message };
         }
       }
+    }
 
-      // 2. Direct Yandex OAuth token fallback
+    // 2. Direct Yandex OAuth token fallback (or bearer matching process.env.YANDEX_OAUTH_TOKEN)
+    if (process.env.YANDEX_OAUTH_TOKEN && rawToken === process.env.YANDEX_OAUTH_TOKEN) {
+      return { authenticated: true, service: defaultService };
+    }
+
+    // Direct Yandex OAuth token format check (y0_..., y1_..., AQAAAA...)
+    const isDirectYandexToken =
+      rawToken.startsWith("y0_") || rawToken.startsWith("y1_") || rawToken.startsWith("AQAAAA");
+    if (isDirectYandexToken) {
       try {
         const client = new YandexIoTClient(rawToken, { useKeychain: false, persistEnv: false });
-        return new StationService(client, customQuasar, telemetryStorage);
+        return {
+          authenticated: true,
+          service: new StationService(client, customQuasar, telemetryStorage),
+        };
       } catch {
-        // Fallback to default service
+        return { authenticated: false, error: "invalid_token", errorMessage: "Invalid access token" };
       }
     }
+
+    return { authenticated: false, error: "invalid_token", errorMessage: "Invalid access token" };
   }
 
-  if (customQuasar && customQuasar !== defaultQuasar) {
-    return new StationService(undefined, customQuasar, telemetryStorage);
+  if (cookieHeader && customQuasar && customQuasar !== defaultQuasar) {
+    return {
+      authenticated: true,
+      service: new StationService(undefined, customQuasar, telemetryStorage),
+    };
   }
 
-  return defaultService;
+  if (authRequired) {
+    return { authenticated: false, errorMessage: "authentication required" };
+  }
+
+  return { authenticated: true, service: defaultService };
+}
+
+function getServiceForRequest(
+  req: http.IncomingMessage,
+  defaultService: StationService,
+  defaultQuasar?: QuasarClient,
+  oauthStorage?: OAuthStorage,
+  telemetryStorage?: TelemetryStorage
+): StationService {
+  const auth = authenticateRequest(req, defaultService, defaultQuasar, oauthStorage, telemetryStorage, false);
+  return auth.service || defaultService;
 }
 
 export function createMcpServer(service: StationService | (() => StationService)): Server {
@@ -322,18 +382,23 @@ export function createMcpServer(service: StationService | (() => StationService)
   return server;
 }
 
+export interface HttpServerOptions {
+  clientId?: string;
+  clientSecret?: string;
+  publicBaseUrl?: string;
+  storage?: TelemetryStorage;
+  enableSampler?: boolean;
+  oauthStorage?: OAuthStorage;
+  yandexCallbackUri?: string;
+  authRequired?: boolean;
+}
+
 export function createHttpServer(
   port = 8080,
-  options: {
-    clientId?: string;
-    clientSecret?: string;
-    publicBaseUrl?: string;
-    storage?: TelemetryStorage;
-    enableSampler?: boolean;
-    oauthStorage?: OAuthStorage;
-    yandexCallbackUri?: string;
-  } = {}
+  options: HttpServerOptions = {}
 ): http.Server {
+  const authRequired =
+    options.authRequired ?? (process.env.AUTH_REQUIRED === "true");
   const baseUrl = options.publicBaseUrl || process.env.PUBLIC_BASE_URL || `http://localhost:${port}`;
   const clientId =
     options.clientId ||
@@ -409,7 +474,7 @@ export function createHttpServer(
     }
   }
 
-  async function handleSingleRpc(rpcReq: any, req: http.IncomingMessage): Promise<any | null> {
+  async function handleSingleRpc(rpcReq: any, req: http.IncomingMessage, svc?: StationService): Promise<any | null> {
     if (!rpcReq || typeof rpcReq !== "object") {
       return {
         jsonrpc: "2.0",
@@ -457,8 +522,8 @@ export function createHttpServer(
     if (method === "tools/call") {
       const { name, arguments: args } = rpcReq.params || {};
       try {
-        const svc = getServiceForRequest(req, stationService, quasarClient, oauthStorage, options.storage);
-        const result = await handleToolCall(name, args, svc);
+        const activeSvc = svc || getServiceForRequest(req, stationService, quasarClient, oauthStorage, options.storage);
+        const result = await handleToolCall(name, args, activeSvc);
         return {
           jsonrpc: "2.0",
           id,
@@ -682,6 +747,16 @@ export function createHttpServer(
       return;
     }
 
+    // Helper to send 401 Unauthorized with RFC 9728 WWW-Authenticate
+    const sendUnauthorized = (authError?: "invalid_token" | "invalid_request", message = "authentication required") => {
+      res.writeHead(401, {
+        "Content-Type": "application/json; charset=utf-8",
+        "WWW-Authenticate": buildWwwAuthenticate(baseUrl, authError),
+        "Cache-Control": "no-store",
+      });
+      res.end(JSON.stringify({ error: authError || message }));
+    };
+
     // Pure Stateless MCP JSON-RPC endpoint (for ChatGPT Connectors, Claude, Streamable HTTP & direct JSON-RPC)
     const isMcpPost =
       (url.pathname === "/mcp" ||
@@ -691,6 +766,13 @@ export function createHttpServer(
       req.method === "POST";
 
     if (isMcpPost) {
+      const auth = authenticateRequest(req, stationService, quasarClient, oauthStorage, options.storage, authRequired);
+      if (!auth.authenticated) {
+        sendUnauthorized(auth.error, auth.errorMessage);
+        return;
+      }
+      const activeSvc = auth.service || stationService;
+
       let body = "";
       req.on("data", (chunk) => (body += chunk));
       req.on("end", async () => {
@@ -703,7 +785,7 @@ export function createHttpServer(
           if (Array.isArray(rpcData)) {
             const results = [];
             for (const item of rpcData) {
-              const resItem = await handleSingleRpc(item, req);
+              const resItem = await handleSingleRpc(item, req, activeSvc);
               if (resItem !== null) {
                 results.push(resItem);
               }
@@ -714,7 +796,7 @@ export function createHttpServer(
               sendMcpResponse(req, res, results);
             }
           } else {
-            const result = await handleSingleRpc(rpcData, req);
+            const result = await handleSingleRpc(rpcData, req, activeSvc);
             if (result === null) {
               sendMcpResponse(req, res, null, 202);
             } else {
@@ -737,16 +819,24 @@ export function createHttpServer(
     }
 
     // MCP SSE endpoint for ChatGPT Connectors / remote MCP clients
+    // Only upgrade to SSE if:
+    // 1) Explicit SSE endpoint path (/sse, /mcp/sse), OR
+    // 2) Accept header contains text/event-stream on /mcp or /
+    const isExplicitSsePath = url.pathname === "/sse" || url.pathname === "/mcp/sse";
+    const acceptsSse = Boolean(req.headers.accept?.includes("text/event-stream"));
     const isSseRequest =
-      (url.pathname === "/sse" ||
-        url.pathname === "/mcp/sse" ||
-        url.pathname === "/mcp" ||
-        (url.pathname === "/" && req.headers.accept?.includes("text/event-stream"))) &&
+      (isExplicitSsePath || ((url.pathname === "/mcp" || url.pathname === "/") && acceptsSse)) &&
       req.method === "GET";
 
     if (isSseRequest) {
+      const auth = authenticateRequest(req, stationService, quasarClient, oauthStorage, options.storage, authRequired);
+      if (!auth.authenticated) {
+        sendUnauthorized(auth.error, auth.errorMessage);
+        return;
+      }
+
       try {
-        const svc = getServiceForRequest(req, stationService, quasarClient, oauthStorage, options.storage);
+        const svc = auth.service || stationService;
         const transport = new SSEServerTransport("/messages", res);
         const sessionId = transport.sessionId;
         sseTransports.set(sessionId, transport);
@@ -763,6 +853,29 @@ export function createHttpServer(
           res.end(JSON.stringify({ status: "error", message: err.message }));
         }
       }
+      return;
+    }
+
+    // Standard HTTP GET /mcp (not SSE, e.g. RFC 9728 discovery probe, ping, or client info check)
+    if (url.pathname === "/mcp" && req.method === "GET") {
+      const auth = authenticateRequest(req, stationService, quasarClient, oauthStorage, options.storage, authRequired);
+      if (!auth.authenticated) {
+        sendUnauthorized(auth.error, auth.errorMessage);
+        return;
+      }
+      res.writeHead(200, {
+        "Content-Type": "application/json; charset=utf-8",
+        "Cache-Control": "no-store",
+      });
+      res.end(
+        JSON.stringify({
+          service: "mctl-alice",
+          endpoint: "/mcp",
+          status: "ready",
+          transport: "streamable-http",
+          protocolVersion: "2024-11-05",
+        })
+      );
       return;
     }
 
@@ -790,6 +903,15 @@ export function createHttpServer(
         }
       }
       return;
+    }
+
+    // REST API auth gate (when authRequired is true)
+    if (url.pathname.startsWith("/api/") && url.pathname !== "/api/info") {
+      const auth = authenticateRequest(req, stationService, quasarClient, oauthStorage, options.storage, authRequired);
+      if (!auth.authenticated) {
+        sendUnauthorized(auth.error, auth.errorMessage);
+        return;
+      }
     }
 
     // REST API: List Devices

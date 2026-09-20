@@ -22,33 +22,70 @@ function cleanExpiredSessions(): void {
   }
 }
 
-function extractCookiePairs(setCookieHeaders: string[]): string {
-  const map = new Map<string, string>();
-  for (const header of setCookieHeaders) {
-    if (!header) continue;
-    const firstPart = header.split(";")[0];
-    const eqIdx = firstPart.indexOf("=");
-    if (eqIdx > 0) {
-      const k = firstPart.substring(0, eqIdx).trim();
-      const v = firstPart.substring(eqIdx + 1).trim();
-      if (k) map.set(k, v);
+class CookieJar {
+  private cookies = new Map<string, string>();
+
+  constructor(initialStr?: string) {
+    if (initialStr) {
+      this.parse(initialStr);
     }
   }
-  const pairs: string[] = [];
-  for (const [k, v] of map.entries()) {
-    pairs.push(`${k}=${v}`);
+
+  parse(cookieStr: string): void {
+    const parts = cookieStr.split(";");
+    for (const part of parts) {
+      const idx = part.indexOf("=");
+      if (idx > 0) {
+        const k = part.substring(0, idx).trim();
+        const v = part.substring(idx + 1).trim();
+        if (k) this.cookies.set(k, v);
+      }
+    }
   }
-  return pairs.join("; ");
+
+  addFromResponse(res: Response): void {
+    if (!res || !res.headers) return;
+    const headers: string[] =
+      typeof (res.headers as any).getSetCookie === "function"
+        ? (res.headers as any).getSetCookie()
+        : [res.headers.get("set-cookie")].filter(Boolean);
+
+    for (const h of headers) {
+      if (!h) continue;
+      const firstPart = h.split(";")[0];
+      const idx = firstPart.indexOf("=");
+      if (idx > 0) {
+        const k = firstPart.substring(0, idx).trim();
+        const v = firstPart.substring(idx + 1).trim();
+        if (k) this.cookies.set(k, v);
+      }
+    }
+  }
+
+  toString(): string {
+    const pairs: string[] = [];
+    for (const [k, v] of this.cookies.entries()) {
+      pairs.push(`${k}=${v}`);
+    }
+    return pairs.join("; ");
+  }
+
+  has(key: string): boolean {
+    return this.cookies.has(key);
+  }
 }
+
+const PASSPORT_USER_AGENT =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
 export async function initQrAuth(): Promise<{ sessionId: string; link: string; qrSvg: string }> {
   cleanExpiredSessions();
+  const jar = new CookieJar();
 
-  // 1. Initial request to passport to obtain CSRF and session cookies
+  // 1. Initial request to passport to obtain page CSRF and initial session cookies
   const r1 = await fetch("https://passport.yandex.ru/pwl-yandex", {
     headers: {
-      "User-Agent":
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      "User-Agent": PASSPORT_USER_AGENT,
     },
   });
 
@@ -56,18 +93,14 @@ export async function initQrAuth(): Promise<{ sessionId: string; link: string; q
     throw new Error(`Failed to contact Yandex Passport: HTTP ${r1.status}`);
   }
 
+  jar.addFromResponse(r1);
+
   const text1 = await r1.text();
   const csrfMatch = text1.match(/__CSRF__\s*=\s*"([^"]+)"/);
   if (!csrfMatch || !csrfMatch[1]) {
     throw new Error("Failed to extract CSRF token from Yandex Passport page");
   }
-  const csrf = csrfMatch[1];
-
-  const setCookies1 =
-    typeof (r1.headers as any).getSetCookie === "function"
-      ? (r1.headers as any).getSetCookie()
-      : [r1.headers.get("set-cookie")].filter(Boolean);
-  const initialCookies = extractCookiePairs(setCookies1);
+  const pageCsrf = csrfMatch[1];
 
   // 2. Submit password/auth intent to generate track ID
   const r2 = await fetch(
@@ -75,11 +108,12 @@ export async function initQrAuth(): Promise<{ sessionId: string; link: string; q
     {
       method: "POST",
       headers: {
-        "X-CSRF-Token": csrf,
-        Cookie: initialCookies,
+        "X-CSRF-Token": pageCsrf,
+        Cookie: jar.toString(),
+        Origin: "https://passport.yandex.ru",
+        Referer: "https://passport.yandex.ru/pwl-yandex",
         "Content-Type": "application/json",
-        "User-Agent":
-          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "User-Agent": PASSPORT_USER_AGENT,
       },
       body: JSON.stringify({ retpath: "https://passport.yandex.ru/" }),
     }
@@ -89,24 +123,25 @@ export async function initQrAuth(): Promise<{ sessionId: string; link: string; q
     throw new Error(`Failed to submit auth track to Yandex: HTTP ${r2.status}`);
   }
 
+  jar.addFromResponse(r2);
   const data2 = (await r2.json()) as any;
   if (!data2.track_id) {
     throw new Error("Yandex did not return track_id for magic code");
   }
   const trackId: string = data2.track_id;
-  const submitCsrf: string = data2.csrf_token || csrf;
 
-  // 3. Request magic code link for QR code
+  // 3. Request magic code link for QR code using the same page CSRF and accumulated cookies
   const r3 = await fetch(
     "https://passport.yandex.ru/pwl-yandex/api/passport/auth/magic/code",
     {
       method: "POST",
       headers: {
-        "X-CSRF-Token": submitCsrf,
-        Cookie: initialCookies,
+        "X-CSRF-Token": pageCsrf,
+        Cookie: jar.toString(),
+        Origin: "https://passport.yandex.ru",
+        Referer: "https://passport.yandex.ru/pwl-yandex",
         "Content-Type": "application/x-www-form-urlencoded",
-        "User-Agent":
-          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "User-Agent": PASSPORT_USER_AGENT,
       },
       body: new URLSearchParams({
         location_id: "0",
@@ -117,9 +152,11 @@ export async function initQrAuth(): Promise<{ sessionId: string; link: string; q
   );
 
   if (!r3.ok) {
-    throw new Error(`Failed to create magic code link: HTTP ${r3.status}`);
+    const errBody = await r3.text();
+    throw new Error(`Failed to create magic code link (HTTP ${r3.status}): ${errBody}`);
   }
 
+  jar.addFromResponse(r3);
   const data3 = (await r3.json()) as any;
   if (!data3.link) {
     throw new Error("Yandex did not return QR authentication link");
@@ -140,8 +177,8 @@ export async function initQrAuth(): Promise<{ sessionId: string; link: string; q
   sessions.set(sessionId, {
     sessionId,
     trackId,
-    csrfToken: submitCsrf,
-    cookies: initialCookies,
+    csrfToken: pageCsrf,
+    cookies: jar.toString(),
     link,
     createdAt: Date.now(),
   });
@@ -165,6 +202,8 @@ export async function checkQrAuthStatus(sessionId: string): Promise<{
   }
 
   try {
+    const jar = new CookieJar(session.cookies);
+
     // 1. Check status of magic code approval
     const rStatus = await fetch(
       "https://passport.yandex.ru/pwl-yandex/api/passport/auth/magic/code/status",
@@ -172,10 +211,11 @@ export async function checkQrAuthStatus(sessionId: string): Promise<{
         method: "POST",
         headers: {
           "X-CSRF-Token": session.csrfToken,
-          Cookie: session.cookies,
+          Cookie: jar.toString(),
+          Origin: "https://passport.yandex.ru",
+          Referer: "https://passport.yandex.ru/pwl-yandex",
           "Content-Type": "application/json",
-          "User-Agent":
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          "User-Agent": PASSPORT_USER_AGENT,
         },
         body: JSON.stringify({
           track_id: session.trackId,
@@ -189,8 +229,11 @@ export async function checkQrAuthStatus(sessionId: string): Promise<{
       return { status: "waiting" };
     }
 
+    jar.addFromResponse(rStatus);
     const dataStatus = (await rStatus.json()) as any;
     if (dataStatus.state !== "otp_auth_finished") {
+      // Update accumulated cookies in session
+      session.cookies = jar.toString();
       return { status: "waiting" };
     }
 
@@ -203,10 +246,11 @@ export async function checkQrAuthStatus(sessionId: string): Promise<{
         method: "POST",
         headers: {
           "X-CSRF-Token": session.csrfToken,
-          Cookie: session.cookies,
+          Cookie: jar.toString(),
+          Origin: "https://passport.yandex.ru",
+          Referer: "https://passport.yandex.ru/pwl-yandex",
           "Content-Type": "application/x-www-form-urlencoded",
-          "User-Agent":
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          "User-Agent": PASSPORT_USER_AGENT,
         },
         body: new URLSearchParams({
           track_id: finalTrackId,
@@ -214,14 +258,10 @@ export async function checkQrAuthStatus(sessionId: string): Promise<{
       }
     );
 
-    const setCookies =
-      typeof (rSession.headers as any).getSetCookie === "function"
-        ? (rSession.headers as any).getSetCookie()
-        : [rSession.headers.get("set-cookie")].filter(Boolean);
+    jar.addFromResponse(rSession);
+    const fullCookies = jar.toString();
 
-    const fullCookies = extractCookiePairs([...setCookies, ...session.cookies.split("; ")]);
-
-    if (!fullCookies.includes("Session_id=")) {
+    if (!jar.has("Session_id")) {
       return {
         status: "error",
         message: "Authorization finished but Session_id cookie was not returned by Yandex.",

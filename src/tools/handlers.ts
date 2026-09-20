@@ -228,6 +228,93 @@ export async function handleToolCall(
         };
       }
 
+      case "alice_get_device_history": {
+        const device = String(args?.device || "").trim();
+        if (!device) {
+          return {
+            content: [{ type: "text", text: "Ошибка: параметр 'device' обязателен." }],
+            isError: true,
+          };
+        }
+        const room = args?.room ? String(args.room).trim() : undefined;
+        const metric = args?.metric ? String(args.metric).trim() : "power";
+        const from = args?.from ? String(args.from).trim() : undefined;
+        const to = args?.to ? String(args.to).trim() : undefined;
+        const resolution = args?.resolution as any;
+
+        const result = await stationService.getDeviceHistory({
+          device,
+          room,
+          metric,
+          from,
+          to,
+          resolution,
+        });
+
+        const unitStr = formatUnit(result.unit);
+        const metricLabel = formatPropertyLabel(result.metric);
+
+        let text = `### История телеметрии: ${result.deviceName}${result.roomName ? ` (${result.roomName})` : ""}\n\n`;
+        text += `- **Метрика:** ${metricLabel}${unitStr ? ` (${unitStr})` : ""}\n`;
+        text += `- **Период:** ${result.fromIso} — ${result.toIso}\n`;
+        text += `- **Дискретизация:** ${result.resolution} (${result.count} измерений)\n`;
+
+        if (result.count === 0) {
+          text += `\n⚠️ _За выбранный период накопленных измерений не найдено._ ` +
+            `Фоновый сэмплинг записывает показатели каждую минуту. Попробуйте запросить данные позже.`;
+          return { content: [{ type: "text", text: text.trim() }] };
+        }
+
+        if (result.metric === "power" && result.totalEnergyKWh !== undefined) {
+          text += `\n**⚡ Энергетическая сводка:**\n`;
+          text += `- **Суммарное потребление:** **${result.totalEnergyKWh} кВт·ч**\n`;
+          text += `- **Пиковая (макс.) мощность:** **${result.max} Вт**\n`;
+          text += `- **Минимальная мощность:** **${result.min} Вт**\n`;
+          text += `- **Средняя мощность:** **${result.avg} Вт**\n`;
+          text += `- **Текущая (последняя) мощность:** **${result.latest} Вт**\n`;
+        } else {
+          text += `\n**Статистика:**\n`;
+          text += `- **Максимум:** ${result.max}${unitStr ? ` ${unitStr}` : ""}\n`;
+          text += `- **Минимум:** ${result.min}${unitStr ? ` ${unitStr}` : ""}\n`;
+          text += `- **Среднее:** ${result.avg}${unitStr ? ` ${unitStr}` : ""}\n`;
+          text += `- **Последнее значение:** ${result.latest}${unitStr ? ` ${unitStr}` : ""}\n`;
+        }
+
+        text += `\n**Точки измерений:**\n`;
+        const previewPoints =
+          result.points.length > 60
+            ? [...result.points.slice(0, 30), ...result.points.slice(-30)]
+            : result.points;
+
+        text += `| Время (ISO) | Значение${unitStr ? ` (${unitStr})` : ""} |${
+          result.points[0]?.minValue !== undefined ? " Мин | Макс | Точек в корзине |" : ""
+        }\n`;
+        text += `|---|---|${
+          result.points[0]?.minValue !== undefined ? "---|---|---|" : ""
+        }\n`;
+
+        let skippedDividerInserted = false;
+        for (let i = 0; i < previewPoints.length; i++) {
+          if (result.points.length > 60 && i === 30 && !skippedDividerInserted) {
+            text += `| ... | ... (пропущено ${result.points.length - 60} точек) |${
+              result.points[0]?.minValue !== undefined ? " ... | ... | ... |" : ""
+            }\n`;
+            skippedDividerInserted = true;
+          }
+          const p = previewPoints[i];
+          const time = p.timeIso.replace("T", " ").substring(0, 19);
+          if (p.minValue !== undefined) {
+            text += `| ${time} | ${p.value} | ${p.minValue} | ${p.maxValue} | ${p.sampleCount} |\n`;
+          } else {
+            text += `| ${time} | ${p.value} |\n`;
+          }
+        }
+
+        return {
+          content: [{ type: "text", text: text.trim() }],
+        };
+      }
+
       default:
         return {
           content: [{ type: "text", text: `Неизвестный инструмент: ${name}` }],

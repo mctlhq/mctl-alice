@@ -52,6 +52,40 @@ describe("handleToolCall", () => {
           { name: "voltage", instance: "voltage", value: 230, unit: "unit.volt" },
         ],
       }),
+      getDeviceHistory: vi.fn().mockResolvedValue({
+        deviceId: "d-plug",
+        deviceName: "Розетка",
+        roomName: "Кухня",
+        metric: "power",
+        unit: "unit.watt",
+        from: 1700000000000,
+        to: 1700036000000,
+        fromIso: "2026-09-20T00:00:00.000Z",
+        toIso: "2026-09-20T10:00:00.000Z",
+        resolution: "15m",
+        count: 2,
+        min: 10.0,
+        max: 50.0,
+        avg: 25.0,
+        latest: 15.0,
+        totalEnergyKWh: 0.25,
+        points: [
+          {
+            timestamp: 1700000000000,
+            timeIso: "2026-09-20T00:00:00.000Z",
+            value: 10.0,
+            metric: "power",
+            unit: "unit.watt",
+          },
+          {
+            timestamp: 1700000900000,
+            timeIso: "2026-09-20T00:15:00.000Z",
+            value: 50.0,
+            metric: "power",
+            unit: "unit.watt",
+          },
+        ],
+      }),
     } as unknown as StationService;
   });
 
@@ -139,6 +173,30 @@ describe("handleToolCall", () => {
     expect(res.content[0].text).toContain("**Текущая мощность:** 12.5 Вт");
     expect(res.content[0].text).toContain("**Напряжение:** 230 В");
     expect(res.content[0].text).toContain("**Состояние питания:** Включено");
+  });
+
+  it("should handle alice_get_device_history with power summary and energy kWh", async () => {
+    const res = await handleToolCall(
+      "alice_get_device_history",
+      { device: "Розетка", room: "Кухня", metric: "power", resolution: "15m" },
+      mockService
+    );
+    expect(res.isError).toBeFalsy();
+    expect(res.content[0].text).toContain("История телеметрии: Розетка (Кухня)");
+    expect(res.content[0].text).toContain("**Суммарное потребление:** **0.25 кВт·ч**");
+    expect(res.content[0].text).toContain("**Пиковая (макс.) мощность:** **50 Вт**");
+    expect(res.content[0].text).toContain("**Средняя мощность:** **25 Вт**");
+    expect(res.content[0].text).toContain("| 2026-09-20 00:00:00 | 10 |");
+  });
+
+  it("should return error when device argument is missing in alice_get_device_history", async () => {
+    const res = await handleToolCall(
+      "alice_get_device_history",
+      {},
+      mockService
+    );
+    expect(res.isError).toBe(true);
+    expect(res.content[0].text).toContain("параметр 'device' обязателен");
   });
 
   it("should return error for unknown tool", async () => {

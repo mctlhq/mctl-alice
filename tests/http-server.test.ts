@@ -226,6 +226,25 @@ describe("HTTP Server & ChatGPT REST API", () => {
     expect(data.result).toEqual({});
   });
 
+  it("should handle pure stateless MCP JSON-RPC requests on root / endpoint with POST", async () => {
+    const res = await fetch(`${baseUrl}/`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: "stateless-root",
+        method: "ping",
+      }),
+    });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.id).toBe("stateless-root");
+    expect(data.result).toEqual({});
+  });
+
   it("should handle SSE connection on /mcp as well", async () => {
     const controller = new AbortController();
     const res = await fetch(`${baseUrl}/mcp`, {

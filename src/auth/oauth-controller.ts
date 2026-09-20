@@ -1,12 +1,12 @@
 import crypto from "node:crypto";
-import { OAuthStorage } from "../storage/oauth-storage.js";
+import { IStorage } from "../storage/storage-interface.js";
 import { exchangeCodeForToken, refreshAccessToken } from "./token-storage.js";
 
 export interface OAuthControllerOptions {
   baseUrl: string;
   yandexClientId: string;
   yandexClientSecret?: string;
-  storage: OAuthStorage;
+  storage: IStorage;
   yandexCallbackUri?: string;
 }
 
@@ -63,7 +63,7 @@ export class OAuthController {
   private baseUrl: string;
   private yandexClientId: string;
   private yandexClientSecret?: string;
-  private storage: OAuthStorage;
+  private storage: IStorage;
   private yandexCallbackUri: string;
 
   constructor(options: OAuthControllerOptions) {
@@ -75,6 +75,10 @@ export class OAuthController {
       options.yandexCallbackUri ||
       process.env.YANDEX_CALLBACK_URL ||
       `${this.baseUrl}/auth/callback`;
+  }
+
+  getStorage(): IStorage {
+    return this.storage;
   }
 
   /**
@@ -116,7 +120,7 @@ export class OAuthController {
   /**
    * RFC 7591 Dynamic Client Registration
    */
-  registerClient(body: {
+  async registerClient(body: {
     client_name?: string;
     redirect_uris?: string[];
     client_id?: string;
@@ -125,7 +129,7 @@ export class OAuthController {
     const requestedId = body.client_id;
     let clientId: string;
 
-    if (requestedId && !(this.storage.getClient(requestedId) as any)) {
+    if (requestedId && !(await this.storage.getClient(requestedId) as any)) {
       clientId = requestedId;
     } else {
       clientId = `chatgpt_${crypto.randomUUID().replace(/-/g, "")}`;
@@ -135,7 +139,7 @@ export class OAuthController {
     const redirectUris = Array.isArray(body.redirect_uris) ? body.redirect_uris : [];
     const clientName = body.client_name || "ChatGPT Client";
 
-    this.storage.saveClient({
+    await this.storage.saveClient({
       clientId,
       clientSecret,
       clientName,
@@ -157,7 +161,7 @@ export class OAuthController {
   /**
    * Check whether a redirect URI is permissible
    */
-  isAllowedRedirectUri(redirectUri: string, clientId?: string): boolean {
+  async isAllowedRedirectUri(redirectUri: string, clientId?: string): Promise<boolean> {
     if (!redirectUri) return false;
 
     try {
@@ -178,7 +182,7 @@ export class OAuthController {
         return true;
       }
 
-      // If clientId is a URL, allow redirect to the same origin
+      // If client_id is a URL, redirectUri must have the same origin
       if (clientId && (clientId.startsWith("https://") || clientId.startsWith("http://"))) {
         try {
           const clientUrl = new URL(clientId);
@@ -192,7 +196,7 @@ export class OAuthController {
     }
 
     if (clientId) {
-      const client = this.storage.getClient(clientId) as any;
+      const client = (await this.storage.getClient(clientId)) as any;
       if (client && client.redirectUris && client.redirectUris.includes(redirectUri)) {
         return true;
       }
@@ -269,8 +273,8 @@ export class OAuthController {
     return false;
   }
 
-  getClientDisplayName(clientId: string): string {
-    const client = this.storage.getClient(clientId) as any;
+  async getClientDisplayName(clientId: string): Promise<string> {
+    const client = (await this.storage.getClient(clientId)) as any;
     if (client?.clientName) return client.clientName;
     if (clientId.includes("codex")) return "Codex";
     if (clientId.includes("claude")) return "Claude";
@@ -306,7 +310,7 @@ export class OAuthController {
       await this.resolveClientMetadata(params.client_id);
     }
 
-    if (!params.redirect_uri || !this.isAllowedRedirectUri(params.redirect_uri, params.client_id)) {
+    if (!params.redirect_uri || !(await this.isAllowedRedirectUri(params.redirect_uri, params.client_id))) {
       return { error: "invalid_request", description: "redirect_uri is invalid or not allowed", status: 400 };
     }
 
@@ -338,7 +342,7 @@ export class OAuthController {
       return { type: "redirect", redirectUrl: approval.redirectUrl };
     }
 
-    const clientName = this.getClientDisplayName(params.client_id);
+    const clientName = await this.getClientDisplayName(params.client_id);
     return {
       type: "consent",
       sessionId,
@@ -354,23 +358,23 @@ export class OAuthController {
   /**
    * User approves authorization on the consent screen
    */
-  approveAuthorization(sessionId: string, userId?: string, approvedScope?: string): { redirectUrl: string } {
-    const pending = this.storage.getPendingAuth(sessionId) as any;
+  async approveAuthorization(sessionId: string, userId?: string, approvedScope?: string): Promise<{ redirectUrl: string }> {
+    const pending = (await this.storage.getPendingAuth(sessionId)) as any;
     if (!pending) {
       throw new Error("Authorization session expired or was already used. Please try again.");
     }
-    this.storage.deletePendingAuth(sessionId);
+    await this.storage.deletePendingAuth(sessionId);
 
     const targetUserId = userId || pending.userId || "legacy_user";
     const scope = approvedScope || pending.scope;
 
     // Retrieve user credentials if available
-    const userCreds = this.storage.getUserCredentials(targetUserId) as any;
+    const userCreds = (await this.storage.getUserCredentials(targetUserId)) as any;
 
     const code = `code_${crypto.randomUUID().replace(/-/g, "")}`;
     const expiresAt = Date.now() + 5 * 60 * 1000; // 5 minutes TTL
 
-    this.storage.saveAuthCode({
+    await this.storage.saveAuthCode({
       code,
       clientId: pending.clientId,
       redirectUri: pending.redirectUri,
@@ -398,12 +402,12 @@ export class OAuthController {
   /**
    * User denies authorization on the consent screen
    */
-  denyAuthorization(sessionId: string): { redirectUrl: string } {
-    const pending = this.storage.getPendingAuth(sessionId) as any;
+  async denyAuthorization(sessionId: string): Promise<{ redirectUrl: string }> {
+    const pending = (await this.storage.getPendingAuth(sessionId)) as any;
     if (!pending) {
       throw new Error("Authorization session expired or was already used. Please try again.");
     }
-    this.storage.deletePendingAuth(sessionId);
+    await this.storage.deletePendingAuth(sessionId);
 
     const redirectUrl = new URL(pending.redirectUri);
     redirectUrl.searchParams.set("error", "access_denied");

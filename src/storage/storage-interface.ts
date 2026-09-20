@@ -65,6 +65,13 @@ export interface OAuthTokenRecord {
   expiresAt: number;
 }
 
+export interface UserGrant {
+  clientId: string;
+  clientName?: string;
+  scope: string;
+  createdAt: number;
+}
+
 export interface IStorage {
   // Users & credentials
   saveUser(user: UserRecord): Promise<void> | void;
@@ -105,5 +112,17 @@ export interface IStorage {
   getTokenByRefreshToken(refreshToken: string): Promise<OAuthTokenRecord | null> | (OAuthTokenRecord | null);
   revokeToken(token: string): Promise<boolean> | boolean;
 
+  // Token update & grants
+  updateYandexTokens?(
+    accessToken: string,
+    yandexAccessToken: string,
+    yandexRefreshToken?: string,
+    yandexExpiresAt?: number
+  ): Promise<void> | void;
+  listUserGrants?(userId: string): Promise<UserGrant[]> | UserGrant[];
+  revokeUserGrant?(userId: string, clientId: string): Promise<boolean> | boolean;
+  pruneExpired?(): Promise<void> | void;
+
   close?(): Promise<void> | void;
 }
+

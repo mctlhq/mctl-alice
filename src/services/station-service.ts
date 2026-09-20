@@ -7,7 +7,8 @@ import {
   YandexUserInfo,
   SpeakerInfo,
 } from "../client/types.js";
-import { TelemetryStorage, TelemetryHistoryResult } from "../storage/telemetry-storage.js";
+import { ITelemetryStorage, TelemetryHistoryResult } from "../storage/telemetry-storage.js";
+import { createTelemetryStorage } from "../storage/index.js";
 
 export interface LightControlOptions {
   device: string;
@@ -99,12 +100,12 @@ export class StationService {
   private cacheTimestamp = 0;
   private readonly CACHE_TTL_MS = 30000; // 30 seconds
 
-  private storage: TelemetryStorage | null = null;
+  private storage: ITelemetryStorage | null = null;
 
   constructor(
     client?: YandexIoTClient,
     quasarClient?: QuasarClient,
-    storage?: TelemetryStorage
+    storage?: ITelemetryStorage
   ) {
     if (client) {
       this.client = client;
@@ -129,14 +130,14 @@ export class StationService {
     }
   }
 
-  getStorage(): TelemetryStorage {
+  getStorage(): ITelemetryStorage {
     if (!this.storage) {
-      this.storage = new TelemetryStorage();
+      this.storage = createTelemetryStorage();
     }
     return this.storage;
   }
 
-  setStorage(storage: TelemetryStorage): void {
+  setStorage(storage: ITelemetryStorage): void {
     this.storage = storage;
   }
 
@@ -1406,7 +1407,7 @@ export class StationService {
     }
 
     const storage = this.getStorage();
-    const result = storage.queryHistory({
+    const result = await storage.queryHistory({
       deviceId: device.id,
       metric: options.metric || "power",
       from: fromTs,

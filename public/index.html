@@ -3,7 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<script>try{var t=localStorage.getItem("alice-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>
+<script>
+try {
+  var t = localStorage.getItem("alice-theme");
+  if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+  var l = localStorage.getItem("alice-lang");
+  if (l === "ru" || l === "en") document.documentElement.setAttribute("lang", l);
+} catch(e) {}
+</script>
 <title>mctl-alice — Управление Яндекс Станцией и умным домом через AI (MCP)</title>
 <meta name="description" content="Model Context Protocol (MCP) сервер для Яндекс Станций и умного дома. Управляйте колонками Алиса, отправляйте голосовые команды, воспроизводите произвольный текст TTS через Claude, ChatGPT, Cursor и Antigravity.">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
@@ -31,10 +38,10 @@
     <span class="chip-beta">BETA</span>
   </a>
   <nav class="topbar-links">
-    <a href="/auth/login">Вход (OAuth)</a>
-    <a href="/auth/cookie">Quasar Cookie</a>
-    <a href="/openapi.json">OpenAPI</a>
-    <a href="https://github.com/mctlhq/mctl-alice" target="_blank" rel="noopener">GitHub</a>
+    <a href="/auth/login" data-i18n="nav_login">Вход (OAuth)</a>
+    <a href="/auth/cookie" data-i18n="nav_cookie">Quasar Cookie</a>
+    <a href="https://github.com/mctlhq/mctl-alice" target="_blank" rel="noopener" data-i18n="nav_github">GitHub</a>
+    <button class="lang-toggle" id="lang-toggle" type="button" aria-label="Switch language to English">EN</button>
     <button class="theme-toggle" id="theme-toggle" type="button" hidden aria-label="Переключить тему оформления">
       <svg class="icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
         <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>
@@ -51,11 +58,11 @@
 
 <section class="hero wrap">
   <div class="eyebrow-row">
-    <p class="eyebrow">Model Context Protocol</p>
+    <p class="eyebrow" data-i18n="hero_eyebrow">Model Context Protocol</p>
     <span class="chip-beta">BETA</span>
   </div>
-  <h1>Голосовое управление Яндекс Станцией<br>и умным домом для AI-ассистентов</h1>
-  <p class="lead">
+  <h1 data-i18n-html="hero_title">Голосовое управление Яндекс Станцией<br>и умным домом для AI-ассистентов</h1>
+  <p class="lead" data-i18n="hero_lead">
     mctl-alice соединяет ваших AI-ассистентов (Claude, ChatGPT, Cursor, Antigravity)
     с умными колонками Яндекс Станция и устройствами умного дома. Произносите произвольные фразы
     (TTS), симулируйте голосовые команды текстом, управляйте громкостью, музыкой и сценариями.
@@ -68,113 +75,112 @@
 
   <div class="cta-row">
     <button class="btn btn-primary" id="copy-url" type="button" data-idle="Скопировать MCP URL" data-done="Скопировано!">Скопировать MCP URL</button>
-    <a class="btn btn-secondary" href="/auth/login">Войти через Яндекс</a>
-    <a class="btn btn-secondary" href="https://github.com/mctlhq/mctl-alice" target="_blank" rel="noopener">Репозиторий на GitHub</a>
+    <a class="btn btn-secondary" href="/auth/login" data-i18n="hero_login_btn">Войти через Яндекс</a>
   </div>
 </section>
 
 <section class="wrap" id="features">
   <div class="section-head">
-    <h2>Возможности</h2>
-    <p>Все ключевые сценарии взаимодействия с голосовым помощником Алиса в виде стандартных инструментов MCP.</p>
+    <h2 data-i18n="features_title">Возможности</h2>
+    <p data-i18n="features_subtitle">Все ключевые сценарии взаимодействия с голосовым помощником Алиса в виде стандартных инструментов MCP.</p>
   </div>
   <div class="card-grid">
     <div class="card">
       <div class="card-icon">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
       </div>
-      <h3>Симуляция голосовых команд</h3>
-      <p>Выполнение любых команд текстом ровно так, как если бы вы произнесли их вслух в микрофон колонки: «Включи джаз», «Какая погода завтра», «Выключи свет везде».</p>
+      <h3 data-i18n="card_cmd_title">Симуляция голосовых команд</h3>
+      <p data-i18n="card_cmd_desc">Выполнение любых команд текстом ровно так, как если бы вы произнесли их вслух в микрофон колонки: «Включи джаз», «Какая погода завтра», «Выключи свет везде».</p>
     </div>
     <div class="card">
       <div class="card-icon">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
       </div>
-      <h3>Произвольная речь (TTS)</h3>
-      <p>Озвучивание любого произвольного текста через выбранную колонку. Идеально для голосовых уведомлений, напоминаний, утренних сводок и ответов ассистента.</p>
+      <h3 data-i18n="card_tts_title">Произвольная речь (TTS)</h3>
+      <p data-i18n="card_tts_desc">Озвучивание любого произвольного текста через выбранную колонку. Идеально для голосовых уведомлений, напоминаний, утренних сводок и ответов ассистента.</p>
     </div>
     <div class="card">
       <div class="card-icon">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>
       </div>
-      <h3>Управление громкостью</h3>
-      <p>Точная регулировка громкости от 1 до 10 для конкретной колонки, комнаты или устройства по умолчанию.</p>
+      <h3 data-i18n="card_vol_title">Управление громкостью</h3>
+      <p data-i18n="card_vol_desc">Точная регулировка громкости от 1 до 10 для конкретной колонки, комнаты или устройства по умолчанию.</p>
     </div>
     <div class="card">
       <div class="card-icon">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
       </div>
-      <h3>Управление медиа-плеером</h3>
-      <p>Пауза, возобновление проигрывания, остановка трека, переключение на следующий или предыдущий трек в Яндекс Музыке.</p>
+      <h3 data-i18n="card_media_title">Управление медиа-плеером</h3>
+      <p data-i18n="card_media_desc">Пауза, возобновление проигрывания, остановка трека, переключение на следующий или предыдущий трек в Яндекс Музыке.</p>
     </div>
     <div class="card">
       <div class="card-icon">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
       </div>
-      <h3>Обнаружение умного дома</h3>
-      <p>Автоматическое получение списка всех колонок, комнат, групп и умных устройств пользователя с информацией об их возможностях.</p>
+      <h3 data-i18n="card_discovery_title">Обнаружение умного дома</h3>
+      <p data-i18n="card_discovery_desc">Автоматическое получение списка всех колонок, комнат, групп и умных устройств пользователя с информацией об их возможностях.</p>
     </div>
     <div class="card">
       <div class="card-icon">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
       </div>
-      <h3>Сценарии автоматизации</h3>
-      <p>Мгновенный триггер настроенных сценариев умного дома Яндекса по их названию или идентификатору («Доброе утро», «Ушел из дома», «Кино»).</p>
+      <h3 data-i18n="card_scenarios_title">Сценарии автоматизации</h3>
+      <p data-i18n="card_scenarios_desc">Мгновенный триггер настроенных сценариев умного дома Яндекса по их названию или идентификатору («Доброе утро», «Ушел из дома», «Кино»).</p>
     </div>
   </div>
 </section>
 
 <section class="wrap" id="tools">
   <div class="section-head">
-    <h2>Инструменты MCP</h2>
-    <p>Набор инструментов, регистрируемых сервером mctl-alice. AI-ассистент вызывает их автоматически в диалоге.</p>
+    <h2 data-i18n="tools_title">Инструменты MCP</h2>
+    <p data-i18n="tools_subtitle">Набор инструментов, регистрируемых сервером mctl-alice. AI-ассистент вызывает их автоматически в диалоге.</p>
   </div>
   <div class="table-scroll">
     <table>
       <thead>
         <tr>
-          <th scope="col">Инструмент</th>
-          <th scope="col">Назначение</th>
-          <th scope="col">Параметры</th>
-          <th scope="col">Действие</th>
+          <th scope="col" data-i18n="th_tool">Инструмент</th>
+          <th scope="col" data-i18n="th_desc">Назначение</th>
+          <th scope="col" data-i18n="th_params">Параметры</th>
+          <th scope="col" data-i18n="th_action">Действие</th>
         </tr>
       </thead>
       <tbody>
         <tr>
           <td><code>alice_list_devices</code></td>
-          <td class="muted">Список всех колонок, комнат и умных устройств.</td>
+          <td class="muted" data-i18n="desc_devices">Список всех колонок, комнат и умных устройств.</td>
           <td><code>only_speakers?: boolean</code></td>
-          <td><span class="chip">чтение</span></td>
+          <td><span class="chip" data-i18n="badge_read">чтение</span></td>
         </tr>
         <tr>
           <td><code>alice_send_command</code></td>
-          <td class="muted">Выполнение голосовой команды текстом (прямая симуляция речи).</td>
+          <td class="muted" data-i18n="desc_cmd">Выполнение голосовой команды текстом (прямая симуляция речи).</td>
           <td><code>command: string, device?: string</code></td>
-          <td><span class="chip is-write">управление</span></td>
+          <td><span class="chip is-write" data-i18n="badge_control">управление</span></td>
         </tr>
         <tr>
           <td><code>alice_say_phrase</code></td>
-          <td class="muted">Синтез произвольной речи через колонку (TTS-сообщения).</td>
+          <td class="muted" data-i18n="desc_say">Синтез произвольной речи через колонку (TTS-сообщения).</td>
           <td><code>phrase: string, device?: string</code></td>
-          <td><span class="chip is-write">управление</span></td>
+          <td><span class="chip is-write" data-i18n="badge_control">управление</span></td>
         </tr>
         <tr>
           <td><code>alice_set_volume</code></td>
-          <td class="muted">Установка громкости от 1 до 10.</td>
+          <td class="muted" data-i18n="desc_vol">Установка громкости от 1 до 10.</td>
           <td><code>level: number (1-10), device?: string</code></td>
-          <td><span class="chip is-write">управление</span></td>
+          <td><span class="chip is-write" data-i18n="badge_control">управление</span></td>
         </tr>
         <tr>
           <td><code>alice_media_control</code></td>
-          <td class="muted">Управление плеером: play, pause, stop, next, prev.</td>
+          <td class="muted" data-i18n="desc_media">Управление плеером: play, pause, stop, next, prev.</td>
           <td><code>action: string, device?: string</code></td>
-          <td><span class="chip is-write">управление</span></td>
+          <td><span class="chip is-write" data-i18n="badge_control">управление</span></td>
         </tr>
         <tr>
           <td><code>alice_trigger_scenario</code></td>
-          <td class="muted">Запуск сценария умного дома по названию или ID.</td>
+          <td class="muted" data-i18n="desc_scenario">Запуск сценария умного дома по названию или ID.</td>
           <td><code>scenario: string</code></td>
-          <td><span class="chip is-write">сценарий</span></td>
+          <td><span class="chip is-write" data-i18n="badge_scenario">сценарий</span></td>
         </tr>
       </tbody>
     </table>
@@ -183,33 +189,33 @@
 
 <section class="wrap" id="prompts">
   <div class="section-head">
-    <h2>Примеры запросов к ассистенту</h2>
-    <p>После подключения просто общайтесь с вашим AI-ассистентом на естественном языке.</p>
+    <h2 data-i18n="prompts_title">Примеры запросов к ассистенту</h2>
+    <p data-i18n="prompts_subtitle">После подключения просто общайтесь с вашим AI-ассистентом на естественном языке.</p>
   </div>
   <ul class="steps">
-    <li><strong>«Какие колонки Алиса у меня есть и в каких комнатах?»</strong> — ассистент вызывает <code>alice_list_devices</code> и показывает список с именами и расположением.</li>
-    <li><strong>«Включи джаз на колонке в гостиной»</strong> — ассистент симулирует голосовую команду для станции в гостиной через <code>alice_send_command</code>.</li>
-    <li><strong>«Сделай громкость 4 на кухне»</strong> — <code>alice_set_volume</code> меняет громкость целевого устройства.</li>
-    <li><strong>«Скажи через колонку в детской, что пора обедать»</strong> — <code>alice_say_phrase</code> синтезирует речь через нужную станцию.</li>
-    <li><strong>«Поставь музыку на паузу»</strong> — <code>alice_media_control</code> приостанавливает текущее воспроизведение.</li>
-    <li><strong>«Запусти сценарий Спокойной ночи»</strong> — <code>alice_trigger_scenario</code> активирует вечернюю автоматизацию.</li>
+    <li data-i18n-html="prompt_1"><strong>«Какие колонки Алиса у меня есть и в каких комнатах?»</strong> — ассистент вызывает <code>alice_list_devices</code> и показывает список с именами и расположением.</li>
+    <li data-i18n-html="prompt_2"><strong>«Включи джаз на колонке в гостиной»</strong> — ассистент симулирует голосовую команду для станции в гостиной через <code>alice_send_command</code>.</li>
+    <li data-i18n-html="prompt_3"><strong>«Сделай громкость 4 на кухне»</strong> — <code>alice_set_volume</code> меняет громкость целевого устройства.</li>
+    <li data-i18n-html="prompt_4"><strong>«Скажи через колонку в детской, что пора обедать»</strong> — <code>alice_say_phrase</code> синтезирует речь через нужную станцию.</li>
+    <li data-i18n-html="prompt_5"><strong>«Поставь музыку на паузу»</strong> — <code>alice_media_control</code> приостанавливает текущее воспроизведение.</li>
+    <li data-i18n-html="prompt_6"><strong>«Запусти сценарий Спокойной ночи»</strong> — <code>alice_trigger_scenario</code> активирует вечернюю автоматизацию.</li>
   </ul>
 </section>
 
 <section class="wrap" id="setup">
   <div class="section-head">
-    <h2>Как подключить</h2>
-    <p>Три простых шага для подключения к вашим любимым AI-клиентам.</p>
+    <h2 data-i18n="setup_title">Как подключить</h2>
+    <p data-i18n="setup_subtitle">Три простых шага для подключения к вашим любимым AI-клиентам.</p>
   </div>
   <ol class="steps">
     <li>
-      <strong>Шаг 1. Добавьте коннектор в вашего AI-ассистента:</strong>
-      <br>Используйте публичный эндпоинт: <code class="mcp-url-slot">https://alice.mctl.ai/mcp</code>
+      <strong data-i18n="setup_step1_title">Шаг 1. Добавьте коннектор в вашего AI-ассистента:</strong>
+      <br><span data-i18n="setup_step1_endpoint_label">Используйте публичный эндпоинт:</span> <code class="mcp-url-slot">https://alice.mctl.ai/mcp</code>
       <br><br>
-      • <strong>Claude.ai</strong>: перейдите в <em>Customize → Connectors → “+” → Add custom connector</em>, вставьте URL <code>https://alice.mctl.ai/mcp</code> (или SSE: <code>https://alice.mctl.ai/sse</code>) и нажмите <em>Add</em>.
-      <br><br>
-      • <strong>ChatGPT</strong>: откройте <em>Settings → Apps &amp; Connectors → Advanced settings → Developer mode</em>, затем в <em>Apps &amp; Connectors → Create</em> укажите URL <code>https://alice.mctl.ai/mcp</code>. Сервер поддерживает RFC 8414 &amp; OAuth 2.1 — ChatGPT автоматически проведет вас через авторизацию в Яндексе.
-      <br><br>
+      <div data-i18n-html="setup_step1_claude">• <strong>Claude.ai</strong>: перейдите в <em>Customize → Connectors → “+” → Add custom connector</em>, вставьте URL <code class="mcp-url-slot">https://alice.mctl.ai/mcp</code> (или SSE: <code class="sse-url-slot">https://alice.mctl.ai/sse</code>) и нажмите <em>Add</em>.</div>
+      <br>
+      <div data-i18n-html="setup_step1_chatgpt">• <strong>ChatGPT</strong>: откройте <em>Settings → Apps &amp; Connectors → Advanced settings → Developer mode</em>, затем в <em>Apps &amp; Connectors → Create</em> укажите URL <code class="mcp-url-slot">https://alice.mctl.ai/mcp</code>. Сервер поддерживает RFC 8414 &amp; OAuth 2.1 — ChatGPT автоматически проведет вас через авторизацию в Яндексе.</div>
+      <br>
       • <strong>Claude Code</strong>:
       <pre><code>claude mcp add --transport sse alice https://alice.mctl.ai/sse</code></pre>
       <br>
@@ -223,36 +229,36 @@
 }</code></pre>
     </li>
     <li>
-      <strong>Шаг 2. Авторизуйтесь в Яндексе (OAuth):</strong>
-      <br>При подключении через ChatGPT или Claude.ai окно авторизации Яндекса откроется автоматически. Вы также можете выполнить вход заранее на странице <a href="/auth/login">/auth/login</a>. Это свяжет ваш токен управления умным домом с сессией MCP.
+      <strong data-i18n="setup_step2_title">Шаг 2. Авторизуйтесь в Яндексе (OAuth):</strong>
+      <br><span data-i18n-html="setup_step2_desc">При подключении через ChatGPT или Claude.ai окно авторизации Яндекса откроется автоматически. Вы также можете выполнить вход заранее на странице <a href="/auth/login">/auth/login</a>. Это свяжет ваш токен управления умным домом с сессией MCP.</span>
     </li>
     <li>
-      <strong>Шаг 3 (Опционально). Настройте Quasar Cookie для динамического TTS:</strong>
-      <br>Официальный облачный IoT API Яндекса поддерживает переключение сценариев и базовые действия. Для произвольного воспроизведения любого текста (TTS) и выполнения динамических текстовых голосовых команд перейдите на страницу <a href="/auth/cookie">/auth/cookie</a> и сохраните сессионную куку <code>Session_id</code> от yandex.ru.
+      <strong data-i18n="setup_step3_title">Шаг 3 (Опционально). Настройте Quasar Cookie для динамического TTS:</strong>
+      <br><span data-i18n-html="setup_step3_desc">Официальный облачный IoT API Яндекса поддерживает переключение сценариев и базовые действия. Для произвольного воспроизведения любого текста (TTS) и выполнения динамических текстовых голосовых команд перейдите на страницу <a href="/auth/cookie">/auth/cookie</a> и сохраните сессионную куку <code>Session_id</code> от yandex.ru.</span>
     </li>
   </ol>
 </section>
 
 <section class="wrap" id="faq">
   <div class="section-head">
-    <h2>Частые вопросы</h2>
+    <h2 data-i18n="faq_title">Частые вопросы</h2>
   </div>
   <div class="faq-list">
     <details class="faq-item">
-      <summary>Безопасно ли подключать умный дом через mctl-alice?</summary>
-      <p>Да. mctl-alice использует стандартный протокол OAuth 2.1 с защитой PKCE. Токены шифруются, а запросы к устройствам выполняются исключительно по защищенным каналам через официальные API Яндекса.</p>
+      <summary data-i18n="faq_q1">Безопасно ли подключать умный дом через mctl-alice?</summary>
+      <p data-i18n="faq_a1">Да. mctl-alice использует стандартный протокол OAuth 2.1 с защитой PKCE. Токены шифруются, а запросы к устройствам выполняются исключительно по защищенным каналам через официальные API Яндекса.</p>
     </details>
     <details class="faq-item">
-      <summary>Какие модели колонок Яндекс Станция поддерживаются?</summary>
-      <p>Поддерживаются все актуальные модели: Яндекс Станция Макс, Станция Миди, Станция 2, Станция Лайт, Станция Мини, Станция Дуо Макс, а также сторонние устройства с поддержкой голосового помощника Алиса.</p>
+      <summary data-i18n="faq_q2">Какие модели колонок Яндекс Станция поддерживаются?</summary>
+      <p data-i18n="faq_a2">Поддерживаются все актуальные модели: Яндекс Станция Макс, Станция Миди, Станция 2, Станция Лайт, Станция Мини, Станция Дуо Макс, а также сторонние устройства с поддержкой голосового помощника Алиса.</p>
     </details>
     <details class="faq-item">
-      <summary>В чем разница между IoT API и Quasar API?</summary>
-      <p>Официальный IoT API Яндекса позволяет опрашивать статус устройств и запускать заранее подготовленные сценарии. Quasar API предоставляет прямой доступ к воспроизведению произвольного текста через встроенный синтезатор речи (TTS) и эмуляции живых голосовых команд.</p>
+      <summary data-i18n="faq_q3">В чем разница между IoT API и Quasar API?</summary>
+      <p data-i18n="faq_a3">Официальный IoT API Яндекса позволяет опрашивать статус устройств и запускать заранее подготовленные сценарии. Quasar API предоставляет прямой доступ к воспроизведению произвольного текста через встроенный синтезатор речи (TTS) и эмуляции живых голосовых команд.</p>
     </details>
     <details class="faq-item">
-      <summary>Можно ли управлять устройствами умного дома других брендов?</summary>
-      <p>Да! Любое устройство (лампочки, розетки, реле, роботы-пылесосы, кондиционеры), привязанное к вашему умному дому в приложении «Дом с Алисой», доступно для симуляции команд и запуска через сценарии.</p>
+      <summary data-i18n="faq_q4">Можно ли управлять устройствами умного дома других брендов?</summary>
+      <p data-i18n="faq_a4">Да! Любое устройство (лампочки, розетки, реле, роботы-пылесосы, кондиционеры), привязанное к вашему умному дому в приложении «Дом с Алисой», доступно для симуляции команд и запуска через сценарии.</p>
     </details>
   </div>
 </section>
@@ -261,12 +267,11 @@
 
 <footer class="wrap">
   <div class="footer-row">
-    <span>mctl-alice — часть платформы <a href="https://mctl.ai" target="_blank" rel="noopener">mctl</a>.</span>
+    <span data-i18n-html="footer_part">mctl-alice — часть платформы <a href="https://mctl.ai" target="_blank" rel="noopener">mctl</a>.</span>
     <span>
-      <a href="/auth/login">Вход (OAuth)</a> ·
-      <a href="/auth/cookie">Quasar Cookie</a> ·
-      <a href="/openapi.json">OpenAPI</a> ·
-      <a href="https://github.com/mctlhq/mctl-alice" target="_blank" rel="noopener">GitHub</a>
+      <a href="/auth/login" data-i18n="nav_login">Вход (OAuth)</a> ·
+      <a href="/auth/cookie" data-i18n="nav_cookie">Quasar Cookie</a> ·
+      <a href="https://github.com/mctlhq/mctl-alice" target="_blank" rel="noopener" data-i18n="nav_github">GitHub</a>
     </span>
   </div>
 </footer>

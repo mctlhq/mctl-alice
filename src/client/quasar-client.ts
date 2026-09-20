@@ -1,4 +1,5 @@
 import { saveEnvVariable, saveTokenToKeychain, getTokenFromKeychain } from "../auth/token-storage.js";
+import { IStorage } from "../storage/storage-interface.js";
 
 const MASK_EN = "0123456789abcdef-";
 const MASK_RU = "оеаинтсрвлкмдпуяы";
@@ -108,6 +109,8 @@ export interface QuasarClientOptions {
   useKeychain?: boolean;
   persistEnv?: boolean;
   envFilePath?: string;
+  userId?: string;
+  storage?: IStorage;
 }
 
 export class QuasarClient {
@@ -119,17 +122,52 @@ export class QuasarClient {
   private persistEnv: boolean;
   private envFilePath?: string;
 
+  private locks = new Map<string, Promise<any>>();
+  private userId?: string;
+  private storage?: IStorage;
+
   constructor(options: QuasarClientOptions = {}) {
     this.useKeychain = options.useKeychain ?? true;
     this.persistEnv = options.persistEnv ?? true;
     this.envFilePath = options.envFilePath;
+    this.userId = options.userId;
+    this.storage = options.storage;
 
-    let cookie = options.cookie || process.env.YANDEX_COOKIE;
-    if (!cookie && this.useKeychain) {
-      cookie = getTokenFromKeychain("mctl-alice-cookie") || undefined;
-    }
+    const cookie =
+      options.cookie ||
+      process.env.YANDEX_COOKIE ||
+      (this.useKeychain ? getTokenFromKeychain("mctl-alice-quasar-cookie") : null);
+
     if (cookie) {
       this.setCookie(cookie, false);
+    }
+  }
+
+  /**
+   * Serializes async operations targeting the same key (e.g. deviceId)
+   */
+  private async runWithLock<T>(key: string, task: () => Promise<T>): Promise<T> {
+    const prev = this.locks.get(key) || Promise.resolve();
+    let release: () => void;
+    const next = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    this.locks.set(
+      key,
+      prev.then(
+        () => next,
+        () => next
+      )
+    );
+
+    await prev.catch(() => {});
+    try {
+      return await task();
+    } finally {
+      release!();
+      if (this.locks.get(key) === next) {
+        this.locks.delete(key);
+      }
     }
   }
 
@@ -298,32 +336,23 @@ export class QuasarClient {
     }
 
     const trigger = encodeDeviceId(deviceId);
-    const name = `mctl-${deviceId}`;
+    const name = this.userId ? `mctl-${this.userId.slice(0, 8)}-${deviceId}` : `mctl-${deviceId}`;
 
     // Check existing scenarios
     try {
       const scenarios = await this.getScenarios();
-      // 1. Look for exact matching speaker scenario
+      // Look for exact matching speaker scenario only (never adopt arbitrary scenarios)
       for (const sc of scenarios) {
         if (sc.name === name || sc.triggers?.[0]?.value === trigger) {
           this.scenarioCache.set(deviceId, sc.id);
           return sc.id;
         }
       }
-
-      // 2. Look for any existing mctl scenario to adopt/reuse
-      const adoptable = scenarios.find(
-        (sc) => sc.name && sc.name.startsWith("mctl-")
-      );
-      if (adoptable) {
-        this.scenarioCache.set(deviceId, adoptable.id);
-        return adoptable.id;
-      }
     } catch {
       // ignore, try create
     }
 
-    // 3. Create a new proxy scenario on /m/user/scenarios (not /v4/)
+    // Create a new proxy scenario on /m/user/scenarios (not /v4/)
     const uniqueTrigger = `${trigger}${Date.now().toString().slice(-4)}`;
     const payload = buildTtsScenarioPayload(name, uniqueTrigger, deviceId, "готов");
     const res = await this.request("https://iot.quasar.yandex.ru/m/user/scenarios", {
@@ -344,32 +373,34 @@ export class QuasarClient {
     text: string,
     triggerCallback?: (scenarioId: string) => Promise<any>
   ): Promise<any> {
-    const scenarioId = await this.getOrCreateSpeakerScenario(deviceId);
-    const trigger = encodeDeviceId(deviceId);
-    const name = `mctl-${deviceId}`;
+    return this.runWithLock(deviceId, async () => {
+      const scenarioId = await this.getOrCreateSpeakerScenario(deviceId);
+      const trigger = encodeDeviceId(deviceId);
+      const name = this.userId ? `mctl-${this.userId.slice(0, 8)}-${deviceId}` : `mctl-${deviceId}`;
 
-    const payload = buildTtsScenarioPayload(name, trigger, deviceId, text);
-    const updateRes = await this.request(
-      `https://iot.quasar.yandex.ru/m/v4/user/scenarios/${scenarioId}`,
-      {
-        method: "PUT",
-        body: JSON.stringify(payload),
+      const payload = buildTtsScenarioPayload(name, trigger, deviceId, text);
+      const updateRes = await this.request(
+        `https://iot.quasar.yandex.ru/m/v4/user/scenarios/${scenarioId}`,
+        {
+          method: "PUT",
+          body: JSON.stringify(payload),
+        }
+      );
+
+      if (updateRes.status !== "ok") {
+        throw new Error(`Failed to update scenario for TTS: ${JSON.stringify(updateRes)}`);
       }
-    );
 
-    if (updateRes.status !== "ok") {
-      throw new Error(`Failed to update scenario for TTS: ${JSON.stringify(updateRes)}`);
-    }
-
-    if (triggerCallback) {
-      try {
-        return await triggerCallback(scenarioId);
-      } catch {
-        // Fallback to direct Quasar trigger if triggerCallback fails
+      if (triggerCallback) {
+        try {
+          return await triggerCallback(scenarioId);
+        } catch {
+          // Fallback to direct Quasar trigger if triggerCallback fails
+        }
       }
-    }
 
-    return this.triggerScenario(scenarioId);
+      return this.triggerScenario(scenarioId);
+    });
   }
 
   async sendCommand(
@@ -377,31 +408,71 @@ export class QuasarClient {
     command: string,
     triggerCallback?: (scenarioId: string) => Promise<any>
   ): Promise<any> {
-    const scenarioId = await this.getOrCreateSpeakerScenario(deviceId);
-    const trigger = encodeDeviceId(deviceId);
-    const name = `mctl-${deviceId}`;
+    return this.runWithLock(deviceId, async () => {
+      const scenarioId = await this.getOrCreateSpeakerScenario(deviceId);
+      const trigger = encodeDeviceId(deviceId);
+      const name = this.userId ? `mctl-${this.userId.slice(0, 8)}-${deviceId}` : `mctl-${deviceId}`;
 
-    const payload = buildCommandScenarioPayload(name, trigger, deviceId, command);
-    const updateRes = await this.request(
-      `https://iot.quasar.yandex.ru/m/v4/user/scenarios/${scenarioId}`,
-      {
-        method: "PUT",
-        body: JSON.stringify(payload),
+      const payload = buildCommandScenarioPayload(name, trigger, deviceId, command);
+      const updateRes = await this.request(
+        `https://iot.quasar.yandex.ru/m/v4/user/scenarios/${scenarioId}`,
+        {
+          method: "PUT",
+          body: JSON.stringify(payload),
+        }
+      );
+
+      if (updateRes.status !== "ok") {
+        throw new Error(`Failed to update scenario for command: ${JSON.stringify(updateRes)}`);
       }
-    );
 
-    if (updateRes.status !== "ok") {
-      throw new Error(`Failed to update scenario for command: ${JSON.stringify(updateRes)}`);
-    }
-
-    if (triggerCallback) {
-      try {
-        return await triggerCallback(scenarioId);
-      } catch {
-        // Fallback to direct Quasar trigger if triggerCallback fails
+      if (triggerCallback) {
+        try {
+          return await triggerCallback(scenarioId);
+        } catch {
+          // Fallback to direct Quasar trigger if triggerCallback fails
+        }
       }
-    }
 
-    return this.triggerScenario(scenarioId);
+      return this.triggerScenario(scenarioId);
+    });
+  }
+
+  async deleteSpeakerScenario(deviceId: string): Promise<boolean> {
+    const scenarioId = this.scenarioCache.get(deviceId);
+    if (!scenarioId) return false;
+    try {
+      await this.request(`https://iot.quasar.yandex.ru/m/v4/user/scenarios/${encodeURIComponent(scenarioId)}`, {
+        method: "DELETE",
+      });
+      this.scenarioCache.delete(deviceId);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async cleanupAllProxyScenarios(): Promise<number> {
+    const prefix = this.userId ? `mctl-${this.userId.slice(0, 8)}-` : "mctl-";
+    try {
+      const scenarios = await this.getScenarios();
+      let deleted = 0;
+      for (const sc of scenarios) {
+        if (sc.name && sc.name.startsWith(prefix)) {
+          try {
+            await this.request(`https://iot.quasar.yandex.ru/m/v4/user/scenarios/${encodeURIComponent(sc.id)}`, {
+              method: "DELETE",
+            });
+            deleted++;
+          } catch {
+            // ignore individual delete failures
+          }
+        }
+      }
+      this.scenarioCache.clear();
+      return deleted;
+    } catch {
+      return 0;
+    }
   }
 }

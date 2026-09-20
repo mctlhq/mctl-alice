@@ -7,6 +7,7 @@ import {
   YandexUserInfo,
   SpeakerInfo,
 } from "../client/types.js";
+import { TelemetryStorage, TelemetryHistoryResult } from "../storage/telemetry-storage.js";
 
 export interface DeviceListResult {
   speakers: Array<{
@@ -33,7 +34,13 @@ export class StationService {
   private cacheTimestamp = 0;
   private readonly CACHE_TTL_MS = 30000; // 30 seconds
 
-  constructor(client?: YandexIoTClient, quasarClient?: QuasarClient) {
+  private storage: TelemetryStorage | null = null;
+
+  constructor(
+    client?: YandexIoTClient,
+    quasarClient?: QuasarClient,
+    storage?: TelemetryStorage
+  ) {
     if (client) {
       this.client = client;
     } else {
@@ -52,6 +59,20 @@ export class StationService {
         this.quasarClient = null;
       }
     }
+    if (storage) {
+      this.storage = storage;
+    }
+  }
+
+  getStorage(): TelemetryStorage {
+    if (!this.storage) {
+      this.storage = new TelemetryStorage();
+    }
+    return this.storage;
+  }
+
+  setStorage(storage: TelemetryStorage): void {
+    this.storage = storage;
   }
 
   getQuasarClient(): QuasarClient | null {
@@ -648,6 +669,74 @@ export class StationService {
       capabilities: capabilitiesSummary,
       raw: detailed,
     };
+  }
+
+  /**
+   * Query historical telemetry and calculate energy usage for a smart device
+   */
+  async getDeviceHistory(options: {
+    device: string;
+    room?: string;
+    metric?: string;
+    from?: string;
+    to?: string;
+    resolution?: "max" | "1m" | "5m" | "15m" | "1h";
+  }): Promise<TelemetryHistoryResult> {
+    const { device, roomName } = await this.resolveDevice(options.device, options.room);
+
+    // Parse time range
+    const now = Date.now();
+    let toTs = now;
+    if (options.to && options.to !== "now") {
+      const parsed = Date.parse(options.to);
+      if (!isNaN(parsed)) toTs = parsed;
+    }
+
+    let fromTs = new Date().setHours(0, 0, 0, 0); // default to start of today
+    if (options.from) {
+      if (options.from === "24h") {
+        fromTs = now - 24 * 60 * 60 * 1000;
+      } else if (options.from === "7d") {
+        fromTs = now - 7 * 24 * 60 * 60 * 1000;
+      } else if (options.from === "today") {
+        fromTs = new Date().setHours(0, 0, 0, 0);
+      } else {
+        const parsed = Date.parse(options.from);
+        if (!isNaN(parsed)) fromTs = parsed;
+      }
+    }
+
+    if (fromTs > toTs) {
+      throw new YandexApiError("Invalid time range: 'from' must be earlier than 'to'.");
+    }
+
+    // Default resolution based on range duration
+    let res = options.resolution;
+    if (!res) {
+      const durationMs = toTs - fromTs;
+      if (durationMs <= 4 * 60 * 60 * 1000) {
+        res = "max";
+      } else if (durationMs <= 24 * 60 * 60 * 1000) {
+        res = "5m";
+      } else {
+        res = "15m";
+      }
+    }
+
+    const storage = this.getStorage();
+    const result = storage.queryHistory({
+      deviceId: device.id,
+      metric: options.metric || "power",
+      from: fromTs,
+      to: toTs,
+      resolution: res,
+    });
+
+    // Ensure resolved human-readable device and room name
+    result.deviceName = device.name;
+    result.roomName = roomName;
+
+    return result;
   }
 }
 

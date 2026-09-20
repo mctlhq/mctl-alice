@@ -333,5 +333,50 @@ describe("StationService", () => {
       { name: "temperature", instance: "temperature", value: 21.5, unit: "unit.temperature.celsius" },
     ]);
   });
+
+  it("should query history and calculate kWh via getDeviceHistory", async () => {
+    const memoryStorage = new (await import("../src/storage/telemetry-storage.js")).TelemetryStorage(":memory:");
+    service.setStorage(memoryStorage);
+
+    const now = Date.now();
+    memoryStorage.saveSamples([
+      {
+        deviceId: "ac-kitchen",
+        deviceName: "Кондиционер",
+        roomName: "Кухня",
+        metric: "power",
+        value: 500,
+        unit: "unit.watt",
+        timestamp: now - 30 * 60000,
+      },
+      {
+        deviceId: "ac-kitchen",
+        deviceName: "Кондиционер",
+        roomName: "Кухня",
+        metric: "power",
+        value: 1000,
+        unit: "unit.watt",
+        timestamp: now,
+      },
+    ]);
+
+    const res = await service.getDeviceHistory({
+      device: "Кондиционер",
+      room: "Кухня",
+      metric: "power",
+      from: "24h",
+      to: "now",
+    });
+
+    expect(res.deviceName).toBe("Кондиционер");
+    expect(res.roomName).toBe("Кухня");
+    expect(res.count).toBe(2);
+    expect(res.min).toBe(500);
+    expect(res.max).toBe(1000);
+    expect(res.avg).toBe(750);
+    expect(res.totalEnergyKWh).toBeGreaterThan(0);
+    memoryStorage.close();
+  });
 });
+
 

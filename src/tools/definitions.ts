@@ -166,4 +166,46 @@ export const ALICE_TOOLS: Tool[] = [
       required: ["device"],
     },
   },
+  {
+    name: "alice_get_device_history",
+    description:
+      "Get historical telemetry time-series, energy consumption (total kWh, peak/min/average power in Watts), and sensor charts for a smart home device. Data is sampled every minute.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        device: {
+          type: "string",
+          description: "Device name or ID (e.g. 'Розетка', 'Датчик климата').",
+        },
+        room: {
+          type: "string",
+          description:
+            "Room name where the device is located (e.g. 'Кухня', 'Спальня').",
+        },
+        metric: {
+          type: "string",
+          description:
+            "Telemetry metric to retrieve: 'power' (Watts & kWh), 'voltage', 'amperage', 'temperature', 'humidity', 'pressure', 'battery_level', 'on_off', or 'all'. Defaults to 'power'.",
+        },
+        from: {
+          type: "string",
+          description:
+            "Start of time range (ISO 8601 string e.g. '2026-09-20T00:00:00+02:00', or 'today', '24h', '7d'). Defaults to start of today.",
+        },
+        to: {
+          type: "string",
+          description:
+            "End of time range (ISO 8601 string or 'now'). Defaults to current time.",
+        },
+        resolution: {
+          type: "string",
+          enum: ["max", "1m", "5m", "15m", "1h"],
+          description:
+            "Aggregation resolution: 'max' (or '1m') returns raw 1-minute samples; '5m', '15m', or '1h' groups by average to keep response compact.",
+        },
+      },
+      required: ["device"],
+    },
+  },
 ];
+

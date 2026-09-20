@@ -1,6 +1,6 @@
 {
   "name": "mctl-alice",
-  "version": "1.7.1",
+  "version": "1.7.2",
   "description": "Model Context Protocol (MCP) server for controlling Yandex Alice smart speakers via Yandex Cloud IoT API",
   "type": "module",
   "bin": {

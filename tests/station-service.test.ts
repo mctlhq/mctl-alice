@@ -160,7 +160,10 @@ describe("StationService", () => {
       triggerScenario: vi.fn().mockResolvedValue({ status: "ok" }),
     } as unknown as YandexIoTClient;
 
-    service = new StationService(mockClient);
+    const noCookieQuasar = {
+      hasCookie: vi.fn().mockReturnValue(false),
+    } as any;
+    service = new StationService(mockClient, noCookieQuasar);
   });
 
   it("should correctly identify smart speakers", () => {

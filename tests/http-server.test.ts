@@ -257,7 +257,7 @@ describe("HTTP Server & ChatGPT REST API", () => {
     controller.abort();
   });
 
-  it("should serve landing page HTML at GET /", async () => {
+  it("should serve landing page HTML at GET / with i18n and clean navigation", async () => {
     const res = await fetch(`${baseUrl}/`);
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("text/html");
@@ -266,6 +266,11 @@ describe("HTTP Server & ChatGPT REST API", () => {
     expect(text).toContain("BETA");
     expect(text).toContain("alice_send_command");
     expect(text).toContain("Quasar Cookie");
+    expect(text).toContain('id="lang-toggle"');
+    expect(text).toContain("data-i18n=");
+    // Should NOT contain openapi link in navigation or hero GitHub CTA button
+    expect(text).not.toContain('<a href="/openapi.json">OpenAPI</a>');
+    expect(text).not.toContain('>Репозиторий на GitHub</a>');
   });
 
   it("should serve JSON info at GET / when Accept is explicitly application/json", async () => {
@@ -318,12 +323,25 @@ describe("HTTP Server & ChatGPT REST API", () => {
     expect(res.status).toBe(404);
   });
 
-  it("should serve Quasar cookie configuration page at /auth/cookie", async () => {
+  it("should serve Quasar cookie configuration page at /auth/cookie with unified styling", async () => {
     const res = await fetch(`${baseUrl}/auth/cookie`);
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toContain("mctl-alice — Настройка Quasar");
     expect(html).toContain("Session_id");
+    expect(html).toContain("/assets/tokens.css");
+    expect(html).toContain("/assets/components.css");
+    expect(html).toContain('id="theme-toggle"');
+  });
+
+  it("should serve unified styled page on /auth/callback without code", async () => {
+    const res = await fetch(`${baseUrl}/auth/callback`);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("mctl-alice — Авторизация");
+    expect(html).toContain("/assets/tokens.css");
+    expect(html).toContain("/assets/components.css");
+    expect(html).toContain('id="theme-toggle"');
   });
 
   it("should validate missing cookie on /auth/save-cookie", async () => {

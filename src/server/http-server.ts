@@ -186,8 +186,8 @@ try {
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap">
-<link rel="stylesheet" href="/assets/tokens.css?v=1.9.2">
-<link rel="stylesheet" href="/assets/components.css?v=1.9.2">
+<link rel="stylesheet" href="/assets/tokens.css?v=1.9.4">
+<link rel="stylesheet" href="/assets/components.css?v=1.9.4">
 </head>
 <body>
 <header class="wrap topbar">
@@ -235,7 +235,7 @@ try {
     </span>
   </div>
 </footer>
-<script src="/assets/site.js?v=1.9.2"></script>
+<script src="/assets/site.js?v=1.9.4"></script>
 ${scriptHtml}
 </body>
 </html>`;
@@ -291,14 +291,23 @@ export function authenticateRequest(
           return { authenticated: false, error: "invalid_token", errorMessage: "The access token has expired" };
         }
         try {
-          const client = new YandexIoTClient(tokenRecord.yandexAccessToken, {
-            useKeychain: false,
-            persistEnv: false,
-            refreshToken: tokenRecord.yandexRefreshToken,
-          });
+          let client: YandexIoTClient | null = null;
+          if (tokenRecord.yandexAccessToken) {
+            client = new YandexIoTClient(tokenRecord.yandexAccessToken, {
+              useKeychain: false,
+              persistEnv: false,
+              refreshToken: tokenRecord.yandexRefreshToken,
+            });
+          } else {
+            try {
+              client = new YandexIoTClient(undefined, { useKeychain: false, persistEnv: false });
+            } catch {
+              client = null;
+            }
+          }
           return {
             authenticated: true,
-            service: new StationService(client, customQuasar, telemetryStorage),
+            service: new StationService(client || undefined, customQuasar, telemetryStorage),
           };
         } catch (err: any) {
           return { authenticated: false, error: "invalid_token", errorMessage: err.message };
@@ -642,11 +651,43 @@ export function createHttpServer(
       return;
     }
 
-    // OAuth: Authorize Endpoint
+    // OAuth: Authorize Endpoint (GET: Consent screen or auto-approve redirect)
     if (url.pathname === "/oauth/authorize" && req.method === "GET") {
+      const sessionIdParam = url.searchParams.get("session_id");
+      const actionParam = url.searchParams.get("action");
+
+      // Direct approval / denial via GET query params if session_id is present
+      if (sessionIdParam && actionParam) {
+        try {
+          if (actionParam === "deny") {
+            const result = oauthController.denyAuthorization(sessionIdParam);
+            res.writeHead(302, { Location: result.redirectUrl });
+            res.end();
+            return;
+          }
+          const result = oauthController.approveAuthorization(sessionIdParam);
+          res.writeHead(302, { Location: result.redirectUrl });
+          res.end();
+          return;
+        } catch (err: any) {
+          res.writeHead(400, { "Content-Type": "text/html; charset=utf-8" });
+          res.end(renderAuthPage({
+            title: "mctl-alice — Ошибка сессии",
+            contentHtml: `
+              <h2>Сессия авторизации не найдена или истекла</h2>
+              <p style="color: var(--surface-fg-muted);">${escapeHtml(err.message)}</p>
+              <p><a href="/" class="btn btn-secondary">Вернуться на главную</a></p>
+            `,
+          }));
+          return;
+        }
+      }
+
       const clientId = url.searchParams.get("client_id") || "";
       const redirectUri = url.searchParams.get("redirect_uri") || "";
       const state = url.searchParams.get("state") || "";
+      const autoApprove = url.searchParams.get("auto_approve") === "true";
+      const prompt = url.searchParams.get("prompt") || undefined;
       console.log(`[OAuth] /oauth/authorize client_id=${clientId}, redirect_uri=${redirectUri}, state=${state}`);
 
       const result = await oauthController.handleAuthorize({
@@ -657,6 +698,8 @@ export function createHttpServer(
         code_challenge: url.searchParams.get("code_challenge") || undefined,
         code_challenge_method: url.searchParams.get("code_challenge_method") || undefined,
         scope: url.searchParams.get("scope") || undefined,
+        auto_approve: autoApprove,
+        prompt,
       });
 
       if ("error" in result) {
@@ -666,10 +709,127 @@ export function createHttpServer(
         return;
       }
 
-      console.log(`[OAuth] /oauth/authorize redirecting user to Yandex: ${result.redirectUrl}`);
-      res.writeHead(302, { Location: result.redirectUrl });
-      res.end();
+      if (result.type === "redirect") {
+        console.log(`[OAuth] /oauth/authorize auto-approved, redirecting: ${result.redirectUrl}`);
+        res.writeHead(302, { Location: result.redirectUrl });
+        res.end();
+        return;
+      }
+
+      // Render Consent Page
+      const clientName = escapeHtml(result.clientName);
+      const safeClientId = escapeHtml(result.clientId);
+      const safeRedirectUri = escapeHtml(result.redirectUri);
+      const sessionId = escapeHtml(result.sessionId);
+
+      const content = `
+        <div style="text-align: center; margin-bottom: 24px;">
+          <div style="display: inline-flex; align-items: center; justify-content: center; width: 56px; height: 56px; border-radius: 50%; background: var(--surface-elevated); border: 1px solid var(--surface-line-strong); margin-bottom: 16px;">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--accent);">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+            </svg>
+          </div>
+          <h2 style="margin: 0 0 8px 0;" data-i18n="oauth_consent_title">Авторизация приложения</h2>
+          <p style="color: var(--surface-fg-muted); margin: 0; font-size: 15px;" data-i18n="oauth_consent_lead">Приложение запрашивает доступ к вашему серверу Alice MCP</p>
+        </div>
+
+        <div class="card" style="background: var(--surface-elevated); border: 1px solid var(--surface-line); border-radius: var(--mctl-radius-md); padding: 18px; margin-bottom: 20px;">
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+            <span style="font-size: 13px; color: var(--surface-fg-muted);" data-i18n="oauth_app_name">Приложение:</span>
+            <span style="font-weight: 600; font-size: 15px; color: var(--surface-fg);">${clientName}</span>
+          </div>
+          <div style="font-size: 12px; color: var(--surface-fg-muted); word-break: break-all; margin-bottom: 6px;">
+            <span style="font-family: var(--font-mono);">${safeClientId}</span>
+          </div>
+          <div style="font-size: 12px; color: var(--surface-fg-muted); word-break: break-all;">
+            <span data-i18n="oauth_redirect_uri">Redirect URI:</span> <span style="font-family: var(--font-mono);">${safeRedirectUri}</span>
+          </div>
+        </div>
+
+        <div style="margin-bottom: 24px;">
+          <div style="font-weight: 600; font-size: 14px; margin-bottom: 12px;" data-i18n="oauth_scopes_title">Запрашиваемые права доступа:</div>
+          <ul style="list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 10px;">
+            <li style="display: flex; align-items: flex-start; gap: 10px; font-size: 14px;">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="color: #22c55e; flex-shrink: 0; margin-top: 2px;">
+                <polyline points="20 6 9 17 4 12"/>
+              </svg>
+              <div>
+                <strong style="font-family: var(--font-mono); font-size: 13px;">iot:view</strong>
+                <div style="color: var(--surface-fg-muted); font-size: 13px;" data-i18n="oauth_scope_view">Просмотр списка комнат, устройств, датчиков и их состояния</div>
+              </div>
+            </li>
+            <li style="display: flex; align-items: flex-start; gap: 10px; font-size: 14px;">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="color: #22c55e; flex-shrink: 0; margin-top: 2px;">
+                <polyline points="20 6 9 17 4 12"/>
+              </svg>
+              <div>
+                <strong style="font-family: var(--font-mono); font-size: 13px;">iot:control</strong>
+                <div style="color: var(--surface-fg-muted); font-size: 13px;" data-i18n="oauth_scope_control">Управление устройствами, симуляция голосовых команд и воспроизведение речи</div>
+              </div>
+            </li>
+          </ul>
+        </div>
+
+        <div class="alert alert-info" style="margin-bottom: 24px; font-size: 13px;">
+          <span data-i18n="oauth_status_connected">Подключение к умному дому Яндекс Алисы активно.</span>
+        </div>
+
+        <form method="POST" action="/oauth/authorize" style="display: flex; gap: 12px; justify-content: flex-end;">
+          <input type="hidden" name="session_id" value="${sessionId}">
+          <button type="submit" name="action" value="deny" class="btn btn-secondary" style="flex: 1;" data-i18n="oauth_btn_deny">Отклонить</button>
+          <button type="submit" name="action" value="approve" class="btn btn-primary" style="flex: 2;" data-i18n="oauth_btn_approve">Разрешить доступ</button>
+        </form>
+      `;
+
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(renderAuthPage({
+        title: "mctl-alice — Авторизация приложения",
+        titleKey: "oauth_consent_title",
+        contentHtml: content,
+      }));
       return;
+    }
+
+    // OAuth: Authorize POST Endpoint (Approve / Deny)
+    if (url.pathname === "/oauth/authorize" && req.method === "POST") {
+      try {
+        const body = await parseRequestBody(req);
+        const sessionId = body?.session_id || "";
+        const action = body?.action || "approve";
+        console.log(`[OAuth] /oauth/authorize POST action=${action}, session_id=${sessionId}`);
+
+        if (!sessionId) {
+          res.writeHead(400, { "Content-Type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify({ error: "invalid_request", error_description: "session_id is required" }));
+          return;
+        }
+
+        if (action === "deny") {
+          const result = oauthController.denyAuthorization(sessionId);
+          console.log(`[OAuth] /oauth/authorize denied, redirecting: ${result.redirectUrl}`);
+          res.writeHead(302, { Location: result.redirectUrl });
+          res.end();
+          return;
+        }
+
+        const result = oauthController.approveAuthorization(sessionId);
+        console.log(`[OAuth] /oauth/authorize approved, redirecting: ${result.redirectUrl}`);
+        res.writeHead(302, { Location: result.redirectUrl });
+        res.end();
+        return;
+      } catch (err: any) {
+        console.error(`[OAuth] /oauth/authorize POST error: ${err.message}`);
+        res.writeHead(400, { "Content-Type": "text/html; charset=utf-8" });
+        res.end(renderAuthPage({
+          title: "mctl-alice — Ошибка сессии",
+          contentHtml: `
+            <h2>Сессия авторизации не найдена или истекла</h2>
+            <p style="color: var(--surface-fg-muted);">${escapeHtml(err.message)}</p>
+            <p><a href="/" class="btn btn-secondary">Вернуться на главную</a></p>
+          `,
+        }));
+        return;
+      }
     }
 
     // OAuth: Yandex Callback Endpoint

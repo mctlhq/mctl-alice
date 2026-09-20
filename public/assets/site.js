@@ -164,7 +164,17 @@
       callback_status_obtaining: "Получение токена...",
       callback_status_connecting: "Токен получен. Подключение к колонкам...",
       callback_status_connected: "✅ Успешно! Умный дом подключен к mctl-alice.",
-      callback_status_token_missing: "❌ Токен не найден в URL редиректа."
+      callback_status_token_missing: "❌ Токен не обнаружен в URL перенаправления.",
+      oauth_consent_title: "Авторизация приложения",
+      oauth_consent_lead: "Приложение запрашивает доступ к вашему серверу Alice MCP",
+      oauth_app_name: "Приложение:",
+      oauth_redirect_uri: "Redirect URI:",
+      oauth_scopes_title: "Запрашиваемые права доступа:",
+      oauth_scope_view: "Просмотр списка комнат, устройств, датчиков и их состояния",
+      oauth_scope_control: "Управление устройствами, симуляция голосовых команд и воспроизведение речи",
+      oauth_status_connected: "Подключение к умному дому Яндекс Алисы активно.",
+      oauth_btn_approve: "Разрешить доступ",
+      oauth_btn_deny: "Отклонить"
     },
     en: {
       meta_title: "mctl-alice — Yandex Station & Smart Home Control via AI (MCP)",
@@ -270,7 +280,17 @@
       callback_status_obtaining: "Obtaining token...",
       callback_status_connecting: "Token obtained. Connecting to speakers...",
       callback_status_connected: "✅ Success! Smart home connected to mctl-alice.",
-      callback_status_token_missing: "❌ Token not found in redirect URL."
+      callback_status_token_missing: "❌ Token not found in redirect URL.",
+      oauth_consent_title: "Authorize Application",
+      oauth_consent_lead: "Application is requesting access to your Alice MCP server",
+      oauth_app_name: "Application:",
+      oauth_redirect_uri: "Redirect URI:",
+      oauth_scopes_title: "Requested permissions:",
+      oauth_scope_view: "View rooms, smart devices, sensors and their state",
+      oauth_scope_control: "Control devices, simulate voice commands and speech synthesis",
+      oauth_status_connected: "Connection to Yandex Alice Smart Home is active.",
+      oauth_btn_approve: "Authorize Access",
+      oauth_btn_deny: "Cancel"
     }
   };
 

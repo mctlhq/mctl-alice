@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import http from "node:http";
+import crypto from "node:crypto";
 import { createHttpServer } from "../src/server/http-server.js";
 import { getOpenApiSpec } from "../src/server/openapi.js";
 import { OAuthStorage } from "../src/storage/oauth-storage.js";
@@ -332,8 +333,8 @@ describe("HTTP Server & ChatGPT REST API", () => {
     const html = await res.text();
     expect(html).toContain("mctl-alice — Настройка Quasar");
     expect(html).toContain("Session_id");
-    expect(html).toContain("/assets/tokens.css?v=1.9.2");
-    expect(html).toContain("/assets/components.css?v=1.9.2");
+    expect(html).toContain("/assets/tokens.css");
+    expect(html).toContain("/assets/components.css");
     expect(html).toContain('id="theme-toggle"');
     expect(html).toContain('id="lang-switcher"');
     expect(html).toContain('data-i18n="cookie_title"');
@@ -346,8 +347,8 @@ describe("HTTP Server & ChatGPT REST API", () => {
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toContain("mctl-alice — Авторизация");
-    expect(html).toContain("/assets/tokens.css?v=1.9.2");
-    expect(html).toContain("/assets/components.css?v=1.9.2");
+    expect(html).toContain("/assets/tokens.css");
+    expect(html).toContain("/assets/components.css");
     expect(html).toContain('id="theme-toggle"');
     expect(html).toContain('id="lang-switcher"');
     expect(html).toContain('data-i18n="callback_success_title"');
@@ -413,15 +414,40 @@ describe("HTTP Server & ChatGPT REST API", () => {
     expect(data.client_name).toBe("ChatGPT OpenAI Test");
   });
 
-  it("should redirect to Yandex OAuth on /oauth/authorize", async () => {
+  it("should serve consent page on GET /oauth/authorize and approve via POST", async () => {
+    // 1. GET /oauth/authorize renders consent screen
     const res = await fetch(
-      `${baseUrl}/oauth/authorize?client_id=test_client&redirect_uri=https://chatgpt.com/callback&response_type=code&state=xyz`,
-      { redirect: "manual" }
+      `${baseUrl}/oauth/authorize?client_id=test_client&redirect_uri=https://chatgpt.com/callback&response_type=code&state=xyz`
     );
-    expect(res.status).toBe(302);
-    const location = res.headers.get("location");
-    expect(location).toContain("https://oauth.yandex.ru/authorize");
-    expect(location).toContain("redirect_uri=");
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("Авторизация приложения");
+    expect(html).toContain("test_client");
+    expect(html).toContain('name="session_id"');
+    expect(html).toContain('value="approve"');
+
+    // Extract session_id
+    const sessionMatch = html.match(/name="session_id"\s+value="([^"]+)"/);
+    expect(sessionMatch).not.toBeNull();
+    const sessionId = sessionMatch![1];
+
+    // 2. POST /oauth/authorize with approve action
+    const approveRes = await fetch(`${baseUrl}/oauth/authorize`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: `session_id=${encodeURIComponent(sessionId)}&action=approve`,
+      redirect: "manual",
+    });
+
+    expect(approveRes.status).toBe(302);
+    const redirectLocation = approveRes.headers.get("location");
+    expect(redirectLocation).toBeDefined();
+    const redirectUrl = new URL(redirectLocation!);
+    expect(redirectUrl.origin).toBe("https://chatgpt.com");
+    expect(redirectUrl.pathname).toBe("/callback");
+    expect(redirectUrl.searchParams.get("code")).toMatch(/^code_/);
+    expect(redirectUrl.searchParams.get("state")).toBe("xyz");
+    expect(redirectUrl.searchParams.get("iss")).toBe(baseUrl);
   });
 
   it("should handle token revocation at /oauth/revoke", async () => {
@@ -435,24 +461,26 @@ describe("HTTP Server & ChatGPT REST API", () => {
     expect(data.status).toBe("ok");
   });
 
-  it("should handle ChatGPT OAuth session on /auth/callback", async () => {
+  it("should handle denial on POST /oauth/authorize", async () => {
     // 1. Initiate authorization to create pending session
     const authRes = await fetch(
-      `${baseUrl}/oauth/authorize?client_id=test_client&redirect_uri=https://chatgpt.com/callback&response_type=code&state=client_state_val`,
-      { redirect: "manual" }
+      `${baseUrl}/oauth/authorize?client_id=test_client&redirect_uri=https://chatgpt.com/callback&response_type=code&state=client_state_val`
     );
-    expect(authRes.status).toBe(302);
-    const yandexUrl = new URL(authRes.headers.get("location")!);
-    const sessionState = yandexUrl.searchParams.get("state")!;
-    expect(sessionState).toBeDefined();
+    expect(authRes.status).toBe(200);
+    const html = await authRes.text();
+    const sessionMatch = html.match(/name="session_id"\s+value="([^"]+)"/);
+    const sessionId = sessionMatch![1];
 
-    // 2. Simulate Yandex callback to /auth/callback (e.g. user denied or returned error)
-    const callbackRes = await fetch(
-      `${baseUrl}/auth/callback?state=${sessionState}&error=access_denied&error_description=User+denied`,
-      { redirect: "manual" }
-    );
-    expect(callbackRes.status).toBe(302);
-    const clientRedirect = new URL(callbackRes.headers.get("location")!);
+    // 2. Deny authorization
+    const denyRes = await fetch(`${baseUrl}/oauth/authorize`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: `session_id=${encodeURIComponent(sessionId)}&action=deny`,
+      redirect: "manual",
+    });
+
+    expect(denyRes.status).toBe(302);
+    const clientRedirect = new URL(denyRes.headers.get("location")!);
     expect(clientRedirect.origin).toBe("https://chatgpt.com");
     expect(clientRedirect.pathname).toBe("/callback");
     expect(clientRedirect.searchParams.get("error")).toBe("access_denied");
@@ -460,14 +488,16 @@ describe("HTTP Server & ChatGPT REST API", () => {
     expect(clientRedirect.searchParams.get("iss")).toBe(baseUrl);
   });
 
-  it("should handle Claude.ai MCP OAuth authorization on /oauth/authorize", async () => {
+  it("should handle auto_approve: true directly on /oauth/authorize", async () => {
     const res = await fetch(
-      `${baseUrl}/oauth/authorize?response_type=code&client_id=https%3A%2F%2Fclaude.ai%2Foauth%2Fmcp-oauth-client-metadata&redirect_uri=https%3A%2F%2Fclaude.ai%2Fapi%2Fmcp%2Fauth_callback&code_challenge=test&code_challenge_method=S256&state=claude_state_test`,
+      `${baseUrl}/oauth/authorize?response_type=code&client_id=https%3A%2F%2Fclaude.ai%2Foauth%2Fmcp-oauth-client-metadata&redirect_uri=https%3A%2F%2Fclaude.ai%2Fapi%2Fmcp%2Fauth_callback&code_challenge=test&code_challenge_method=S256&state=claude_state_test&auto_approve=true`,
       { redirect: "manual" }
     );
     expect(res.status).toBe(302);
     const location = res.headers.get("location");
-    expect(location).toContain("https://oauth.yandex.ru/authorize");
+    expect(location).toContain("https://claude.ai/api/mcp/auth_callback");
+    expect(location).toContain("code=code_");
+    expect(location).toContain("iss=");
   });
 });
 
@@ -605,5 +635,94 @@ describe("HTTP Server with authRequired: true (OAuth & RFC 9728 discovery)", () 
 
     const landingRes = await fetch(`${authBaseUrl}/`);
     expect(landingRes.status).toBe(200);
+  });
+
+  it("should complete full Codex MCP OAuth login flow and authenticate /mcp tool call", async () => {
+    // 1. Initial unauthenticated probe
+    const probeRes = await fetch(`${authBaseUrl}/mcp`);
+    expect(probeRes.status).toBe(401);
+    expect(probeRes.headers.get("www-authenticate")).toContain("resource_metadata");
+
+    // 2. Discover metadata
+    const asmRes = await fetch(`${authBaseUrl}/.well-known/oauth-authorization-server`);
+    const asm = await asmRes.json();
+    expect(asm.authorization_endpoint).toBe(`${authBaseUrl}/oauth/authorize`);
+    expect(asm.token_endpoint).toBe(`${authBaseUrl}/oauth/token`);
+
+    // 3. Codex authorization request with PKCE S256
+    const codeVerifier = "N4wX_m9vK27uhbUJU1p1r_wW1gFWFOEjXkdBjftJeZ4";
+    const codeChallenge = crypto.createHash("sha256").update(codeVerifier).digest("base64url");
+    const codexClientId = "https://chatgpt.com/oauth/codex/client.json";
+    const redirectUri = "http://127.0.0.1:50780/callback";
+    const clientState = "codex_state_nonce_123";
+
+    const authUrl = `${authBaseUrl}/oauth/authorize?response_type=code&client_id=${encodeURIComponent(codexClientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&code_challenge=${codeChallenge}&code_challenge_method=S256&state=${clientState}&scope=iot%3Aview+iot%3Acontrol`;
+    const consentRes = await fetch(authUrl);
+    expect(consentRes.status).toBe(200);
+    const html = await consentRes.text();
+    expect(html).toContain("Codex");
+    expect(html).toContain("iot:view");
+    expect(html).toContain("iot:control");
+
+    // Extract session_id
+    const match = html.match(/name="session_id"\s+value="([^"]+)"/);
+    expect(match).not.toBeNull();
+    const sessionId = match![1];
+
+    // 4. User clicks [Разрешить доступ]
+    const approveRes = await fetch(`${authBaseUrl}/oauth/authorize`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: `session_id=${encodeURIComponent(sessionId)}&action=approve`,
+      redirect: "manual",
+    });
+
+    expect(approveRes.status).toBe(302);
+    const redirectLocation = approveRes.headers.get("location")!;
+    const callbackUrl = new URL(redirectLocation);
+    expect(callbackUrl.origin).toBe("http://127.0.0.1:50780");
+    expect(callbackUrl.searchParams.get("state")).toBe(clientState);
+    expect(callbackUrl.searchParams.get("iss")).toBe(authBaseUrl);
+    const authCode = callbackUrl.searchParams.get("code")!;
+    expect(authCode).toMatch(/^code_/);
+
+    // 5. Codex exchanges authorization code for Bearer token
+    const tokenRes = await fetch(`${authBaseUrl}/oauth/token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "authorization_code",
+        code: authCode,
+        client_id: codexClientId,
+        redirect_uri: redirectUri,
+        code_verifier: codeVerifier,
+      }).toString(),
+    });
+
+    expect(tokenRes.status).toBe(200);
+    const tokenData = await tokenRes.json();
+    expect(tokenData.access_token).toMatch(/^mctl_at_/);
+    expect(tokenData.token_type).toBe("Bearer");
+    expect(tokenData.expires_in).toBeGreaterThan(0);
+
+    // 6. Codex makes authenticated MCP tool call
+    const mcpRes = await fetch(`${authBaseUrl}/mcp`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${tokenData.access_token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 101,
+        method: "tools/list",
+      }),
+    });
+
+    expect(mcpRes.status).toBe(200);
+    const mcpData = await mcpRes.json();
+    expect(mcpData.id).toBe(101);
+    expect(mcpData.result.tools).toBeDefined();
+    expect(Array.isArray(mcpData.result.tools)).toBe(true);
   });
 });

@@ -108,7 +108,7 @@ describe("OAuthController", () => {
   });
 
   describe("OAuth Authorize and Token Exchange Flow", () => {
-    it("should validate /oauth/authorize request and construct Yandex authorization URL", async () => {
+    it("should validate /oauth/authorize request, create consent session and approve", async () => {
       const verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
       const challenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
 
@@ -121,26 +121,66 @@ describe("OAuthController", () => {
         code_challenge_method: "S256",
       });
 
-      expect("redirectUrl" in res).toBe(true);
-      if ("redirectUrl" in res) {
-        const u = new URL(res.redirectUrl);
-        expect(u.origin).toBe("https://oauth.yandex.ru");
-        expect(u.pathname).toBe("/authorize");
-        expect(u.searchParams.get("client_id")).toBe(yandexClientId);
-        expect(u.searchParams.get("response_type")).toBe("code");
-        expect(u.searchParams.get("redirect_uri")).toBe("https://alice.mctl.ai/auth/callback");
-        const internalState = u.searchParams.get("state");
-        expect(internalState).toBeDefined();
+      expect(res.type).toBe("consent");
+      if (res.type === "consent") {
+        expect(res.sessionId).toBeDefined();
+        expect(res.clientId).toBe("chatgpt_client_1");
+        expect(res.redirectUri).toBe("https://chatgpt.com/aip/oauth/callback");
+        expect(res.scope).toBe("iot:view iot:control");
 
         // Verify pending auth record in SQLite
-        const pending = storage.getPendingAuth(internalState!);
+        const pending = storage.getPendingAuth(res.sessionId);
         expect(pending).toBeDefined();
         expect(pending?.clientId).toBe("chatgpt_client_1");
         expect(pending?.codeChallenge).toBe(challenge);
+
+        // Approve authorization
+        const approval = controller.approveAuthorization(res.sessionId);
+        expect(approval.redirectUrl).toBeDefined();
+        const u = new URL(approval.redirectUrl);
+        expect(u.origin).toBe("https://chatgpt.com");
+        expect(u.pathname).toBe("/aip/oauth/callback");
+        expect(u.searchParams.get("code")).toMatch(/^code_/);
+        expect(u.searchParams.get("state")).toBe("client_state_123");
+        expect(u.searchParams.get("iss")).toBe(baseUrl);
+
+        // Verify pending session was cleaned up
+        expect(storage.getPendingAuth(res.sessionId)).toBeNull();
+
+        // Verify code can be exchanged for tokens with PKCE
+        const code = u.searchParams.get("code")!;
+        const tokenRes = await controller.handleToken({
+          grant_type: "authorization_code",
+          code,
+          redirect_uri: "https://chatgpt.com/aip/oauth/callback",
+          code_verifier: verifier,
+        });
+
+        expect(tokenRes.access_token).toMatch(/^mctl_at_/);
+        expect(tokenRes.refresh_token).toMatch(/^mctl_rt_/);
+        expect(tokenRes.token_type).toBe("Bearer");
       }
     });
 
-    it("should handle Claude.ai MCP OAuth authorization with client metadata document URL", async () => {
+    it("should handle denial on consent screen", async () => {
+      const res = await controller.handleAuthorize({
+        client_id: "chatgpt_client_1",
+        redirect_uri: "https://chatgpt.com/aip/oauth/callback",
+        response_type: "code",
+        state: "state_to_deny",
+      });
+
+      expect(res.type).toBe("consent");
+      if (res.type === "consent") {
+        const denial = controller.denyAuthorization(res.sessionId);
+        const u = new URL(denial.redirectUrl);
+        expect(u.searchParams.get("error")).toBe("access_denied");
+        expect(u.searchParams.get("state")).toBe("state_to_deny");
+        expect(u.searchParams.get("iss")).toBe(baseUrl);
+      }
+    });
+
+    it("should handle auto_approve: true directly on /oauth/authorize", async () => {
       const challenge = "wKx7ew8l8PQpLQAtHKOakwngFXcHnYqX78awGHoHErE";
       const res = await controller.handleAuthorize({
         client_id: "https://claude.ai/oauth/mcp-oauth-client-metadata",
@@ -149,38 +189,31 @@ describe("OAuthController", () => {
         state: "claude_state_456",
         code_challenge: challenge,
         code_challenge_method: "S256",
+        auto_approve: true,
       });
 
-      expect("redirectUrl" in res).toBe(true);
-      if ("redirectUrl" in res) {
+      expect(res.type).toBe("redirect");
+      if (res.type === "redirect") {
         const u = new URL(res.redirectUrl);
-        expect(u.origin).toBe("https://oauth.yandex.ru");
-        const internalState = u.searchParams.get("state")!;
-        const pending = storage.getPendingAuth(internalState);
-        expect(pending?.clientId).toBe("https://claude.ai/oauth/mcp-oauth-client-metadata");
-        expect(pending?.redirectUri).toBe("https://claude.ai/api/mcp/auth_callback");
+        expect(u.origin).toBe("https://claude.ai");
+        expect(u.pathname).toBe("/api/mcp/auth_callback");
+        expect(u.searchParams.get("code")).toMatch(/^code_/);
+        expect(u.searchParams.get("state")).toBe("claude_state_456");
+        expect(u.searchParams.get("iss")).toBe(baseUrl);
       }
     });
 
-    it("should allow overriding yandexCallbackUri", async () => {
-      const customController = new OAuthController({
-        baseUrl,
-        yandexClientId,
-        yandexClientSecret,
-        storage,
-        yandexCallbackUri: "https://alice.mctl.ai/oauth/yandex/callback",
-      });
-
-      const res = await customController.handleAuthorize({
-        client_id: "chatgpt_client_1",
-        redirect_uri: "https://chatgpt.com/aip/oauth/callback",
+    it("should fast-path Codex client metadata", async () => {
+      const res = await controller.handleAuthorize({
+        client_id: "https://chatgpt.com/oauth/codex/client.json",
+        redirect_uri: "http://127.0.0.1/callback",
         response_type: "code",
+        state: "codex_state_789",
       });
 
-      expect("redirectUrl" in res).toBe(true);
-      if ("redirectUrl" in res) {
-        const u = new URL(res.redirectUrl);
-        expect(u.searchParams.get("redirect_uri")).toBe("https://alice.mctl.ai/oauth/yandex/callback");
+      expect(res.type).toBe("consent");
+      if (res.type === "consent") {
+        expect(res.clientName).toBe("Codex");
       }
     });
 

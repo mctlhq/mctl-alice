@@ -100,6 +100,9 @@ export function buildCommandScenarioPayload(
   };
 }
 
+const USER_AGENT =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+
 export interface QuasarClientOptions {
   cookie?: string;
   useKeychain?: boolean;
@@ -109,6 +112,7 @@ export interface QuasarClientOptions {
 
 export class QuasarClient {
   private cookie: string | null = null;
+  private cookiesMap: Map<string, string> = new Map();
   private csrfToken: string | null = null;
   private scenarioCache: Map<string, string> = new Map(); // deviceId -> scenarioId
   private useKeychain: boolean;
@@ -129,12 +133,33 @@ export class QuasarClient {
     }
   }
 
+  private parseCookieString(str: string): void {
+    const parts = str.split(";");
+    for (const part of parts) {
+      const idx = part.indexOf("=");
+      if (idx > 0) {
+        const k = part.substring(0, idx).trim();
+        const v = part.substring(idx + 1).trim();
+        if (k) this.cookiesMap.set(k, v);
+      }
+    }
+  }
+
+  private serializeCookies(): string {
+    const pairs: string[] = [];
+    for (const [k, v] of this.cookiesMap.entries()) {
+      pairs.push(`${k}=${v}`);
+    }
+    return pairs.join("; ");
+  }
+
   setCookie(cookie: string, persist = true): void {
     let normalized = cookie.trim();
     if (!normalized.includes("=")) {
       normalized = `Session_id=${normalized}`;
     }
-    this.cookie = normalized;
+    this.parseCookieString(normalized);
+    this.cookie = this.serializeCookies();
     this.csrfToken = null;
 
     if (persist) {
@@ -167,13 +192,25 @@ export class QuasarClient {
     const res = await fetch("https://yandex.ru/quasar", {
       headers: {
         Cookie: this.cookie,
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+        "User-Agent": USER_AGENT,
       },
     });
 
     if (!res.ok) {
       throw new Error(`Failed to fetch Quasar CSRF token: HTTP ${res.status}`);
     }
+
+    // Merge any Set-Cookie headers returned by yandex.ru (e.g. _yasc, i, etc.)
+    const setCookies =
+      typeof (res.headers as any).getSetCookie === "function"
+        ? (res.headers as any).getSetCookie()
+        : [res.headers.get("set-cookie")].filter(Boolean);
+    for (const sc of setCookies) {
+      if (sc) {
+        this.parseCookieString(sc.split(";")[0]);
+      }
+    }
+    this.cookie = this.serializeCookies();
 
     const html = await res.text();
     const match = html.match(/"csrfToken2"\s*:\s*"([^"]+)"/);
@@ -189,6 +226,10 @@ export class QuasarClient {
     const csrf = await this.getCsrfToken();
     const headers: Record<string, string> = {
       Cookie: this.cookie || "",
+      "User-Agent": USER_AGENT,
+      "Origin": "https://yandex.ru",
+      "Referer": "https://yandex.ru/quasar",
+      "Accept": "application/json",
       "x-csrf-token": csrf,
       "Content-Type": "application/json",
       ...(options.headers as Record<string, string>),
@@ -201,6 +242,7 @@ export class QuasarClient {
       this.csrfToken = null;
       const newCsrf = await this.getCsrfToken();
       headers["x-csrf-token"] = newCsrf;
+      headers["Cookie"] = this.cookie || "";
       res = await fetch(url, { ...options, headers });
     }
 
@@ -213,7 +255,7 @@ export class QuasarClient {
   }
 
   async getScenarios(): Promise<any[]> {
-    const data = await this.request("https://iot.quasar.yandex.ru/m/v4/user/scenarios", {
+    const data = await this.request("https://iot.quasar.yandex.ru/m/user/scenarios", {
       method: "GET",
     });
     return data.scenarios || [];
@@ -255,7 +297,11 @@ export class QuasarClient {
     return res.scenario_id;
   }
 
-  async sendTts(deviceId: string, text: string): Promise<any> {
+  async sendTts(
+    deviceId: string,
+    text: string,
+    triggerCallback?: (scenarioId: string) => Promise<any>
+  ): Promise<any> {
     const scenarioId = await this.getOrCreateSpeakerScenario(deviceId);
     const trigger = encodeDeviceId(deviceId);
     const name = `mctl-${deviceId}`;
@@ -273,12 +319,20 @@ export class QuasarClient {
       throw new Error(`Failed to update scenario for TTS: ${JSON.stringify(updateRes)}`);
     }
 
+    if (triggerCallback) {
+      return triggerCallback(scenarioId);
+    }
+
     return this.request(`https://iot.quasar.yandex.ru/m/user/scenarios/${scenarioId}/actions`, {
       method: "POST",
     });
   }
 
-  async sendCommand(deviceId: string, command: string): Promise<any> {
+  async sendCommand(
+    deviceId: string,
+    command: string,
+    triggerCallback?: (scenarioId: string) => Promise<any>
+  ): Promise<any> {
     const scenarioId = await this.getOrCreateSpeakerScenario(deviceId);
     const trigger = encodeDeviceId(deviceId);
     const name = `mctl-${deviceId}`;
@@ -294,6 +348,10 @@ export class QuasarClient {
 
     if (updateRes.status !== "ok") {
       throw new Error(`Failed to update scenario for command: ${JSON.stringify(updateRes)}`);
+    }
+
+    if (triggerCallback) {
+      return triggerCallback(scenarioId);
     }
 
     return this.request(`https://iot.quasar.yandex.ru/m/user/scenarios/${scenarioId}/actions`, {

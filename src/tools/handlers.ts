@@ -315,6 +315,168 @@ export async function handleToolCall(
         };
       }
 
+      case "alice_set_light": {
+        const device = String(args?.device || "").trim();
+        if (!device) {
+          return {
+            content: [{ type: "text", text: "Ошибка: параметр 'device' обязателен." }],
+            isError: true,
+          };
+        }
+        const room = args?.room ? String(args.room).trim() : undefined;
+        const state = args?.state as any;
+        const brightness = args?.brightness !== undefined ? Number(args.brightness) : undefined;
+        const color_temp_k = args?.color_temp_k !== undefined ? Number(args.color_temp_k) : undefined;
+        const scene = args?.scene ? String(args.scene).trim() : undefined;
+
+        const result = await stationService.setLight({
+          device,
+          room,
+          state,
+          brightness,
+          color_temp_k,
+          scene,
+        });
+
+        let text = `### Управление светом: ${result.device.name}\n\n`;
+        text += `- **Комната:** ${result.device.room}\n`;
+        text += `- **Примененные изменения:**\n`;
+        for (const action of result.actionsApplied) {
+          if (action.type === "devices.capabilities.on_off") {
+            text += `  • Питание: **${action.state.value ? "Включено" : "Выключено"}**\n`;
+          } else if (action.type === "devices.capabilities.range" && action.state.instance === "brightness") {
+            text += `  • Яркость: **${action.state.value}%**\n`;
+          } else if (action.type === "devices.capabilities.color_setting" && action.state.instance === "temperature_k") {
+            text += `  • Цветовая температура: **${action.state.value} K**\n`;
+          } else if (action.type === "devices.capabilities.color_setting" && action.state.instance === "scene") {
+            text += `  • Световая сцена: **${action.state.value}**\n`;
+          } else {
+            text += `  • ${action.state.instance}: ${action.state.value}\n`;
+          }
+        }
+
+        return {
+          content: [{ type: "text", text: text.trim() }],
+        };
+      }
+
+      case "alice_control_room": {
+        const room = String(args?.room || "").trim();
+        if (!room) {
+          return {
+            content: [{ type: "text", text: "Ошибка: параметр 'room' обязателен." }],
+            isError: true,
+          };
+        }
+        const action = String(args?.action || "").trim() as any;
+        if (!["turn_on", "turn_off"].includes(action)) {
+          return {
+            content: [{ type: "text", text: "Ошибка: параметр 'action' должен быть 'turn_on' или 'turn_off'." }],
+            isError: true,
+          };
+        }
+        const device_type = args?.device_type ? (String(args.device_type).trim() as any) : "all";
+
+        const result = await stationService.controlRoom({
+          room,
+          action,
+          device_type,
+        });
+
+        const actionText = action === "turn_on" ? "включены" : "выключены";
+        let text = `### Пакетное управление: ${result.room}\n\n`;
+        text += `Успешно **${actionText}** устройства (${result.affectedCount} шт., категория: \`${result.deviceType}\`):\n\n`;
+        for (const d of result.affectedDevices) {
+          text += `- **${d.name}** (${d.room}, тип: \`${d.type}\`)\n`;
+        }
+
+        return {
+          content: [{ type: "text", text: text.trim() }],
+        };
+      }
+
+      case "alice_get_home_summary": {
+        const room = args?.room ? String(args.room).trim() : undefined;
+        const summary = await stationService.getHomeSummary(room);
+
+        let text = `### Сводка умного дома: ${summary.scope}\n\n`;
+        text += `_Всего устройств в отчете: ${summary.totalDevices}_\n\n`;
+
+        // 1. Climate
+        text += `#### 🌡 Климат и температура\n`;
+        if (summary.climate.length === 0) {
+          text += `_(данные климата отсутствуют)_\n\n`;
+        } else {
+          for (const c of summary.climate) {
+            const parts: string[] = [];
+            if (c.temperature !== undefined) parts.push(`Температура: **${c.temperature}°C**`);
+            if (c.humidity !== undefined) parts.push(`Влажность: **${c.humidity}%**`);
+            if (c.pressure !== undefined) parts.push(`Давление: **${c.pressure} мм рт. ст.**`);
+            text += `- **${c.room}:** ${parts.join(", ")} _(${c.devices.join(", ")})_\n`;
+          }
+          text += "\n";
+        }
+
+        // 2. Security
+        text += `#### 🚪 Безопасность и датчики\n`;
+        if (summary.security.length === 0) {
+          text += `_(датчики безопасности не обнаружены)_\n\n`;
+        } else {
+          for (const s of summary.security) {
+            text += `- **${s.name}** (${s.room}, ${s.type}): ${s.status}\n`;
+          }
+          text += "\n";
+        }
+
+        // 3. Lighting
+        text += `#### 💡 Освещение\n`;
+        text += `- Включено ламп: **${summary.lights.onCount}** из ${summary.lights.total}\n`;
+        if (summary.lights.activeLights.length > 0) {
+          for (const l of summary.lights.activeLights) {
+            const bStr = l.brightness !== undefined ? `, яркость ${l.brightness}%` : "";
+            text += `  • **${l.name}** (${l.room}${bStr})\n`;
+          }
+        }
+        text += "\n";
+
+        // 4. Sockets & Power
+        text += `#### ⚡ Розетки и энергопотребление\n`;
+        text += `- Включено розеток: **${summary.sockets.onCount}** из ${summary.sockets.total}\n`;
+        text += `- Текущая суммарная мощность: **${summary.sockets.totalPowerW} Вт**\n`;
+        if (summary.sockets.devices.length > 0) {
+          for (const s of summary.sockets.devices) {
+            const stateStr = s.isOn ? "Вкл 🟢" : "Выкл ⚪";
+            const pStr = s.powerW !== undefined ? ` — **${s.powerW} Вт**` : "";
+            const vStr = s.voltageV !== undefined ? `, ${s.voltageV} В` : "";
+            text += `  • **${s.name}** (${s.room}): ${stateStr}${pStr}${vStr}\n`;
+          }
+        }
+        text += "\n";
+
+        // 5. Batteries
+        if (summary.batteries.length > 0) {
+          text += `#### 🔋 Заряд батарей\n`;
+          for (const b of summary.batteries) {
+            const warnIcon = b.warning ? " ⚠️ (низкий заряд)" : "";
+            text += `- **${b.name}** (${b.room}): **${b.level}%**${warnIcon}\n`;
+          }
+          text += "\n";
+        }
+
+        // 6. Offline devices
+        if (summary.offlineDevices.length > 0) {
+          text += `#### 🔴 Не в сети (offline)\n`;
+          for (const off of summary.offlineDevices) {
+            text += `- **${off.name}** (${off.room}, тип: \`${off.type}\`)\n`;
+          }
+          text += "\n";
+        }
+
+        return {
+          content: [{ type: "text", text: text.trim() }],
+        };
+      }
+
       default:
         return {
           content: [{ type: "text", text: `Неизвестный инструмент: ${name}` }],

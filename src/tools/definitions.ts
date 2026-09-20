@@ -207,5 +207,104 @@ export const ALICE_TOOLS: Tool[] = [
       required: ["device"],
     },
   },
+  {
+    name: "alice_set_light",
+    description:
+      "Control smart lights, lamps, and chandeliers: turn on/off, adjust brightness (1-100%), adjust color temperature in Kelvin (1500K-6500K: warm, daylight, cool white), or set built-in lighting scenes (night, reading, party, candle, ocean, romance, alice, neon, etc.).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        device: {
+          type: "string",
+          description:
+            "Light device name or ID (e.g. 'Люстра', 'Лампа', 'Свет над столом').",
+        },
+        room: {
+          type: "string",
+          description:
+            "Room name where the light is located (e.g. 'Кухня', 'Детская', 'Спальня').",
+        },
+        state: {
+          type: "string",
+          enum: ["on", "off"],
+          description: "Turn the light on or off.",
+        },
+        brightness: {
+          type: "number",
+          description: "Brightness level percentage from 1 to 100.",
+        },
+        color_temp_k: {
+          type: "number",
+          description:
+            "Color temperature in Kelvin (e.g. 2700 for warm incandescent, 4000 for neutral daylight, 6500 for cool white). Valid range: 1500 to 6500.",
+        },
+        scene: {
+          type: "string",
+          enum: [
+            "night",
+            "reading",
+            "party",
+            "candle",
+            "ocean",
+            "romance",
+            "alice",
+            "neon",
+            "christmas",
+            "siren",
+            "alarm",
+            "fantasy",
+            "miracle",
+            "autumn",
+            "dawn",
+            "sunset",
+          ],
+          description: "Built-in dynamic or static lighting scene.",
+        },
+      },
+      required: ["device"],
+    },
+  },
+  {
+    name: "alice_control_room",
+    description:
+      "Batch control devices in a specific room or across the entire home in a single request (e.g. turn off all lights on the kitchen, turn off all devices in the living room, turn on all lights in the house).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        room: {
+          type: "string",
+          description:
+            "Target room name (e.g. 'Кухня', 'Гостиная', 'Спальня') or 'all'/'все' to target the entire home.",
+        },
+        action: {
+          type: "string",
+          enum: ["turn_on", "turn_off"],
+          description: "Action to perform on matching devices.",
+        },
+        device_type: {
+          type: "string",
+          enum: ["light", "socket", "climate", "all"],
+          description:
+            "Filter target devices by category: 'light' (bulbs, chandeliers), 'socket' (outlets, plugs), 'climate' (AC, heaters, humidifiers), or 'all' (all on/off controllable devices). Defaults to 'all'.",
+        },
+      },
+      required: ["room", "action"],
+    },
+  },
+  {
+    name: "alice_get_home_summary",
+    description:
+      "Get a single comprehensive status overview and health dashboard of the smart home (or a specific room): climate conditions (°C, humidity, pressure), security sensors (door open/closed, motion, illumination), lighting status, active sockets & power draw (Watts), and sensor battery levels.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        room: {
+          type: "string",
+          description:
+            "Optional room name to filter summary (e.g. 'Кухня', 'Спальня'). If omitted, returns summary for the whole home.",
+        },
+      },
+    },
+  },
 ];
 

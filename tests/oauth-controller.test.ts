@@ -65,10 +65,22 @@ describe("OAuthController", () => {
   });
 
   describe("Redirect URI validation", () => {
-    it("should allow ChatGPT and OpenAI redirect URLs", () => {
+    it("should allow ChatGPT, OpenAI, and Claude / Anthropic redirect URLs", () => {
       expect(controller.isAllowedRedirectUri("https://chatgpt.com/aip/g-xyz/oauth/callback")).toBe(true);
       expect(controller.isAllowedRedirectUri("https://chat.openai.com/aip/oauth/callback")).toBe(true);
+      expect(controller.isAllowedRedirectUri("https://claude.ai/api/mcp/auth_callback")).toBe(true);
+      expect(controller.isAllowedRedirectUri("https://sub.claude.ai/callback")).toBe(true);
+      expect(controller.isAllowedRedirectUri("https://anthropic.com/oauth/callback")).toBe(true);
       expect(controller.isAllowedRedirectUri("http://localhost:3000/callback")).toBe(true);
+    });
+
+    it("should allow same-origin redirect_uri when client_id is an HTTPS URL", () => {
+      expect(
+        controller.isAllowedRedirectUri(
+          "https://custom-mcp.org/auth/callback",
+          "https://custom-mcp.org/oauth/metadata.json"
+        )
+      ).toBe(true);
     });
 
     it("should disallow arbitrary untrusted domains when not registered", () => {
@@ -96,11 +108,11 @@ describe("OAuthController", () => {
   });
 
   describe("OAuth Authorize and Token Exchange Flow", () => {
-    it("should validate /oauth/authorize request and construct Yandex authorization URL", () => {
+    it("should validate /oauth/authorize request and construct Yandex authorization URL", async () => {
       const verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
       const challenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
 
-      const res = controller.handleAuthorize({
+      const res = await controller.handleAuthorize({
         client_id: "chatgpt_client_1",
         redirect_uri: "https://chatgpt.com/aip/oauth/callback",
         response_type: "code",
@@ -128,7 +140,29 @@ describe("OAuthController", () => {
       }
     });
 
-    it("should allow overriding yandexCallbackUri", () => {
+    it("should handle Claude.ai MCP OAuth authorization with client metadata document URL", async () => {
+      const challenge = "wKx7ew8l8PQpLQAtHKOakwngFXcHnYqX78awGHoHErE";
+      const res = await controller.handleAuthorize({
+        client_id: "https://claude.ai/oauth/mcp-oauth-client-metadata",
+        redirect_uri: "https://claude.ai/api/mcp/auth_callback",
+        response_type: "code",
+        state: "claude_state_456",
+        code_challenge: challenge,
+        code_challenge_method: "S256",
+      });
+
+      expect("redirectUrl" in res).toBe(true);
+      if ("redirectUrl" in res) {
+        const u = new URL(res.redirectUrl);
+        expect(u.origin).toBe("https://oauth.yandex.ru");
+        const internalState = u.searchParams.get("state")!;
+        const pending = storage.getPendingAuth(internalState);
+        expect(pending?.clientId).toBe("https://claude.ai/oauth/mcp-oauth-client-metadata");
+        expect(pending?.redirectUri).toBe("https://claude.ai/api/mcp/auth_callback");
+      }
+    });
+
+    it("should allow overriding yandexCallbackUri", async () => {
       const customController = new OAuthController({
         baseUrl,
         yandexClientId,
@@ -137,7 +171,7 @@ describe("OAuthController", () => {
         yandexCallbackUri: "https://alice.mctl.ai/oauth/yandex/callback",
       });
 
-      const res = customController.handleAuthorize({
+      const res = await customController.handleAuthorize({
         client_id: "chatgpt_client_1",
         redirect_uri: "https://chatgpt.com/aip/oauth/callback",
         response_type: "code",
@@ -150,8 +184,8 @@ describe("OAuthController", () => {
       }
     });
 
-    it("should reject authorize with invalid redirect_uri", () => {
-      const res = controller.handleAuthorize({
+    it("should reject authorize with invalid redirect_uri", async () => {
+      const res = await controller.handleAuthorize({
         client_id: "chatgpt_client_1",
         redirect_uri: "https://malicious.com/steal_tokens",
       });

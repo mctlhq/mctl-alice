@@ -1,0 +1,61 @@
+name: release-deploy
+
+# Flow for this repo: push a semver tag (no `v` prefix, e.g. `2.1.1`) or trigger manually.
+# This dispatches the centralized build+deploy workflow in mctl-gitops, which
+# builds & pushes ghcr.io/mctlhq/mctl-alice:<tag>, bumps the image tag in
+# platform-gitops/services/labs/mctl-alice/values.yaml, and lets ArgoCD sync it.
+
+on:
+  push:
+    tags:
+      # Semver only, no `v` prefix (e.g. 2.1.1). Stray tags don't deploy.
+      - '[0-9]+.[0-9]+.[0-9]+'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build and deploy (e.g. 2.1.1)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve deployment tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "val=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "val=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      # The cross-repo dispatch needs a token that can run workflows in
+      # mctl-gitops; the mctl-agents App provides it (org secrets
+      # AGENTS_APP_ID / AGENTS_APP_PRIVATE_KEY, visibility=all).
+      - name: Generate Platform App token
+        id: app
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1
+        with:
+          app-id: ${{ secrets.AGENTS_APP_ID }}
+          private-key: ${{ secrets.AGENTS_APP_PRIVATE_KEY }}
+          owner: mctlhq
+          repositories: mctl-gitops
+
+      - name: Dispatch centralized release-deploy
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          TAG: ${{ steps.tag.outputs.val }}
+        run: |
+          gh workflow run release-deploy.yaml \
+            --repo mctlhq/mctl-gitops \
+            --ref main \
+            -f repo=mctlhq/mctl-alice \
+            -f git_ref="$TAG" \
+            -f image_name=ghcr.io/mctlhq/mctl-alice \
+            -f image_tag="$TAG" \
+            -f team_name=labs \
+            -f component_name=mctl-alice

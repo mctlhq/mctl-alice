@@ -133,3 +133,11 @@ export interface SpeakerInfo {
   isSpeaker: boolean;
   capabilities: string[];
 }
+
+export interface YandexDeviceDetail extends YandexDevice {
+  status?: string;
+  request_id?: string;
+  external_id?: string;
+  groups?: string[];
+}
+

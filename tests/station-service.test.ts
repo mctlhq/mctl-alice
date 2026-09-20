@@ -52,6 +52,32 @@ describe("StationService", () => {
         type: "devices.types.light",
         capabilities: [],
       },
+      {
+        id: "ac-kitchen",
+        name: "Кондиционер",
+        room: "room-kitchen",
+        type: "devices.types.thermostat.ac",
+        capabilities: [
+          {
+            type: "devices.capabilities.on_off",
+            parameters: { split: false },
+          },
+          {
+            type: "devices.capabilities.range",
+            parameters: {
+              instance: "temperature",
+              range: { min: 16, max: 30, precision: 1 },
+            },
+          },
+          {
+            type: "devices.capabilities.mode",
+            parameters: {
+              instance: "thermostat",
+              modes: [{ value: "cool" }, { value: "heat" }],
+            },
+          },
+        ],
+      },
     ],
     scenarios: [
       { id: "scen-morning", name: "Доброе утро", is_active: true },
@@ -80,7 +106,7 @@ describe("StationService", () => {
     expect(list.speakers.length).toBe(2);
     expect(list.speakers[0].name).toBe("Станция Макс");
     expect(list.speakers[0].room).toBe("Гостиная");
-    expect(list.otherDevices?.length).toBe(1);
+    expect(list.otherDevices?.length).toBe(2);
     expect(list.rooms.length).toBe(2);
     expect(list.scenarios.length).toBe(2);
   });
@@ -224,4 +250,88 @@ describe("StationService", () => {
       "Для прямого воспроизведения произвольного текста (TTS) требуется авторизация Yandex Quasar"
     );
   });
+
+  it("should control device on_off and temperature via official IoT API", async () => {
+    mockClient.sendDeviceActions = vi.fn().mockResolvedValue({ status: "ok" });
+
+    const res = await service.controlDevice({
+      device: "Кондиционер",
+      room: "Кухня",
+      state: "on",
+      temperature: 22,
+      mode: "cool",
+    });
+
+    expect(res.status).toBe("ok");
+    expect(res.device.name).toBe("Кондиционер");
+    expect(res.device.room).toBe("Кухня");
+    expect(mockClient.sendDeviceActions).toHaveBeenCalledWith([
+      {
+        id: "ac-kitchen",
+        actions: [
+          {
+            type: "devices.capabilities.on_off",
+            state: { instance: "on", value: true },
+          },
+          {
+            type: "devices.capabilities.range",
+            state: { instance: "temperature", value: 22 },
+          },
+          {
+            type: "devices.capabilities.mode",
+            state: { instance: "thermostat", value: "cool" },
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("should throw error when controlling non-existent device", async () => {
+    await expect(
+      service.controlDevice({
+        device: "Несуществующее устройство",
+      })
+    ).rejects.toThrow("was not found");
+  });
+
+  it("should fetch real-time device state and telemetry properties", async () => {
+    mockClient.getDevice = vi.fn().mockResolvedValue({
+      id: "ac-kitchen",
+      name: "Кондиционер",
+      type: "devices.types.thermostat.ac",
+      state: "online",
+      room: "room-kitchen",
+      capabilities: [
+        {
+          type: "devices.capabilities.on_off",
+          state: { instance: "on", value: true },
+        },
+      ],
+      properties: [
+        {
+          type: "devices.properties.float",
+          parameters: { instance: "temperature", unit: "unit.temperature.celsius" },
+          state: { instance: "temperature", value: 21.5 },
+        },
+      ],
+    });
+
+    const res = await service.getDeviceState({
+      device: "Кондиционер",
+      room: "Кухня",
+    });
+
+    expect(mockClient.getDevice).toHaveBeenCalledWith("ac-kitchen");
+    expect(res.status).toBe("ok");
+    expect(res.device.name).toBe("Кондиционер");
+    expect(res.device.room).toBe("Кухня");
+    expect(res.device.state).toBe("online");
+    expect(res.capabilities).toEqual([
+      { type: "devices.capabilities.on_off", instance: "on", value: true },
+    ]);
+    expect(res.properties).toEqual([
+      { name: "temperature", instance: "temperature", value: 21.5, unit: "unit.temperature.celsius" },
+    ]);
+  });
 });
+

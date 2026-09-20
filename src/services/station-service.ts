@@ -226,7 +226,11 @@ export class StationService {
     const speaker = await this.resolveSpeaker(targetSpeaker);
 
     if (this.quasarClient && this.quasarClient.hasCookie()) {
-      const response = await this.quasarClient.sendCommand(speaker.id, command);
+      const response = await this.quasarClient.sendCommand(
+        speaker.id,
+        command,
+        (sid) => this.getClient().triggerScenario(sid)
+      );
       return {
         status: "ok",
         speaker: { id: speaker.id, name: speaker.name },
@@ -275,7 +279,11 @@ export class StationService {
     const speaker = await this.resolveSpeaker(targetSpeaker);
 
     if (this.quasarClient && this.quasarClient.hasCookie()) {
-      const response = await this.quasarClient.sendTts(speaker.id, phrase);
+      const response = await this.quasarClient.sendTts(
+        speaker.id,
+        phrase,
+        (sid) => this.getClient().triggerScenario(sid)
+      );
       return {
         status: "ok",
         speaker: { id: speaker.id, name: speaker.name },

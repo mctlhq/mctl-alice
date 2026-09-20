@@ -186,7 +186,11 @@ describe("StationService", () => {
 
     expect(res.status).toBe("ok");
     expect(res.method).toBe("quasar_tts");
-    expect(mockQuasar.sendTts).toHaveBeenCalledWith("station-kitchen", "Привет мир");
+    expect(mockQuasar.sendTts).toHaveBeenCalledWith(
+      "station-kitchen",
+      "Привет мир",
+      expect.any(Function)
+    );
     expect(mockClient.sendDeviceActions).not.toHaveBeenCalled();
   });
 
@@ -202,7 +206,11 @@ describe("StationService", () => {
 
     expect(res.status).toBe("ok");
     expect(res.method).toBe("quasar_command");
-    expect(mockQuasar.sendCommand).toHaveBeenCalledWith("station-kitchen", "включи рок");
+    expect(mockQuasar.sendCommand).toHaveBeenCalledWith(
+      "station-kitchen",
+      "включи рок",
+      expect.any(Function)
+    );
     expect(mockClient.sendDeviceActions).not.toHaveBeenCalled();
   });
 

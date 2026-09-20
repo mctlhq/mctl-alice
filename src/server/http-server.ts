@@ -25,18 +25,37 @@ import {
 import { getOpenApiSpec } from "./openapi.js";
 import { TelemetryStorage } from "../storage/telemetry-storage.js";
 import { TelemetrySampler } from "../services/telemetry-sampler.js";
+import { OAuthStorage } from "../storage/oauth-storage.js";
+import { OAuthController } from "../auth/oauth-controller.js";
 
 const DEFAULT_CLIENT_ID = "c0ebe342af7d48fbbbfcf2d2eedb8f9e";
 
-function parseJsonBody(req: http.IncomingMessage): Promise<any> {
+function parseRequestBody(req: http.IncomingMessage): Promise<any> {
   return new Promise((resolve, reject) => {
     let body = "";
     req.on("data", (chunk) => (body += chunk));
     req.on("end", () => {
       if (!body.trim()) return resolve({});
+      const contentType = req.headers["content-type"] || "";
+      if (contentType.includes("application/x-www-form-urlencoded")) {
+        try {
+          const params = new URLSearchParams(body);
+          return resolve(Object.fromEntries(params.entries()));
+        } catch {
+          return reject(new Error("Invalid form-urlencoded body"));
+        }
+      }
       try {
         resolve(JSON.parse(body));
       } catch {
+        try {
+          const params = new URLSearchParams(body);
+          if (Array.from(params.keys()).length > 0) {
+            return resolve(Object.fromEntries(params.entries()));
+          }
+        } catch {
+          // ignore
+        }
         reject(new Error("Invalid JSON body"));
       }
     });
@@ -44,10 +63,14 @@ function parseJsonBody(req: http.IncomingMessage): Promise<any> {
   });
 }
 
+const parseJsonBody = parseRequestBody;
+
 function getServiceForRequest(
   req: http.IncomingMessage,
   defaultService: StationService,
-  defaultQuasar?: QuasarClient
+  defaultQuasar?: QuasarClient,
+  oauthStorage?: OAuthStorage,
+  telemetryStorage?: TelemetryStorage
 ): StationService {
   const authHeader = req.headers.authorization;
   const cookieHeader = req.headers["x-yandex-cookie"] as string | undefined;
@@ -58,11 +81,29 @@ function getServiceForRequest(
   }
 
   if (authHeader && authHeader.startsWith("Bearer ")) {
-    const token = authHeader.replace(/^Bearer\s+/i, "").trim();
-    if (token) {
+    const rawToken = authHeader.replace(/^Bearer\s+/i, "").trim();
+    if (rawToken) {
+      // 1. Check if rawToken is an issued OAuth Bearer token in oauthStorage
+      if (oauthStorage) {
+        const tokenRecord = oauthStorage.getToken(rawToken);
+        if (tokenRecord) {
+          try {
+            const client = new YandexIoTClient(tokenRecord.yandexAccessToken, {
+              useKeychain: false,
+              persistEnv: false,
+              refreshToken: tokenRecord.yandexRefreshToken,
+            });
+            return new StationService(client, customQuasar, telemetryStorage);
+          } catch {
+            // fall through
+          }
+        }
+      }
+
+      // 2. Direct Yandex OAuth token fallback
       try {
-        const client = new YandexIoTClient(token, { useKeychain: false, persistEnv: false });
-        return new StationService(client, customQuasar);
+        const client = new YandexIoTClient(rawToken, { useKeychain: false, persistEnv: false });
+        return new StationService(client, customQuasar, telemetryStorage);
       } catch {
         // Fallback to default service
       }
@@ -70,7 +111,7 @@ function getServiceForRequest(
   }
 
   if (customQuasar && customQuasar !== defaultQuasar) {
-    return new StationService(undefined, customQuasar);
+    return new StationService(undefined, customQuasar, telemetryStorage);
   }
 
   return defaultService;
@@ -81,7 +122,7 @@ export function createMcpServer(service: StationService | (() => StationService)
   const server = new Server(
     {
       name: "mctl-alice",
-      version: "1.6.0",
+      version: "1.7.0",
     },
     {
       capabilities: {
@@ -112,6 +153,7 @@ export function createHttpServer(
     publicBaseUrl?: string;
     storage?: TelemetryStorage;
     enableSampler?: boolean;
+    oauthStorage?: OAuthStorage;
   } = {}
 ): http.Server {
   const baseUrl = options.publicBaseUrl || process.env.PUBLIC_BASE_URL || `http://localhost:${port}`;
@@ -123,8 +165,17 @@ export function createHttpServer(
   const clientSecret =
     options.clientSecret ||
     process.env.YANDEX_CLIENT_SECRET ||
-    getTokenFromKeychain("mctl-alice-client-secret");
+    getTokenFromKeychain("mctl-alice-client-secret") ||
+    undefined;
   const redirectUri = `${baseUrl}/auth/callback`;
+
+  const oauthStorage = options.oauthStorage || new OAuthStorage();
+  const oauthController = new OAuthController({
+    baseUrl,
+    yandexClientId: clientId,
+    yandexClientSecret: clientSecret,
+    storage: oauthStorage,
+  });
 
   let quasarClient = new QuasarClient();
   let stationService = new StationService(undefined, quasarClient, options.storage);
@@ -199,7 +250,7 @@ export function createHttpServer(
         result: {
           protocolVersion: rpcReq.params?.protocolVersion || "2024-11-05",
           capabilities: { tools: {} },
-          serverInfo: { name: "mctl-alice", version: "1.6.0" },
+          serverInfo: { name: "mctl-alice", version: "1.7.0" },
         },
       };
     }
@@ -223,7 +274,7 @@ export function createHttpServer(
     if (method === "tools/call") {
       const { name, arguments: args } = rpcReq.params || {};
       try {
-        const svc = getServiceForRequest(req, stationService, quasarClient);
+        const svc = getServiceForRequest(req, stationService, quasarClient, oauthStorage, options.storage);
         const result = await handleToolCall(name, args, svc);
         return {
           jsonrpc: "2.0",
@@ -267,7 +318,7 @@ export function createHttpServer(
     // Health check for Kubernetes probes
     if (url.pathname === "/healthz" || url.pathname === "/readyz") {
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ status: "ok", service: "mctl-alice", version: "1.6.0" }));
+      res.end(JSON.stringify({ status: "ok", service: "mctl-alice", version: "1.7.0" }));
       return;
     }
 
@@ -275,6 +326,135 @@ export function createHttpServer(
     if (url.pathname === "/openapi.json" || url.pathname === "/openapi.yaml") {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify(getOpenApiSpec(baseUrl), null, 2));
+      return;
+    }
+
+    // RFC 9728 Protected Resource Metadata (PRM)
+    if (
+      (url.pathname === "/.well-known/oauth-protected-resource" ||
+        url.pathname === "/.well-known/oauth-protected-resource/mcp" ||
+        url.pathname === "/mcp/.well-known/oauth-protected-resource") &&
+      req.method === "GET"
+    ) {
+      res.writeHead(200, {
+        "Content-Type": "application/json; charset=utf-8",
+        "Cache-Control": "public, max-age=3600",
+      });
+      res.end(JSON.stringify(oauthController.getProtectedResourceMetadata(), null, 2));
+      return;
+    }
+
+    // RFC 8414 Authorization Server Metadata (ASM) & OIDC Discovery
+    if (
+      (url.pathname === "/.well-known/oauth-authorization-server" ||
+        url.pathname === "/.well-known/oauth-authorization-server/mcp" ||
+        url.pathname === "/.well-known/openid-configuration") &&
+      req.method === "GET"
+    ) {
+      res.writeHead(200, {
+        "Content-Type": "application/json; charset=utf-8",
+        "Cache-Control": "public, max-age=3600",
+      });
+      res.end(JSON.stringify(oauthController.getAuthorizationServerMetadata(), null, 2));
+      return;
+    }
+
+    // RFC 7591 Dynamic Client Registration
+    if (url.pathname === "/oauth/register" && req.method === "POST") {
+      try {
+        const body = await parseRequestBody(req);
+        const clientInfo = oauthController.registerClient(body);
+        res.writeHead(201, { "Content-Type": "application/json; charset=utf-8" });
+        res.end(JSON.stringify(clientInfo));
+      } catch (err: any) {
+        res.writeHead(400, { "Content-Type": "application/json; charset=utf-8" });
+        res.end(JSON.stringify({ error: "invalid_request", error_description: err.message }));
+      }
+      return;
+    }
+
+    // OAuth: Authorize Endpoint
+    if (url.pathname === "/oauth/authorize" && req.method === "GET") {
+      const result = oauthController.handleAuthorize({
+        client_id: url.searchParams.get("client_id") || "",
+        redirect_uri: url.searchParams.get("redirect_uri") || "",
+        response_type: url.searchParams.get("response_type") || undefined,
+        state: url.searchParams.get("state") || undefined,
+        code_challenge: url.searchParams.get("code_challenge") || undefined,
+        code_challenge_method: url.searchParams.get("code_challenge_method") || undefined,
+        scope: url.searchParams.get("scope") || undefined,
+      });
+
+      if ("error" in result) {
+        res.writeHead(result.status || 400, { "Content-Type": "application/json; charset=utf-8" });
+        res.end(JSON.stringify({ error: result.error, error_description: result.description }));
+        return;
+      }
+
+      res.writeHead(302, { Location: result.redirectUrl });
+      res.end();
+      return;
+    }
+
+    // OAuth: Yandex Callback Endpoint
+    if (url.pathname === "/oauth/yandex/callback" && req.method === "GET") {
+      try {
+        const result = await oauthController.handleYandexCallback({
+          code: url.searchParams.get("code") || undefined,
+          state: url.searchParams.get("state") || undefined,
+          error: url.searchParams.get("error") || undefined,
+          error_description: url.searchParams.get("error_description") || undefined,
+        });
+        res.writeHead(302, { Location: result.redirectUrl });
+        res.end();
+      } catch (err: any) {
+        res.writeHead(500, { "Content-Type": "text/html; charset=utf-8" });
+        res.end(`<!DOCTYPE html>
+<html lang="ru">
+<head><meta charset="utf-8"><title>OAuth Error</title></head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, sans-serif; padding: 40px; max-width: 600px; margin: auto;">
+  <h2 style="color: #0f172a;">Ошибка авторизации Яндекс</h2>
+  <p style="color: #dc2626;">${err.message}</p>
+  <p><a href="${baseUrl}/auth/login" style="color: #2563eb;">Попробовать снова</a></p>
+</body>
+</html>`);
+      }
+      return;
+    }
+
+    // OAuth: Token Endpoint (Authorization Code + PKCE & Refresh Token)
+    if (url.pathname === "/oauth/token" && req.method === "POST") {
+      try {
+        const body = await parseRequestBody(req);
+        const tokens = await oauthController.handleToken(body);
+        res.writeHead(200, {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "no-store",
+          Pragma: "no-cache",
+        });
+        res.end(JSON.stringify(tokens));
+      } catch (err: any) {
+        res.writeHead(400, {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "no-store",
+        });
+        res.end(JSON.stringify({ error: "invalid_grant", error_description: err.message }));
+      }
+      return;
+    }
+
+    // OAuth: Revocation Endpoint (RFC 7009 - Disconnect in ChatGPT)
+    if (url.pathname === "/oauth/revoke" && req.method === "POST") {
+      try {
+        const body = await parseRequestBody(req);
+        const token = body?.token || url.searchParams.get("token") || "";
+        oauthController.handleRevoke(token);
+        res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+        res.end(JSON.stringify({ status: "ok" }));
+      } catch {
+        res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+        res.end(JSON.stringify({ status: "ok" }));
+      }
       return;
     }
 
@@ -341,7 +521,7 @@ export function createHttpServer(
 
     if (isSseRequest) {
       try {
-        const svc = getServiceForRequest(req, stationService, quasarClient);
+        const svc = getServiceForRequest(req, stationService, quasarClient, oauthStorage, options.storage);
         const transport = new SSEServerTransport("/messages", res);
         const sessionId = transport.sessionId;
         sseTransports.set(sessionId, transport);
@@ -391,7 +571,7 @@ export function createHttpServer(
     if (url.pathname === "/api/devices" && req.method === "GET") {
       try {
         const onlySpeakers = url.searchParams.get("only_speakers") === "true";
-        const svc = getServiceForRequest(req, stationService, quasarClient);
+        const svc = getServiceForRequest(req, stationService, quasarClient, oauthStorage, options.storage);
         const result = await svc.listDevices(onlySpeakers);
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ status: "ok", ...result }));
@@ -413,7 +593,7 @@ export function createHttpServer(
           res.end(JSON.stringify({ status: "error", message: "Parameter 'phrase' is required" }));
           return;
         }
-        const svc = getServiceForRequest(req, stationService, quasarClient);
+        const svc = getServiceForRequest(req, stationService, quasarClient, oauthStorage, options.storage);
         const result = await svc.sayPhrase(phrase, body.device);
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ...result }));
@@ -435,7 +615,7 @@ export function createHttpServer(
           res.end(JSON.stringify({ status: "error", message: "Parameter 'command' is required" }));
           return;
         }
-        const svc = getServiceForRequest(req, stationService, quasarClient);
+        const svc = getServiceForRequest(req, stationService, quasarClient, oauthStorage, options.storage);
         const result = await svc.sendCommand(command, body.device);
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ...result }));
@@ -462,7 +642,7 @@ export function createHttpServer(
           );
           return;
         }
-        const svc = getServiceForRequest(req, stationService, quasarClient);
+        const svc = getServiceForRequest(req, stationService, quasarClient, oauthStorage, options.storage);
         const result = await svc.setVolume(level, body.device);
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ...result }));
@@ -489,7 +669,7 @@ export function createHttpServer(
           );
           return;
         }
-        const svc = getServiceForRequest(req, stationService, quasarClient);
+        const svc = getServiceForRequest(req, stationService, quasarClient, oauthStorage, options.storage);
         const result = await svc.mediaControl(action, body.device);
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ...result }));
@@ -511,7 +691,7 @@ export function createHttpServer(
           res.end(JSON.stringify({ status: "error", message: "Parameter 'scenario' is required" }));
           return;
         }
-        const svc = getServiceForRequest(req, stationService, quasarClient);
+        const svc = getServiceForRequest(req, stationService, quasarClient, oauthStorage, options.storage);
         const result = await svc.triggerScenario(scenario);
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ...result }));
@@ -848,13 +1028,15 @@ export function createHttpServer(
       JSON.stringify({
         service: "mctl-alice",
         description: "Yandex Alice Smart Speaker MCP & REST Server for ChatGPT",
-        version: "1.6.0",
+        version: "1.7.0",
         endpoints: {
           openapi: "/openapi.json",
           sse: "/sse",
           messages: "/messages",
           mcp: "/mcp",
           healthz: "/healthz",
+          oauth_prm: "/.well-known/oauth-protected-resource",
+          oauth_asm: "/.well-known/oauth-authorization-server",
           auth: "/auth/login",
           auth_cookie: "/auth/cookie",
           api: {

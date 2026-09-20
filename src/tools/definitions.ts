@@ -109,4 +109,61 @@ export const ALICE_TOOLS: Tool[] = [
       required: ["scenario"],
     },
   },
+  {
+    name: "alice_control_device",
+    description:
+      "Directly control a smart home device (air conditioner, light, socket, heater, fan, switch) via official Yandex IoT API without needing speaker cookies. Turn on/off, set temperature or AC mode.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        device: {
+          type: "string",
+          description:
+            "Device name or ID (e.g. 'Кондиционер', 'Свет над столом', 'Розетка', 'Обогреватель', 'Вентилятор').",
+        },
+        room: {
+          type: "string",
+          description:
+            "Room name where the device is located (e.g. 'Кухня', 'Детская'). Helpful when multiple devices share the same name.",
+        },
+        state: {
+          type: "string",
+          enum: ["on", "off"],
+          description: "Turn the device on or off.",
+        },
+        temperature: {
+          type: "number",
+          description:
+            "Target temperature in Celsius (for air conditioners or thermostats, e.g. 22).",
+        },
+        mode: {
+          type: "string",
+          enum: ["auto", "cool", "dry", "fan_only", "heat"],
+          description: "Operating mode for AC or thermostat.",
+        },
+      },
+      required: ["device"],
+    },
+  },
+  {
+    name: "alice_get_device_state",
+    description:
+      "Get real-time status and telemetry of any smart home device (socket power in Watts, voltage, current, climate sensor temperature, humidity, pressure, battery level, or on/off state) via official Yandex IoT API.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        device: {
+          type: "string",
+          description:
+            "Device name or ID (e.g. 'Розетка', 'Кондиционер', 'Датчик климата', 'Вентилятор').",
+        },
+        room: {
+          type: "string",
+          description:
+            "Room name where the device is located (e.g. 'Кухня', 'Детская'). Helpful when multiple devices share the same name.",
+        },
+      },
+      required: ["device"],
+    },
+  },
 ];

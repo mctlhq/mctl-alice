@@ -38,6 +38,20 @@ describe("handleToolCall", () => {
         status: "ok",
         scenario: { id: "sc-1", name: "Тест" },
       }),
+      controlDevice: vi.fn().mockResolvedValue({
+        status: "ok",
+        device: { id: "d-1", name: "Кондиционер", room: "Кухня" },
+        actionsApplied: [{ type: "devices.capabilities.on_off", state: { instance: "on", value: true } }],
+      }),
+      getDeviceState: vi.fn().mockResolvedValue({
+        status: "ok",
+        device: { id: "d-plug", name: "Розетка", room: "Кухня", type: "devices.types.socket", state: "online" },
+        capabilities: [{ type: "devices.capabilities.on_off", instance: "on", value: true }],
+        properties: [
+          { name: "power", instance: "power", value: 12.5, unit: "unit.watt" },
+          { name: "voltage", instance: "voltage", value: 230, unit: "unit.volt" },
+        ],
+      }),
     } as unknown as StationService;
   });
 
@@ -102,6 +116,29 @@ describe("handleToolCall", () => {
     );
     expect(res.isError).toBeFalsy();
     expect(res.content[0].text).toContain("Сценарий умного дома **Тест**");
+  });
+
+  it("should handle alice_control_device", async () => {
+    const res = await handleToolCall(
+      "alice_control_device",
+      { device: "Кондиционер", room: "Кухня", state: "on", temperature: 22 },
+      mockService
+    );
+    expect(res.isError).toBeFalsy();
+    expect(res.content[0].text).toContain("Устройство **Кондиционер** (Кухня) успешно обновлено");
+  });
+
+  it("should handle alice_get_device_state", async () => {
+    const res = await handleToolCall(
+      "alice_get_device_state",
+      { device: "Розетка", room: "Кухня" },
+      mockService
+    );
+    expect(res.isError).toBeFalsy();
+    expect(res.content[0].text).toContain("Состояние устройства: Розетка");
+    expect(res.content[0].text).toContain("**Текущая мощность:** 12.5 Вт");
+    expect(res.content[0].text).toContain("**Напряжение:** 230 В");
+    expect(res.content[0].text).toContain("**Состояние питания:** Включено");
   });
 
   it("should return error for unknown tool", async () => {

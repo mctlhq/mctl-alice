@@ -439,4 +439,215 @@ export class StationService {
       apiResponse: response,
     };
   }
+
+  /**
+   * Resolve any smart home device by name or ID, optionally filtered by room name
+   */
+  async resolveDevice(
+    deviceQuery: string,
+    roomQuery?: string
+  ): Promise<{ device: YandexDevice; roomName: string }> {
+    const info = await this.getUserInfo();
+    const roomMap = this.buildRoomMap(info.rooms);
+    const devices = info.devices || [];
+
+    if (devices.length === 0) {
+      throw new YandexApiError("No smart home devices found in your Yandex account.");
+    }
+
+    const dQuery = deviceQuery.trim().toLowerCase();
+    const rQuery = roomQuery ? roomQuery.trim().toLowerCase() : undefined;
+
+    // Filter by room if specified
+    const candidates = rQuery
+      ? devices.filter((d) => {
+          const rName = (d.room && roomMap.get(d.room))?.toLowerCase() || "";
+          return rName === rQuery || rName.includes(rQuery);
+        })
+      : devices;
+
+    const searchPool = candidates.length > 0 ? candidates : devices;
+
+    // 1. Direct ID match
+    let match = searchPool.find((d) => d.id === deviceQuery);
+    // 2. Exact name match
+    if (!match) match = searchPool.find((d) => d.name.toLowerCase() === dQuery);
+    // 3. Substring name match
+    if (!match) match = searchPool.find((d) => d.name.toLowerCase().includes(dQuery));
+    // 4. Fallback search across all devices if room filter had no match
+    if (!match && rQuery && candidates.length === 0) {
+      match = devices.find((d) => d.name.toLowerCase().includes(dQuery));
+    }
+
+    if (!match) {
+      const available = devices
+        .map((d) => `"${d.name}" (${d.room ? roomMap.get(d.room) : "no room"}, id: ${d.id})`)
+        .join(", ");
+      throw new YandexApiError(
+        `Device matching "${deviceQuery}"${roomQuery ? ` in room "${roomQuery}"` : ""} was not found. Available devices: ${available}`
+      );
+    }
+
+    const roomName = (match.room && roomMap.get(match.room)) || "Не указана";
+    return { device: match, roomName };
+  }
+
+  /**
+   * Directly control smart home devices (on/off, temperature, mode) via official Yandex IoT API
+   */
+  async controlDevice(options: {
+    device: string;
+    room?: string;
+    state?: "on" | "off";
+    temperature?: number;
+    mode?: string;
+  }) {
+    const { device, roomName } = await this.resolveDevice(options.device, options.room);
+    const actions: Array<{
+      type: string;
+      state: { instance: string; value: any };
+    }> = [];
+
+    // 1. On / Off capability
+    if (options.state) {
+      const onOffCap = device.capabilities?.find(
+        (c) => c.type === "devices.capabilities.on_off"
+      );
+      if (onOffCap) {
+        actions.push({
+          type: "devices.capabilities.on_off",
+          state: {
+            instance: "on",
+            value: options.state === "on",
+          },
+        });
+      }
+    }
+
+    // 2. Temperature capability (thermostat/AC range)
+    if (typeof options.temperature === "number" && !isNaN(options.temperature)) {
+      const tempCap = device.capabilities?.find(
+        (c) =>
+          c.type === "devices.capabilities.range" &&
+          c.parameters?.instance === "temperature"
+      );
+      if (tempCap) {
+        let val = options.temperature;
+        if (tempCap.parameters?.range) {
+          const min = tempCap.parameters.range.min ?? 16;
+          const max = tempCap.parameters.range.max ?? 30;
+          val = Math.min(Math.max(val, min), max);
+        }
+        actions.push({
+          type: "devices.capabilities.range",
+          state: {
+            instance: "temperature",
+            value: val,
+          },
+        });
+      }
+    }
+
+    // 3. Mode capability (thermostat mode: cool, heat, auto, dry, fan_only)
+    if (options.mode) {
+      const modeCap = device.capabilities?.find(
+        (c) =>
+          c.type === "devices.capabilities.mode" &&
+          c.parameters?.instance === "thermostat"
+      );
+      if (modeCap) {
+        actions.push({
+          type: "devices.capabilities.mode",
+          state: {
+            instance: "thermostat",
+            value: options.mode,
+          },
+        });
+      }
+    }
+
+    if (actions.length === 0) {
+      throw new YandexApiError(
+        `Device "${device.name}" does not support the requested actions. Device type: ${device.type}.`
+      );
+    }
+
+    const response = await this.getClient().sendDeviceActions([
+      {
+        id: device.id,
+        actions,
+      },
+    ]);
+
+    return {
+      status: "ok",
+      device: { id: device.id, name: device.name, room: roomName },
+      actionsApplied: actions,
+      apiResponse: response,
+    };
+  }
+
+  /**
+   * Get real-time status, capabilities, and telemetry properties of a smart home device
+   */
+  async getDeviceState(options: {
+    device: string;
+    room?: string;
+  }) {
+    const { device: matchedDevice, roomName } = await this.resolveDevice(options.device, options.room);
+    const detailed = await this.getClient().getDevice(matchedDevice.id);
+
+    const propertiesSummary: Array<{
+      name: string;
+      instance: string;
+      value: any;
+      unit?: string;
+    }> = [];
+
+    if (detailed.properties && detailed.properties.length > 0) {
+      for (const prop of detailed.properties) {
+        if (prop.state) {
+          const instance = prop.state.instance || prop.parameters?.instance || "unknown";
+          const unit = prop.parameters?.unit || "";
+          propertiesSummary.push({
+            name: instance,
+            instance,
+            value: prop.state.value,
+            unit,
+          });
+        }
+      }
+    }
+
+    const capabilitiesSummary: Array<{
+      type: string;
+      instance?: string;
+      value?: any;
+    }> = [];
+
+    if (detailed.capabilities && detailed.capabilities.length > 0) {
+      for (const cap of detailed.capabilities) {
+        capabilitiesSummary.push({
+          type: cap.type,
+          instance: cap.state?.instance || cap.parameters?.instance,
+          value: cap.state?.value,
+        });
+      }
+    }
+
+    return {
+      status: "ok",
+      device: {
+        id: detailed.id,
+        name: detailed.name,
+        room: roomName,
+        type: detailed.type,
+        state: detailed.state || "online",
+      },
+      properties: propertiesSummary,
+      capabilities: capabilitiesSummary,
+      raw: detailed,
+    };
+  }
 }
+

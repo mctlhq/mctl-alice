@@ -155,6 +155,79 @@ export async function handleToolCall(
         };
       }
 
+      case "alice_control_device": {
+        const device = String(args?.device || "").trim();
+        if (!device) {
+          return {
+            content: [{ type: "text", text: "Ошибка: параметр 'device' обязателен." }],
+            isError: true,
+          };
+        }
+        const room = args?.room ? String(args.room).trim() : undefined;
+        const state = args?.state as "on" | "off" | undefined;
+        const temperature = typeof args?.temperature === "number" ? args.temperature : undefined;
+        const mode = args?.mode ? String(args.mode).trim() : undefined;
+
+        const result = await stationService.controlDevice({
+          device,
+          room,
+          state,
+          temperature,
+          mode,
+        });
+
+        const actionsSummary: string[] = [];
+        if (state) actionsSummary.push(`состояние: ${state === "on" ? "включено" : "выключено"}`);
+        if (temperature !== undefined) actionsSummary.push(`температура: ${temperature}°C`);
+        if (mode) actionsSummary.push(`режим: ${mode}`);
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Устройство **${result.device.name}** (${result.device.room}) успешно обновлено: ${actionsSummary.join(", ")}.`,
+            },
+          ],
+        };
+      }
+
+      case "alice_get_device_state": {
+        const device = String(args?.device || "").trim();
+        if (!device) {
+          return {
+            content: [{ type: "text", text: "Ошибка: параметр 'device' обязателен." }],
+            isError: true,
+          };
+        }
+        const room = args?.room ? String(args.room).trim() : undefined;
+        const result = await stationService.getDeviceState({ device, room });
+
+        let text = `### Состояние устройства: ${result.device.name}\n\n`;
+        text += `- **Комната:** ${result.device.room}\n`;
+        text += `- **Тип:** \`${result.device.type}\`\n`;
+        text += `- **Статус сети:** ${result.device.state === "online" ? "🟢 В сети (online)" : "🔴 Не в сети (offline)"}\n`;
+
+        const onOffCap = result.capabilities.find((c) => c.type === "devices.capabilities.on_off");
+        if (onOffCap && onOffCap.value !== undefined) {
+          text += `- **Состояние питания:** ${onOffCap.value ? "Включено" : "Выключено"}\n`;
+        }
+
+        if (result.properties.length > 0) {
+          text += `\n**Телеметрия и показания датчиков:**\n`;
+          for (const prop of result.properties) {
+            const label = formatPropertyLabel(prop.instance);
+            const unit = formatUnit(prop.unit);
+            text += `- **${label}:** ${prop.value}${unit ? ` ${unit}` : ""}\n`;
+          }
+        } else {
+          text += `\n_(нет доступных свойств датчиков/телеметрии)_\n`;
+        }
+
+        return {
+          content: [{ type: "text", text: text.trim() }],
+        };
+      }
+
       default:
         return {
           content: [{ type: "text", text: `Неизвестный инструмент: ${name}` }],
@@ -173,3 +246,50 @@ export async function handleToolCall(
     };
   }
 }
+
+function formatUnit(unit?: string): string {
+  switch (unit) {
+    case "unit.volt":
+      return "В";
+    case "unit.watt":
+      return "Вт";
+    case "unit.ampere":
+      return "А";
+    case "unit.temperature.celsius":
+      return "°C";
+    case "unit.percent":
+      return "%";
+    case "unit.pressure.mmhg":
+      return "мм рт. ст.";
+    case "unit.kilowatt_hour":
+      return "кВт·ч";
+    default:
+      return unit ? unit.replace(/^unit\./, "") : "";
+  }
+}
+
+function formatPropertyLabel(instance: string): string {
+  switch (instance) {
+    case "power":
+      return "Текущая мощность";
+    case "voltage":
+      return "Напряжение";
+    case "amperage":
+      return "Сила тока";
+    case "battery_level":
+      return "Заряд батареи";
+    case "temperature":
+      return "Температура";
+    case "humidity":
+      return "Влажность";
+    case "pressure":
+      return "Давление";
+    case "co2_level":
+      return "Уровень CO2";
+    case "electricity_meter":
+      return "Суммарное энергопотребление";
+    default:
+      return instance;
+  }
+}
+

@@ -7,6 +7,7 @@ import {
 } from "../auth/token-storage.js";
 import {
   YandexUserInfo,
+  YandexDeviceDetail,
   DeviceActionRequest,
   DeviceActionResponse,
   ScenarioActionResponse,
@@ -204,6 +205,13 @@ export class YandexIoTClient {
    */
   async getUserInfo(): Promise<YandexUserInfo> {
     return this.request<YandexUserInfo>("/user/info");
+  }
+
+  /**
+   * Get real-time status, capabilities, and telemetry properties of a specific device
+   */
+  async getDevice(deviceId: string): Promise<YandexDeviceDetail> {
+    return this.request<YandexDeviceDetail>(`/devices/${encodeURIComponent(deviceId)}`);
   }
 
   /**

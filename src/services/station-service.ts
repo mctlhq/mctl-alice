@@ -209,8 +209,18 @@ export class StationService {
       };
     });
 
+    const seenDeviceIds = new Set<string>(devices.map((d) => d.id));
     for (const s of quasarData.speakers || []) {
-      devices.push(s);
+      if (!seenDeviceIds.has(s.id)) {
+        devices.push(s);
+        seenDeviceIds.add(s.id);
+      }
+    }
+    for (const u of quasarData.unconfigured_devices || []) {
+      if (!seenDeviceIds.has(u.id)) {
+        devices.push(u);
+        seenDeviceIds.add(u.id);
+      }
     }
 
     return {
@@ -370,8 +380,7 @@ export class StationService {
     if (this.quasarClient && this.quasarClient.hasCookie()) {
       const response = await this.quasarClient.sendCommand(
         speaker.id,
-        command,
-        (sid) => this.getClient().triggerScenario(sid)
+        command
       );
       return {
         status: "ok",
@@ -423,8 +432,7 @@ export class StationService {
     if (this.quasarClient && this.quasarClient.hasCookie()) {
       const response = await this.quasarClient.sendTts(
         speaker.id,
-        phrase,
-        (sid) => this.getClient().triggerScenario(sid)
+        phrase
       );
       return {
         status: "ok",
@@ -488,6 +496,20 @@ export class StationService {
       targetValue = Math.min(Math.max(Math.round(level), 1), 10);
     }
 
+    if (this.quasarClient && this.quasarClient.hasCookie()) {
+      try {
+        const response = await this.sendCommand(`сделай громкость ${targetValue}`, targetSpeaker);
+        return {
+          status: "ok",
+          speaker: { id: speaker.id, name: speaker.name },
+          volume: targetValue,
+          apiResponse: response,
+        };
+      } catch {
+        // Fall through to official IoT API
+      }
+    }
+
     const response = await this.getClient().sendDeviceActions([
       {
         id: speaker.id,
@@ -530,6 +552,22 @@ export class StationService {
     };
 
     const command = commandMap[action];
+
+    if (this.quasarClient && this.quasarClient.hasCookie()) {
+      try {
+        const response = await this.sendCommand(command, targetSpeaker);
+        return {
+          status: "ok",
+          speaker: { id: speaker.id, name: speaker.name },
+          action,
+          commandSent: command,
+          apiResponse: response,
+        };
+      } catch {
+        // Fall through to official IoT API
+      }
+    }
+
     const response = await this.getClient().sendDeviceActions([
       {
         id: speaker.id,
@@ -572,6 +610,19 @@ export class StationService {
       throw new YandexApiError(
         `Scenario "${nameOrId}" not found. Available scenarios: ${names || "none"}`
       );
+    }
+
+    if (this.quasarClient && this.quasarClient.hasCookie()) {
+      try {
+        const response = await this.quasarClient.triggerScenario(target.id);
+        return {
+          status: "ok",
+          scenario: { id: target.id, name: target.name },
+          apiResponse: response,
+        };
+      } catch {
+        // Fall through to official IoT API
+      }
     }
 
     const response = await this.getClient().triggerScenario(target.id);
@@ -714,6 +765,20 @@ export class StationService {
       );
     }
 
+    if (this.quasarClient && this.quasarClient.hasCookie()) {
+      try {
+        const response = await this.quasarClient.sendDeviceActions(device.id, actions);
+        return {
+          status: "ok",
+          device: { id: device.id, name: device.name, room: roomName },
+          actionsApplied: actions,
+          apiResponse: response,
+        };
+      } catch {
+        // Fall through to official IoT API
+      }
+    }
+
     const response = await this.getClient().sendDeviceActions([
       {
         id: device.id,
@@ -820,6 +885,20 @@ export class StationService {
       );
     }
 
+    if (this.quasarClient && this.quasarClient.hasCookie()) {
+      try {
+        const response = await this.quasarClient.sendDeviceActions(device.id, actions);
+        return {
+          status: "ok",
+          device: { id: device.id, name: device.name, room: roomName },
+          actionsApplied: actions,
+          apiResponse: response,
+        };
+      } catch {
+        // Fall through to official IoT API
+      }
+    }
+
     const response = await this.getClient().sendDeviceActions([
       {
         id: device.id,
@@ -921,6 +1000,30 @@ export class StationService {
         },
       ],
     }));
+
+    if (this.quasarClient && this.quasarClient.hasCookie()) {
+      try {
+        const responses = await Promise.all(
+          batchRequests.map((req) => this.quasarClient!.sendDeviceActions(req.id, req.actions))
+        );
+        return {
+          status: "ok",
+          room: targetRoomName,
+          action: options.action,
+          deviceType: filterType,
+          affectedCount: controllable.length,
+          affectedDevices: controllable.map((d) => ({
+            id: d.id,
+            name: d.name,
+            room: (d.room && roomMap.get(d.room)) || "Не указана",
+            type: d.type,
+          })),
+          apiResponse: responses,
+        };
+      } catch {
+        // Fall through to official IoT API
+      }
+    }
 
     const response = await this.getClient().sendDeviceActions(batchRequests);
 
@@ -1185,7 +1288,17 @@ export class StationService {
     room?: string;
   }) {
     const { device: matchedDevice, roomName } = await this.resolveDevice(options.device, options.room);
-    const detailed = await this.getClient().getDevice(matchedDevice.id);
+    let detailed: any;
+    if (this.quasarClient && this.quasarClient.hasCookie()) {
+      try {
+        detailed = await this.quasarClient.getDevice(matchedDevice.id);
+      } catch {
+        // Fall through to official IoT API
+      }
+    }
+    if (!detailed) {
+      detailed = await this.getClient().getDevice(matchedDevice.id);
+    }
 
     const propertiesSummary: Array<{
       name: string;

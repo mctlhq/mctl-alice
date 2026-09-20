@@ -1,4 +1,7 @@
 import http from "node:http";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
@@ -29,6 +32,85 @@ import { OAuthStorage } from "../storage/oauth-storage.js";
 import { OAuthController } from "../auth/oauth-controller.js";
 
 const DEFAULT_CLIENT_ID = "c0ebe342af7d48fbbbfcf2d2eedb8f9e";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const publicDirCandidates = [
+  path.resolve(process.cwd(), "public"),
+  path.resolve(__dirname, "../../public"),
+  path.resolve(__dirname, "../public"),
+];
+const publicDir = publicDirCandidates.find((d) => fs.existsSync(d)) || publicDirCandidates[0];
+
+const STATIC_MIME_TYPES: Record<string, string> = {
+  ".html": "text/html; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".ico": "image/x-icon",
+  ".txt": "text/plain; charset=utf-8",
+};
+
+function serveStaticFile(
+  reqPath: string,
+  res: http.ServerResponse,
+  fallbackContentType = "application/octet-stream"
+): boolean {
+  let decoded = reqPath;
+  try {
+    decoded = decodeURIComponent(reqPath);
+  } catch {
+    res.writeHead(400, { "Content-Type": "text/plain" });
+    res.end("Bad Request");
+    return true;
+  }
+
+  // Prevent directory traversal attacks
+  const safePath = path.normalize(decoded).replace(/^[/\\]+/, "");
+  const filePath = path.resolve(publicDir, safePath);
+
+  if (!filePath.startsWith(publicDir + path.sep) && filePath !== publicDir) {
+    res.writeHead(403, { "Content-Type": "text/plain" });
+    res.end("Forbidden");
+    return true;
+  }
+
+  if (!fs.existsSync(filePath)) {
+    return false;
+  }
+
+  try {
+    const stats = fs.statSync(filePath);
+    if (stats.isDirectory()) {
+      const indexPath = path.join(filePath, "index.html");
+      if (fs.existsSync(indexPath)) {
+        const content = fs.readFileSync(indexPath);
+        res.writeHead(200, {
+          "Content-Type": "text/html; charset=utf-8",
+          "Cache-Control": "public, max-age=300",
+        });
+        res.end(content);
+        return true;
+      }
+      return false;
+    }
+
+    const ext = path.extname(filePath).toLowerCase();
+    const contentType = STATIC_MIME_TYPES[ext] || fallbackContentType;
+    const content = fs.readFileSync(filePath);
+
+    res.writeHead(200, {
+      "Content-Type": contentType,
+      "Cache-Control": "public, max-age=300",
+    });
+    res.end(content);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 function parseRequestBody(req: http.IncomingMessage): Promise<any> {
   return new Promise((resolve, reject) => {
@@ -329,6 +411,25 @@ export function createHttpServer(
     }
 
     console.log(`[HTTP] ${req.method} ${url.pathname}${url.search}`);
+
+    // Static assets
+    if (url.pathname.startsWith("/assets/") && req.method === "GET") {
+      const served = serveStaticFile(url.pathname, res);
+      if (served) return;
+      res.writeHead(404, { "Content-Type": "text/plain" });
+      res.end("Not Found");
+      return;
+    }
+
+    if (
+      (url.pathname === "/favicon.svg" ||
+        url.pathname === "/favicon.ico" ||
+        url.pathname === "/robots.txt") &&
+      req.method === "GET"
+    ) {
+      const served = serveStaticFile(url.pathname, res);
+      if (served) return;
+    }
 
     // OpenAPI 3.1 schema for ChatGPT Actions and external integrators
     if (url.pathname === "/openapi.json" || url.pathname === "/openapi.yaml") {
@@ -1084,34 +1185,51 @@ export function createHttpServer(
       return;
     }
 
-    // Default info
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(
-      JSON.stringify({
-        service: "mctl-alice",
-        description: "Yandex Alice Smart Speaker MCP & REST Server for ChatGPT",
-        version: "1.7.4",
-        endpoints: {
-          openapi: "/openapi.json",
-          sse: "/sse",
-          messages: "/messages",
-          mcp: "/mcp",
-          healthz: "/healthz",
-          oauth_prm: "/.well-known/oauth-protected-resource",
-          oauth_asm: "/.well-known/oauth-authorization-server",
-          auth: "/auth/login",
-          auth_cookie: "/auth/cookie",
-          api: {
-            devices: "GET /api/devices",
-            say: "POST /api/say",
-            command: "POST /api/command",
-            volume: "POST /api/volume",
-            media: "POST /api/media",
-            triggerScenario: "POST /api/scenarios/trigger",
+    // Web Landing Page
+    if (url.pathname === "/" && req.method === "GET") {
+      const accept = req.headers.accept || "";
+      const prefersJson = accept.includes("application/json") && !accept.includes("text/html");
+      if (!prefersJson) {
+        const served = serveStaticFile("index.html", res);
+        if (served) return;
+      }
+    }
+
+    // Default info (JSON) for root / or /api/info
+    if (url.pathname === "/" || url.pathname === "/api/info") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(
+        JSON.stringify({
+          service: "mctl-alice",
+          description: "Yandex Alice Smart Speaker MCP & REST Server for ChatGPT",
+          version: "1.7.4",
+          endpoints: {
+            openapi: "/openapi.json",
+            sse: "/sse",
+            messages: "/messages",
+            mcp: "/mcp",
+            healthz: "/healthz",
+            oauth_prm: "/.well-known/oauth-protected-resource",
+            oauth_asm: "/.well-known/oauth-authorization-server",
+            auth: "/auth/login",
+            auth_cookie: "/auth/cookie",
+            api: {
+              devices: "GET /api/devices",
+              say: "POST /api/say",
+              command: "POST /api/command",
+              volume: "POST /api/volume",
+              media: "POST /api/media",
+              triggerScenario: "POST /api/scenarios/trigger",
+            },
           },
-        },
-      })
-    );
+        })
+      );
+      return;
+    }
+
+    // 404 Not Found for any unmatched route
+    res.writeHead(404, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "not_found", message: "Route not found" }));
   });
 
   server.on("close", () => {

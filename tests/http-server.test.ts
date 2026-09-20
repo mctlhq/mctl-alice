@@ -257,6 +257,54 @@ describe("HTTP Server & ChatGPT REST API", () => {
     controller.abort();
   });
 
+  it("should serve landing page HTML at GET /", async () => {
+    const res = await fetch(`${baseUrl}/`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/html");
+    const text = await res.text();
+    expect(text).toContain("mctl-alice");
+    expect(text).toContain("BETA");
+    expect(text).toContain("alice_send_command");
+    expect(text).toContain("Quasar Cookie");
+  });
+
+  it("should serve JSON info at GET / when Accept is explicitly application/json", async () => {
+    const res = await fetch(`${baseUrl}/`, {
+      headers: { Accept: "application/json" },
+    });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.service).toBe("mctl-alice");
+  });
+
+  it("should serve static CSS assets at /assets/components.css and /assets/tokens.css", async () => {
+    const resCss = await fetch(`${baseUrl}/assets/components.css`);
+    expect(resCss.status).toBe(200);
+    expect(resCss.headers.get("content-type")).toContain("text/css");
+    const cssText = await resCss.text();
+    expect(cssText).toContain("chip-beta");
+
+    const resTokens = await fetch(`${baseUrl}/assets/tokens.css`);
+    expect(resTokens.status).toBe(200);
+    expect(resTokens.headers.get("content-type")).toContain("text/css");
+  });
+
+  it("should serve favicon.svg with correct MIME type", async () => {
+    const res = await fetch(`${baseUrl}/favicon.svg`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("image/svg+xml");
+  });
+
+  it("should return 404 for non-existent assets", async () => {
+    const res = await fetch(`${baseUrl}/assets/non-existent.css`);
+    expect(res.status).toBe(404);
+  });
+
+  it("should block directory traversal on /assets", async () => {
+    const res = await fetch(`${baseUrl}/assets/%2e%2e/%2e%2e/package.json`);
+    expect([403, 404]).toContain(res.status);
+  });
+
   it("should return 404 for unknown session on /messages", async () => {
     const res = await fetch(`${baseUrl}/messages?sessionId=non-existent-session`, {
       method: "POST",

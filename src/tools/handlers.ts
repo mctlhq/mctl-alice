@@ -1,11 +1,53 @@
 import { StationService } from "../services/station-service.js";
 import { YandexApiError } from "../client/yandex-api.js";
 
+export function checkScope(name: string, scope?: string): boolean {
+  if (!scope) return true; // Local or unrestricted mode
+  const granted = new Set(scope.split(/\s+/));
+  if (granted.has("*")) return true;
+
+  switch (name) {
+    case "alice_list_devices":
+    case "alice_get_device_state":
+    case "alice_get_home_summary":
+    case "alice_get_device_history":
+      return granted.has("iot:view") || granted.has("iot:control");
+
+    case "alice_control_device":
+    case "alice_control_devices_batch":
+    case "alice_control_room":
+    case "alice_execute_scenario":
+    case "alice_set_volume":
+    case "alice_playback_control":
+      return granted.has("iot:control");
+
+    case "alice_send_command":
+    case "alice_say_phrase":
+      return granted.has("quasar") || granted.has("iot:control");
+
+    default:
+      return true;
+  }
+}
+
 export async function handleToolCall(
   name: string,
   args: any,
-  stationService: StationService
+  stationService: StationService,
+  scope?: string
 ): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> {
+  if (scope && !checkScope(name, scope)) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Ошибка: недостаточно прав доступа. Для вызова инструмента '${name}' требуются соответствующие разрешения (текущий scope: '${scope}').`,
+        },
+      ],
+      isError: true,
+    };
+  }
+
   try {
     switch (name) {
       case "alice_list_devices": {

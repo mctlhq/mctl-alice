@@ -47,8 +47,8 @@ describe("OAuthController", () => {
   });
 
   describe("RFC 7591: Dynamic Client Registration", () => {
-    it("should register new client and persist in storage", () => {
-      const reg = controller.registerClient({
+    it("should register new client and persist in storage", async () => {
+      const reg = await controller.registerClient({
         client_name: "ChatGPT OpenAI Connector",
         redirect_uris: ["https://chatgpt.com/aip/oauth/callback"],
       });
@@ -65,26 +65,26 @@ describe("OAuthController", () => {
   });
 
   describe("Redirect URI validation", () => {
-    it("should allow ChatGPT, OpenAI, and Claude / Anthropic redirect URLs", () => {
-      expect(controller.isAllowedRedirectUri("https://chatgpt.com/aip/g-xyz/oauth/callback")).toBe(true);
-      expect(controller.isAllowedRedirectUri("https://chat.openai.com/aip/oauth/callback")).toBe(true);
-      expect(controller.isAllowedRedirectUri("https://claude.ai/api/mcp/auth_callback")).toBe(true);
-      expect(controller.isAllowedRedirectUri("https://sub.claude.ai/callback")).toBe(true);
-      expect(controller.isAllowedRedirectUri("https://anthropic.com/oauth/callback")).toBe(true);
-      expect(controller.isAllowedRedirectUri("http://localhost:3000/callback")).toBe(true);
+    it("should allow ChatGPT, OpenAI, and Claude / Anthropic redirect URLs", async () => {
+      expect(await controller.isAllowedRedirectUri("https://chatgpt.com/aip/g-xyz/oauth/callback")).toBe(true);
+      expect(await controller.isAllowedRedirectUri("https://chat.openai.com/aip/oauth/callback")).toBe(true);
+      expect(await controller.isAllowedRedirectUri("https://claude.ai/api/mcp/auth_callback")).toBe(true);
+      expect(await controller.isAllowedRedirectUri("https://sub.claude.ai/callback")).toBe(true);
+      expect(await controller.isAllowedRedirectUri("https://anthropic.com/oauth/callback")).toBe(true);
+      expect(await controller.isAllowedRedirectUri("http://localhost:3000/callback")).toBe(true);
     });
 
-    it("should allow same-origin redirect_uri when client_id is an HTTPS URL", () => {
+    it("should allow same-origin redirect_uri when client_id is an HTTPS URL", async () => {
       expect(
-        controller.isAllowedRedirectUri(
+        await controller.isAllowedRedirectUri(
           "https://custom-mcp.org/auth/callback",
           "https://custom-mcp.org/oauth/metadata.json"
         )
       ).toBe(true);
     });
 
-    it("should disallow arbitrary untrusted domains when not registered", () => {
-      expect(controller.isAllowedRedirectUri("https://evil-attacker.com/oauth/callback")).toBe(false);
+    it("should disallow arbitrary untrusted domains when not registered", async () => {
+      expect(await controller.isAllowedRedirectUri("https://evil-attacker.com/oauth/callback")).toBe(false);
     });
   });
 
@@ -135,7 +135,7 @@ describe("OAuthController", () => {
         expect(pending?.codeChallenge).toBe(challenge);
 
         // Approve authorization
-        const approval = controller.approveAuthorization(res.sessionId);
+        const approval = await controller.approveAuthorization(res.sessionId);
         expect(approval.redirectUrl).toBeDefined();
         const u = new URL(approval.redirectUrl);
         expect(u.origin).toBe("https://chatgpt.com");
@@ -172,7 +172,7 @@ describe("OAuthController", () => {
 
       expect(res.type).toBe("consent");
       if (res.type === "consent") {
-        const denial = controller.denyAuthorization(res.sessionId);
+        const denial = await controller.denyAuthorization(res.sessionId);
         const u = new URL(denial.redirectUrl);
         expect(u.searchParams.get("error")).toBe("access_denied");
         expect(u.searchParams.get("state")).toBe("state_to_deny");
@@ -294,7 +294,7 @@ describe("OAuthController", () => {
       ).rejects.toThrow("PKCE verification failed");
     });
 
-    it("should revoke token when handleRevoke is called", () => {
+    it("should revoke token when handleRevoke is called", async () => {
       const token = "mctl_at_to_be_revoked";
       storage.saveToken({
         accessToken: token,
@@ -307,7 +307,7 @@ describe("OAuthController", () => {
       });
 
       expect(storage.getToken(token)).toBeDefined();
-      controller.handleRevoke(token);
+      await controller.handleRevoke(token);
       expect(storage.getToken(token)).toBeNull();
     });
   });

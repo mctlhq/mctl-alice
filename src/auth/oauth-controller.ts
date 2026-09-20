@@ -32,9 +32,9 @@ export class OAuthController {
    * RFC 9728 Protected Resource Metadata (PRM)
    * Advertises resource and authorization servers
    */
-  getProtectedResourceMetadata() {
+  getProtectedResourceMetadata(resourceUri?: string) {
     return {
-      resource: `${this.baseUrl}/mcp`,
+      resource: resourceUri || `${this.baseUrl}/mcp`,
       authorization_servers: [this.baseUrl],
       scopes_supported: ["iot:view", "iot:control"],
       bearer_methods_supported: ["header"],

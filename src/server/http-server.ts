@@ -122,7 +122,7 @@ export function createMcpServer(service: StationService | (() => StationService)
   const server = new Server(
     {
       name: "mctl-alice",
-      version: "1.7.3",
+      version: "1.7.4",
     },
     {
       capabilities: {
@@ -256,7 +256,7 @@ export function createHttpServer(
         result: {
           protocolVersion: rpcReq.params?.protocolVersion || "2024-11-05",
           capabilities: { tools: {} },
-          serverInfo: { name: "mctl-alice", version: "1.7.3" },
+          serverInfo: { name: "mctl-alice", version: "1.7.4" },
         },
       };
     }
@@ -324,7 +324,7 @@ export function createHttpServer(
     // Health check for Kubernetes probes
     if (url.pathname === "/healthz" || url.pathname === "/readyz") {
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ status: "ok", service: "mctl-alice", version: "1.7.3" }));
+      res.end(JSON.stringify({ status: "ok", service: "mctl-alice", version: "1.7.4" }));
       return;
     }
 
@@ -486,9 +486,10 @@ export function createHttpServer(
       return;
     }
 
-    // Pure Stateless MCP JSON-RPC endpoint (for ChatGPT Connectors, Streamable HTTP & direct JSON-RPC)
+    // Pure Stateless MCP JSON-RPC endpoint (for ChatGPT Connectors, Claude, Streamable HTTP & direct JSON-RPC)
     const isMcpPost =
       (url.pathname === "/mcp" ||
+        url.pathname === "/" ||
         url.pathname === "/sse" ||
         url.pathname === "/mcp/sse") &&
       req.method === "POST";
@@ -1089,7 +1090,7 @@ export function createHttpServer(
       JSON.stringify({
         service: "mctl-alice",
         description: "Yandex Alice Smart Speaker MCP & REST Server for ChatGPT",
-        version: "1.7.3",
+        version: "1.7.4",
         endpoints: {
           openapi: "/openapi.json",
           sse: "/sse",

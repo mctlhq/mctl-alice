@@ -10,6 +10,26 @@ export interface OAuthControllerOptions {
   yandexCallbackUri?: string;
 }
 
+export type AuthorizeResult =
+  | {
+      type: "consent";
+      sessionId: string;
+      clientName: string;
+      clientId: string;
+      redirectUri: string;
+      scope: string;
+      clientState?: string;
+    }
+  | {
+      type: "redirect";
+      redirectUrl: string;
+    }
+  | {
+      error: string;
+      description: string;
+      status: number;
+    };
+
 export class OAuthController {
   private baseUrl: string;
   private yandexClientId: string;
@@ -154,13 +174,23 @@ export class OAuthController {
     const existing = this.storage.getClient(clientId);
     if (existing) return true;
 
-    // Fast-path known clients like Claude to avoid remote network latency
+    // Fast-path known clients like Claude and Codex to avoid remote network latency
     if (clientId === "https://claude.ai/oauth/mcp-oauth-client-metadata") {
       this.storage.saveClient({
         clientId,
         clientSecret: "",
         clientName: "Claude",
         redirectUris: ["https://claude.ai/api/mcp/auth_callback"],
+        createdAt: Date.now(),
+      });
+      return true;
+    }
+    if (clientId === "https://chatgpt.com/oauth/codex/client.json") {
+      this.storage.saveClient({
+        clientId,
+        clientSecret: "",
+        clientName: "Codex",
+        redirectUris: ["http://127.0.0.1/callback", "http://localhost/callback"],
         createdAt: Date.now(),
       });
       return true;
@@ -195,9 +225,23 @@ export class OAuthController {
     return false;
   }
 
+  getClientDisplayName(clientId: string): string {
+    const client = this.storage.getClient(clientId);
+    if (client?.clientName) return client.clientName;
+    if (clientId.includes("codex")) return "Codex";
+    if (clientId.includes("claude")) return "Claude";
+    if (clientId.includes("chatgpt")) return "ChatGPT";
+    if (clientId.startsWith("https://") || clientId.startsWith("http://")) {
+      try {
+        return new URL(clientId).hostname;
+      } catch {}
+    }
+    return clientId;
+  }
+
   /**
-   * Handle /oauth/authorize from ChatGPT / Claude
-   * Returns redirect URL to Yandex OAuth
+   * Handle /oauth/authorize from MCP clients (Codex, Claude, ChatGPT)
+   * Supports consent UI session creation and immediate auto-approval
    */
   async handleAuthorize(params: {
     client_id: string;
@@ -207,7 +251,9 @@ export class OAuthController {
     code_challenge?: string;
     code_challenge_method?: string;
     scope?: string;
-  }): Promise<{ redirectUrl: string } | { error: string; description: string; status: number }> {
+    auto_approve?: boolean;
+    prompt?: string;
+  }): Promise<AuthorizeResult> {
     if (!params.client_id) {
       return { error: "invalid_request", description: "client_id is required", status: 400 };
     }
@@ -220,33 +266,98 @@ export class OAuthController {
       return { error: "invalid_request", description: "redirect_uri is invalid or not allowed", status: 400 };
     }
 
-    const state = crypto.randomUUID();
+    if (params.response_type && params.response_type !== "code") {
+      return { error: "unsupported_response_type", description: "Only response_type=code is supported", status: 400 };
+    }
+
+    const sessionId = crypto.randomUUID();
     const clientState = params.state || "";
     const scope = params.scope || "iot:view iot:control";
 
-    const yandexCallbackUri = this.yandexCallbackUri;
-
     this.storage.savePendingAuth({
-      state,
+      state: sessionId,
       clientId: params.client_id,
       redirectUri: params.redirect_uri,
       clientState,
       codeChallenge: params.code_challenge,
       codeChallengeMethod: params.code_challenge_method || "S256",
       scope,
-      yandexCallbackUri,
+      yandexCallbackUri: this.yandexCallbackUri,
       createdAt: Date.now(),
       expiresAt: Date.now() + 10 * 60 * 1000, // 10 minutes
     });
 
-    const yandexAuthUrl =
-      `https://oauth.yandex.ru/authorize?response_type=code` +
-      `&client_id=${encodeURIComponent(this.yandexClientId)}` +
-      `&redirect_uri=${encodeURIComponent(yandexCallbackUri)}` +
-      `&state=${encodeURIComponent(state)}` +
-      `&force_confirm=no`;
+    if (params.auto_approve || params.prompt === "none" || process.env.OAUTH_AUTO_APPROVE === "true") {
+      const approval = this.approveAuthorization(sessionId);
+      return { type: "redirect", redirectUrl: approval.redirectUrl };
+    }
 
-    return { redirectUrl: yandexAuthUrl };
+    const clientName = this.getClientDisplayName(params.client_id);
+    return {
+      type: "consent",
+      sessionId,
+      clientName,
+      clientId: params.client_id,
+      redirectUri: params.redirect_uri,
+      scope,
+      clientState: params.state,
+    };
+  }
+
+  /**
+   * User approves authorization on the consent screen
+   */
+  approveAuthorization(sessionId: string): { redirectUrl: string } {
+    const pending = this.storage.getPendingAuth(sessionId);
+    if (!pending) {
+      throw new Error("Authorization session expired or was already used. Please try again.");
+    }
+    this.storage.deletePendingAuth(sessionId);
+
+    const code = `code_${crypto.randomUUID().replace(/-/g, "")}`;
+    const expiresAt = Date.now() + 5 * 60 * 1000; // 5 minutes TTL
+
+    this.storage.saveAuthCode({
+      code,
+      clientId: pending.clientId,
+      redirectUri: pending.redirectUri,
+      codeChallenge: pending.codeChallenge,
+      codeChallengeMethod: pending.codeChallengeMethod,
+      yandexAccessToken: "",
+      scope: pending.scope,
+      createdAt: Date.now(),
+      expiresAt,
+    });
+
+    const redirectUrl = new URL(pending.redirectUri);
+    redirectUrl.searchParams.set("code", code);
+    if (pending.clientState) {
+      redirectUrl.searchParams.set("state", pending.clientState);
+    }
+    redirectUrl.searchParams.set("iss", this.baseUrl);
+
+    return { redirectUrl: redirectUrl.toString() };
+  }
+
+  /**
+   * User denies authorization on the consent screen
+   */
+  denyAuthorization(sessionId: string): { redirectUrl: string } {
+    const pending = this.storage.getPendingAuth(sessionId);
+    if (!pending) {
+      throw new Error("Authorization session expired or was already used. Please try again.");
+    }
+    this.storage.deletePendingAuth(sessionId);
+
+    const redirectUrl = new URL(pending.redirectUri);
+    redirectUrl.searchParams.set("error", "access_denied");
+    redirectUrl.searchParams.set("error_description", "User denied access");
+    if (pending.clientState) {
+      redirectUrl.searchParams.set("state", pending.clientState);
+    }
+    redirectUrl.searchParams.set("iss", this.baseUrl);
+
+    return { redirectUrl: redirectUrl.toString() };
   }
 
   /**

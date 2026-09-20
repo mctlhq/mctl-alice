@@ -187,6 +187,45 @@ describe("HTTP Server & ChatGPT REST API", () => {
     expect(toolsBody).toContain("alice_send_command");
   });
 
+  it("should handle pure stateless tools/list without prior session or initialize", async () => {
+    const res = await fetch(`${baseUrl}/mcp`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: "stateless-1",
+        method: "tools/list",
+      }),
+    });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.id).toBe("stateless-1");
+    expect(data.result.tools).toBeDefined();
+    expect(data.result.tools.some((t: any) => t.name === "alice_list_devices")).toBe(true);
+  });
+
+  it("should handle pure stateless requests on /sse endpoint with POST", async () => {
+    const res = await fetch(`${baseUrl}/sse`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: "stateless-sse",
+        method: "ping",
+      }),
+    });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.id).toBe("stateless-sse");
+    expect(data.result).toEqual({});
+  });
+
   it("should handle SSE connection on /mcp as well", async () => {
     const controller = new AbortController();
     const res = await fetch(`${baseUrl}/mcp`, {

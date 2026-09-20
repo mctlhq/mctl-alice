@@ -122,15 +122,29 @@ export function createHttpServer(
   let quasarClient = new QuasarClient();
   let stationService = new StationService(undefined, quasarClient);
 
-  // Streamable HTTP transport for ChatGPT Connectors & modern MCP clients
-  const streamableTransport = new StreamableHTTPServerTransport({
-    sessionIdGenerator: () => randomUUID(),
-  });
-  const streamableMcp = createMcpServer(() => stationService);
-  streamableMcp.connect(streamableTransport);
-
   // Keep track of active legacy SSE transports
   const sseTransports = new Map<string, SSEServerTransport>();
+
+  // Keep track of active Streamable HTTP sessions
+  const streamableSessions = new Map<
+    string,
+    { transport: StreamableHTTPServerTransport; server: Server }
+  >();
+
+  function getOrCreateStreamableSession(sessionId?: string) {
+    if (sessionId && streamableSessions.has(sessionId)) {
+      return streamableSessions.get(sessionId)!;
+    }
+    const id = sessionId || randomUUID();
+    const server = createMcpServer(() => stationService);
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: () => id,
+    });
+    server.connect(transport);
+    const session = { transport, server };
+    streamableSessions.set(id, session);
+    return session;
+  }
 
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url || "/", baseUrl);
@@ -170,7 +184,9 @@ export function createHttpServer(
 
     if (isStreamableHttp && (acceptsStreamable || req.headers["mcp-session-id"])) {
       try {
-        await streamableTransport.handleRequest(req, res);
+        const sessionIdHeader = req.headers["mcp-session-id"] as string | undefined;
+        const session = getOrCreateStreamableSession(sessionIdHeader);
+        await session.transport.handleRequest(req, res);
       } catch (err: any) {
         if (!res.headersSent) {
           res.writeHead(500, { "Content-Type": "application/json" });

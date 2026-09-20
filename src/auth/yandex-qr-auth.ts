@@ -3,7 +3,8 @@ import QRCode from "qrcode";
 export interface QrAuthSession {
   sessionId: string;
   trackId: string;
-  csrfToken: string;
+  pageCsrf: string;
+  authCsrfToken: string;
   cookies: string;
   link: string;
   createdAt: number;
@@ -174,10 +175,12 @@ export async function initQrAuth(): Promise<{ sessionId: string; link: string; q
   });
 
   const sessionId = trackId;
+  const authCsrfToken: string = data2.csrf_token || pageCsrf;
   sessions.set(sessionId, {
     sessionId,
     trackId,
-    csrfToken: pageCsrf,
+    pageCsrf,
+    authCsrfToken,
     cookies: jar.toString(),
     link,
     createdAt: Date.now(),
@@ -210,7 +213,7 @@ export async function checkQrAuthStatus(sessionId: string): Promise<{
       {
         method: "POST",
         headers: {
-          "X-CSRF-Token": session.csrfToken,
+          "X-CSRF-Token": session.pageCsrf,
           Cookie: jar.toString(),
           Origin: "https://passport.yandex.ru",
           Referer: "https://passport.yandex.ru/pwl-yandex",
@@ -219,8 +222,7 @@ export async function checkQrAuthStatus(sessionId: string): Promise<{
         },
         body: JSON.stringify({
           track_id: session.trackId,
-          magic_track_id: session.trackId,
-          csrf_token: session.csrfToken,
+          csrf_token: session.authCsrfToken,
         }),
       }
     );
@@ -231,6 +233,13 @@ export async function checkQrAuthStatus(sessionId: string): Promise<{
 
     jar.addFromResponse(rStatus);
     const dataStatus = (await rStatus.json()) as any;
+    if (dataStatus.errors && dataStatus.errors.length > 0) {
+      const errMsg = Array.isArray(dataStatus.errors)
+        ? dataStatus.errors.join(", ")
+        : String(dataStatus.errors);
+      return { status: "error", message: errMsg };
+    }
+
     if (dataStatus.state !== "otp_auth_finished") {
       // Update accumulated cookies in session
       session.cookies = jar.toString();
@@ -245,7 +254,7 @@ export async function checkQrAuthStatus(sessionId: string): Promise<{
       {
         method: "POST",
         headers: {
-          "X-CSRF-Token": session.csrfToken,
+          "X-CSRF-Token": session.pageCsrf,
           Cookie: jar.toString(),
           Origin: "https://passport.yandex.ru",
           Referer: "https://passport.yandex.ru/pwl-yandex",

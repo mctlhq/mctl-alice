@@ -117,4 +117,33 @@ describe("Yandex QR Auth", () => {
     const status = await checkQrAuthStatus("non_existent_session");
     expect(status.status).toBe("expired");
   });
+
+  it("should return error when Yandex returns errors in status check", async () => {
+    const originalFetch = globalThis.fetch;
+    const mock = createMockFetch();
+    globalThis.fetch = vi.fn().mockImplementation(async (url: any, opts: any) => {
+      const urlStr = String(url);
+      if (urlStr.includes("/api/passport/auth/magic/code/status")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            error: "uN Exception: status: error",
+            errors: ["csrf_token.invalid"],
+          }),
+          headers: { getSetCookie: () => [] },
+        };
+      }
+      return mock(url, opts);
+    }) as any;
+
+    try {
+      const res = await initQrAuth();
+      const status = await checkQrAuthStatus(res.sessionId);
+      expect(status.status).toBe("error");
+      expect(status.message).toContain("csrf_token.invalid");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });

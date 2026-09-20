@@ -122,7 +122,7 @@ export function createMcpServer(service: StationService | (() => StationService)
   const server = new Server(
     {
       name: "mctl-alice",
-      version: "1.7.0",
+      version: "1.7.1",
     },
     {
       capabilities: {
@@ -154,6 +154,7 @@ export function createHttpServer(
     storage?: TelemetryStorage;
     enableSampler?: boolean;
     oauthStorage?: OAuthStorage;
+    yandexCallbackUri?: string;
   } = {}
 ): http.Server {
   const baseUrl = options.publicBaseUrl || process.env.PUBLIC_BASE_URL || `http://localhost:${port}`;
@@ -168,6 +169,10 @@ export function createHttpServer(
     getTokenFromKeychain("mctl-alice-client-secret") ||
     undefined;
   const redirectUri = `${baseUrl}/auth/callback`;
+  const yandexCallbackUri =
+    options.yandexCallbackUri ||
+    process.env.YANDEX_CALLBACK_URL ||
+    redirectUri;
 
   const oauthStorage = options.oauthStorage || new OAuthStorage();
   const oauthController = new OAuthController({
@@ -175,6 +180,7 @@ export function createHttpServer(
     yandexClientId: clientId,
     yandexClientSecret: clientSecret,
     storage: oauthStorage,
+    yandexCallbackUri,
   });
 
   let quasarClient = new QuasarClient();
@@ -250,7 +256,7 @@ export function createHttpServer(
         result: {
           protocolVersion: rpcReq.params?.protocolVersion || "2024-11-05",
           capabilities: { tools: {} },
-          serverInfo: { name: "mctl-alice", version: "1.7.0" },
+          serverInfo: { name: "mctl-alice", version: "1.7.1" },
         },
       };
     }
@@ -318,7 +324,7 @@ export function createHttpServer(
     // Health check for Kubernetes probes
     if (url.pathname === "/healthz" || url.pathname === "/readyz") {
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ status: "ok", service: "mctl-alice", version: "1.7.0" }));
+      res.end(JSON.stringify({ status: "ok", service: "mctl-alice", version: "1.7.1" }));
       return;
     }
 
@@ -714,6 +720,33 @@ export function createHttpServer(
 
     // Auth callback HTML / Code exchange
     if (url.pathname === "/auth/callback") {
+      const state = url.searchParams.get("state");
+      if (state && oauthStorage.getPendingAuth(state)) {
+        try {
+          const result = await oauthController.handleYandexCallback({
+            code: url.searchParams.get("code") || undefined,
+            state,
+            error: url.searchParams.get("error") || undefined,
+            error_description: url.searchParams.get("error_description") || undefined,
+          });
+          res.writeHead(302, { Location: result.redirectUrl });
+          res.end();
+          return;
+        } catch (err: any) {
+          res.writeHead(500, { "Content-Type": "text/html; charset=utf-8" });
+          res.end(`<!DOCTYPE html>
+<html lang="ru">
+<head><meta charset="utf-8"><title>OAuth Error</title></head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, sans-serif; padding: 40px; max-width: 600px; margin: auto;">
+  <h2 style="color: #0f172a;">Ошибка авторизации Яндекс</h2>
+  <p style="color: #dc2626;">${err.message}</p>
+  <p><a href="${baseUrl}/auth/login" style="color: #2563eb;">Попробовать снова</a></p>
+</body>
+</html>`);
+          return;
+        }
+      }
+
       const code = url.searchParams.get("code");
       if (code && clientSecret) {
         try {
@@ -1028,7 +1061,7 @@ export function createHttpServer(
       JSON.stringify({
         service: "mctl-alice",
         description: "Yandex Alice Smart Speaker MCP & REST Server for ChatGPT",
-        version: "1.7.0",
+        version: "1.7.1",
         endpoints: {
           openapi: "/openapi.json",
           sse: "/sse",

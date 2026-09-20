@@ -44,6 +44,7 @@ describe("OAuthStorage", () => {
         codeChallenge: "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
         codeChallengeMethod: "S256",
         scope: "iot:view iot:control",
+        yandexCallbackUri: "https://alice.mctl.ai/auth/callback",
         createdAt: Date.now(),
         expiresAt: Date.now() + 600000,
       });
@@ -53,6 +54,7 @@ describe("OAuthStorage", () => {
       expect(pending?.clientId).toBe("client_chatgpt_123");
       expect(pending?.clientState).toBe("chatgpt_orig_state");
       expect(pending?.codeChallengeMethod).toBe("S256");
+      expect(pending?.yandexCallbackUri).toBe("https://alice.mctl.ai/auth/callback");
 
       storage.deletePendingAuth(state);
       const afterDelete = storage.getPendingAuth(state);

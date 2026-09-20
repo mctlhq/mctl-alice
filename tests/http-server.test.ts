@@ -326,4 +326,28 @@ describe("HTTP Server & ChatGPT REST API", () => {
     const data = await res.json();
     expect(data.status).toBe("ok");
   });
+
+  it("should handle ChatGPT OAuth session on /auth/callback", async () => {
+    // 1. Initiate authorization to create pending session
+    const authRes = await fetch(
+      `${baseUrl}/oauth/authorize?client_id=test_client&redirect_uri=https://chatgpt.com/callback&response_type=code&state=client_state_val`,
+      { redirect: "manual" }
+    );
+    expect(authRes.status).toBe(302);
+    const yandexUrl = new URL(authRes.headers.get("location")!);
+    const sessionState = yandexUrl.searchParams.get("state")!;
+    expect(sessionState).toBeDefined();
+
+    // 2. Simulate Yandex callback to /auth/callback (e.g. user denied or returned error)
+    const callbackRes = await fetch(
+      `${baseUrl}/auth/callback?state=${sessionState}&error=access_denied&error_description=User+denied`,
+      { redirect: "manual" }
+    );
+    expect(callbackRes.status).toBe(302);
+    const clientRedirect = new URL(callbackRes.headers.get("location")!);
+    expect(clientRedirect.origin).toBe("https://chatgpt.com");
+    expect(clientRedirect.pathname).toBe("/callback");
+    expect(clientRedirect.searchParams.get("error")).toBe("access_denied");
+    expect(clientRedirect.searchParams.get("state")).toBe("client_state_val");
+  });
 });

@@ -116,7 +116,7 @@ describe("OAuthController", () => {
         expect(u.pathname).toBe("/authorize");
         expect(u.searchParams.get("client_id")).toBe(yandexClientId);
         expect(u.searchParams.get("response_type")).toBe("code");
-        expect(u.searchParams.get("redirect_uri")).toBe("https://alice.mctl.ai/oauth/yandex/callback");
+        expect(u.searchParams.get("redirect_uri")).toBe("https://alice.mctl.ai/auth/callback");
         const internalState = u.searchParams.get("state");
         expect(internalState).toBeDefined();
 
@@ -125,6 +125,28 @@ describe("OAuthController", () => {
         expect(pending).toBeDefined();
         expect(pending?.clientId).toBe("chatgpt_client_1");
         expect(pending?.codeChallenge).toBe(challenge);
+      }
+    });
+
+    it("should allow overriding yandexCallbackUri", () => {
+      const customController = new OAuthController({
+        baseUrl,
+        yandexClientId,
+        yandexClientSecret,
+        storage,
+        yandexCallbackUri: "https://alice.mctl.ai/oauth/yandex/callback",
+      });
+
+      const res = customController.handleAuthorize({
+        client_id: "chatgpt_client_1",
+        redirect_uri: "https://chatgpt.com/aip/oauth/callback",
+        response_type: "code",
+      });
+
+      expect("redirectUrl" in res).toBe(true);
+      if ("redirectUrl" in res) {
+        const u = new URL(res.redirectUrl);
+        expect(u.searchParams.get("redirect_uri")).toBe("https://alice.mctl.ai/oauth/yandex/callback");
       }
     });
 

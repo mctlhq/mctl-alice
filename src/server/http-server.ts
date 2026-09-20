@@ -2,7 +2,6 @@ import http from "node:http";
 import { randomUUID } from "node:crypto";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
-import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
@@ -80,7 +79,7 @@ export function createMcpServer(service: StationService | (() => StationService)
   const server = new Server(
     {
       name: "mctl-alice",
-      version: "1.2.1",
+      version: "1.3.0",
     },
     {
       capabilities: {
@@ -125,25 +124,111 @@ export function createHttpServer(
   // Keep track of active legacy SSE transports
   const sseTransports = new Map<string, SSEServerTransport>();
 
-  // Keep track of active Streamable HTTP sessions
-  const streamableSessions = new Map<
-    string,
-    { transport: StreamableHTTPServerTransport; server: Server }
-  >();
+  // Helper for pure stateless MCP response (supports JSON and SSE format)
+  function sendMcpResponse(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    data: any,
+    statusCode = 200
+  ) {
+    const sessionId = (req.headers["mcp-session-id"] as string) || randomUUID();
+    res.setHeader("mcp-session-id", sessionId);
 
-  function getOrCreateStreamableSession(sessionId?: string) {
-    if (sessionId && streamableSessions.has(sessionId)) {
-      return streamableSessions.get(sessionId)!;
+    if (statusCode === 202 || data === undefined || data === null) {
+      res.writeHead(202);
+      res.end();
+      return;
     }
-    const id = sessionId || randomUUID();
-    const server = createMcpServer(() => stationService);
-    const transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: () => id,
-    });
-    server.connect(transport);
-    const session = { transport, server };
-    streamableSessions.set(id, session);
-    return session;
+
+    const acceptsSse = req.headers.accept?.includes("text/event-stream");
+    if (acceptsSse) {
+      res.writeHead(statusCode, {
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+      });
+      res.write(`event: message\ndata: ${JSON.stringify(data)}\n\n`);
+      res.end();
+    } else {
+      res.writeHead(statusCode, {
+        "Content-Type": "application/json; charset=utf-8",
+      });
+      res.end(JSON.stringify(data));
+    }
+  }
+
+  async function handleSingleRpc(rpcReq: any, req: http.IncomingMessage): Promise<any | null> {
+    if (!rpcReq || typeof rpcReq !== "object") {
+      return {
+        jsonrpc: "2.0",
+        id: null,
+        error: { code: -32600, message: "Invalid Request" },
+      };
+    }
+
+    const id = rpcReq.id;
+    const method = rpcReq.method;
+
+    // Notifications have no id (e.g. notifications/initialized)
+    if (id === undefined || id === null) {
+      return null;
+    }
+
+    if (method === "initialize") {
+      return {
+        jsonrpc: "2.0",
+        id,
+        result: {
+          protocolVersion: rpcReq.params?.protocolVersion || "2024-11-05",
+          capabilities: { tools: {} },
+          serverInfo: { name: "mctl-alice", version: "1.3.0" },
+        },
+      };
+    }
+
+    if (method === "ping") {
+      return {
+        jsonrpc: "2.0",
+        id,
+        result: {},
+      };
+    }
+
+    if (method === "tools/list") {
+      return {
+        jsonrpc: "2.0",
+        id,
+        result: { tools: ALICE_TOOLS },
+      };
+    }
+
+    if (method === "tools/call") {
+      const { name, arguments: args } = rpcReq.params || {};
+      try {
+        const svc = getServiceForRequest(req, stationService, quasarClient);
+        const result = await handleToolCall(name, args, svc);
+        return {
+          jsonrpc: "2.0",
+          id,
+          result,
+        };
+      } catch (err: any) {
+        return {
+          jsonrpc: "2.0",
+          id,
+          error: {
+            code: -32000,
+            message: err.message || "Tool execution failed",
+          },
+        };
+      }
+    }
+
+    return {
+      jsonrpc: "2.0",
+      id,
+      error: { code: -32601, message: `Method not found: ${method}` },
+    };
   }
 
   const server = http.createServer(async (req, res) => {
@@ -164,7 +249,7 @@ export function createHttpServer(
     // Health check for Kubernetes probes
     if (url.pathname === "/healthz" || url.pathname === "/readyz") {
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ status: "ok", service: "mctl-alice", version: "1.0.0" }));
+      res.end(JSON.stringify({ status: "ok", service: "mctl-alice", version: "1.3.0" }));
       return;
     }
 
@@ -175,24 +260,56 @@ export function createHttpServer(
       return;
     }
 
-    // Modern MCP Streamable HTTP endpoint (for ChatGPT Connectors & Streamable HTTP clients)
-    const isStreamableHttp =
-      url.pathname === "/mcp" || url.pathname === "/sse" || url.pathname === "/mcp/sse";
-    const acceptsStreamable =
-      req.headers.accept?.includes("application/json") &&
-      req.headers.accept?.includes("text/event-stream");
+    // Pure Stateless MCP JSON-RPC endpoint (for ChatGPT Connectors, Streamable HTTP & direct JSON-RPC)
+    const isMcpPost =
+      (url.pathname === "/mcp" ||
+        url.pathname === "/sse" ||
+        url.pathname === "/mcp/sse") &&
+      req.method === "POST";
 
-    if (isStreamableHttp && (acceptsStreamable || req.headers["mcp-session-id"])) {
-      try {
-        const sessionIdHeader = req.headers["mcp-session-id"] as string | undefined;
-        const session = getOrCreateStreamableSession(sessionIdHeader);
-        await session.transport.handleRequest(req, res);
-      } catch (err: any) {
-        if (!res.headersSent) {
-          res.writeHead(500, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: err.message }));
+    if (isMcpPost) {
+      let body = "";
+      req.on("data", (chunk) => (body += chunk));
+      req.on("end", async () => {
+        try {
+          if (!body.trim()) {
+            sendMcpResponse(req, res, null, 204);
+            return;
+          }
+          const rpcData = JSON.parse(body);
+          if (Array.isArray(rpcData)) {
+            const results = [];
+            for (const item of rpcData) {
+              const resItem = await handleSingleRpc(item, req);
+              if (resItem !== null) {
+                results.push(resItem);
+              }
+            }
+            if (results.length === 0) {
+              sendMcpResponse(req, res, null, 202);
+            } else {
+              sendMcpResponse(req, res, results);
+            }
+          } else {
+            const result = await handleSingleRpc(rpcData, req);
+            if (result === null) {
+              sendMcpResponse(req, res, null, 202);
+            } else {
+              sendMcpResponse(req, res, result);
+            }
+          }
+        } catch (err: any) {
+          sendMcpResponse(
+            req,
+            res,
+            {
+              jsonrpc: "2.0",
+              error: { code: -32700, message: "Parse error: " + err.message },
+            },
+            400
+          );
         }
-      }
+      });
       return;
     }
 
@@ -707,86 +824,13 @@ export function createHttpServer(
       return;
     }
 
-    // Direct JSON-RPC endpoint at POST /mcp
-    if (url.pathname === "/mcp" && req.method === "POST") {
-      let body = "";
-      req.on("data", (chunk) => (body += chunk));
-      req.on("end", async () => {
-        try {
-          const rpcReq = JSON.parse(body);
-          const id = rpcReq.id;
-
-          if (rpcReq.method === "initialize") {
-            res.writeHead(200, { "Content-Type": "application/json" });
-            res.end(
-              JSON.stringify({
-                jsonrpc: "2.0",
-                id,
-                result: {
-                  protocolVersion: "2024-11-05",
-                  capabilities: { tools: {} },
-                  serverInfo: { name: "mctl-alice", version: "1.0.0" },
-                },
-              })
-            );
-            return;
-          }
-
-          if (rpcReq.method === "tools/list") {
-            res.writeHead(200, { "Content-Type": "application/json" });
-            res.end(
-              JSON.stringify({
-                jsonrpc: "2.0",
-                id,
-                result: { tools: ALICE_TOOLS },
-              })
-            );
-            return;
-          }
-
-          if (rpcReq.method === "tools/call") {
-            const { name, arguments: args } = rpcReq.params || {};
-            const svc = getServiceForRequest(req, stationService, quasarClient);
-            const result = await handleToolCall(name, args, svc);
-            res.writeHead(200, { "Content-Type": "application/json" });
-            res.end(
-              JSON.stringify({
-                jsonrpc: "2.0",
-                id,
-                result,
-              })
-            );
-            return;
-          }
-
-          res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(
-            JSON.stringify({
-              jsonrpc: "2.0",
-              id,
-              error: { code: -32601, message: `Method not found: ${rpcReq.method}` },
-            })
-          );
-        } catch (err: any) {
-          res.writeHead(400, { "Content-Type": "application/json" });
-          res.end(
-            JSON.stringify({
-              jsonrpc: "2.0",
-              error: { code: -32700, message: "Parse error" },
-            })
-          );
-        }
-      });
-      return;
-    }
-
     // Default info
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(
       JSON.stringify({
         service: "mctl-alice",
         description: "Yandex Alice Smart Speaker MCP & REST Server for ChatGPT",
-        version: "1.0.0",
+        version: "1.3.0",
         endpoints: {
           openapi: "/openapi.json",
           sse: "/sse",

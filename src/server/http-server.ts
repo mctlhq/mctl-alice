@@ -89,7 +89,7 @@ function serveStaticFile(
         const content = fs.readFileSync(indexPath);
         res.writeHead(200, {
           "Content-Type": "text/html; charset=utf-8",
-          "Cache-Control": "public, max-age=300",
+          "Cache-Control": "no-cache",
         });
         res.end(content);
         return true;
@@ -103,7 +103,7 @@ function serveStaticFile(
 
     res.writeHead(200, {
       "Content-Type": contentType,
-      "Cache-Control": "public, max-age=300",
+      "Cache-Control": "public, max-age=60, stale-while-revalidate=300",
     });
     res.end(content);
     return true;
@@ -183,8 +183,8 @@ try {
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap">
-<link rel="stylesheet" href="/assets/tokens.css">
-<link rel="stylesheet" href="/assets/components.css">
+<link rel="stylesheet" href="/assets/tokens.css?v=1.8.2">
+<link rel="stylesheet" href="/assets/components.css?v=1.8.2">
 </head>
 <body>
 <header class="wrap topbar">
@@ -228,7 +228,7 @@ try {
     </span>
   </div>
 </footer>
-<script src="/assets/site.js"></script>
+<script src="/assets/site.js?v=1.8.2"></script>
 ${scriptHtml}
 </body>
 </html>`;

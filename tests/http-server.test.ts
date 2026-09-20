@@ -265,9 +265,11 @@ describe("HTTP Server & ChatGPT REST API", () => {
     expect(text).toContain("mctl-alice");
     expect(text).toContain("BETA");
     expect(text).toContain("alice_send_command");
-    expect(text).toContain("Quasar Cookie");
-    expect(text).toContain('id="lang-toggle"');
+    expect(text).toContain('id="lang-switcher"');
+    expect(text).toContain('data-lang="ru"');
+    expect(text).toContain('data-lang="en"');
     expect(text).toContain("data-i18n=");
+    expect(text).toContain("/assets/site.js?v=1.8.2");
     // Should NOT contain openapi link in navigation or hero GitHub CTA button
     expect(text).not.toContain('<a href="/openapi.json">OpenAPI</a>');
     expect(text).not.toContain('>Репозиторий на GitHub</a>');

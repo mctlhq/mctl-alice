@@ -28,9 +28,13 @@ import {
 import { getOpenApiSpec } from "./openapi.js";
 import { TelemetryStorage } from "../storage/telemetry-storage.js";
 import { TelemetrySampler } from "../services/telemetry-sampler.js";
-import { OAuthStorage } from "../storage/oauth-storage.js";
+import { IStorage, createStorage, OAuthStorage } from "../storage/index.js";
 import { OAuthController } from "../auth/oauth-controller.js";
 import { initQrAuth, checkQrAuthStatus } from "../auth/yandex-qr-auth.js";
+import { fetchYandexProfile } from "../auth/oauth-helper.js";
+import { renderAboutPage, renderPrivacyPage, renderTermsPage, renderSecurityPage } from "./pages.js";
+import { renderAccountPage } from "./account-page.js";
+import { UserRecord } from "../storage/storage-interface.js";
 
 const DEFAULT_CLIENT_ID = "c0ebe342af7d48fbbbfcf2d2eedb8f9e";
 
@@ -183,11 +187,8 @@ try {
 </script>
 <title>${escapeHtml(title)}</title>
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap">
-<link rel="stylesheet" href="/assets/tokens.css?v=1.9.4">
-<link rel="stylesheet" href="/assets/components.css?v=1.9.4">
+<link rel="stylesheet" href="/assets/tokens.css?v=2.0.0">
+<link rel="stylesheet" href="/assets/components.css?v=2.0.0">
 </head>
 <body>
 <header class="wrap topbar">
@@ -201,6 +202,7 @@ try {
   </a>
   <nav class="topbar-links">
     <a href="/" data-i18n="nav_home">Главная</a>
+    <a href="/account">Аккаунт</a>
     <a href="/auth/login" data-i18n="nav_login">Вход (OAuth)</a>
     <a href="/auth/cookie" data-i18n="nav_cookie">Quasar Cookie</a>
     <a href="https://github.com/mctlhq/mctl-alice" target="_blank" rel="noopener" data-i18n="nav_github">GitHub</a>
@@ -229,16 +231,52 @@ try {
     <span data-i18n-html="footer_part">mctl-alice — часть платформы <a href="https://mctl.ai" target="_blank" rel="noopener">mctl</a>.</span>
     <span>
       <a href="/" data-i18n="nav_home">Главная</a> ·
-      <a href="/auth/login" data-i18n="nav_login">Вход (OAuth)</a> ·
-      <a href="/auth/cookie" data-i18n="nav_cookie">Quasar Cookie</a> ·
+      <a href="/account">Личный кабинет</a> ·
+      <a href="/about">О сервисе</a> ·
+      <a href="/privacy">Конфиденциальность</a> ·
+      <a href="/terms">Условия</a> ·
+      <a href="/security">Безопасность</a> ·
       <a href="https://github.com/mctlhq/mctl-alice" target="_blank" rel="noopener" data-i18n="nav_github">GitHub</a>
     </span>
   </div>
 </footer>
-<script src="/assets/site.js?v=1.9.4"></script>
+<script src="/assets/site.js?v=2.0.0"></script>
 ${scriptHtml}
 </body>
 </html>`;
+}
+
+function setSecurityHeaders(res: http.ServerResponse): void {
+  res.setHeader(
+    "Content-Security-Policy",
+    "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+  );
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+}
+
+function parseCookies(req: http.IncomingMessage): Record<string, string> {
+  const list: Record<string, string> = {};
+  const rc = req.headers.cookie;
+  if (!rc) return list;
+  rc.split(";").forEach((cookie) => {
+    const parts = cookie.split("=");
+    const key = parts.shift()?.trim();
+    if (key) {
+      list[key] = decodeURIComponent(parts.join("=").trim());
+    }
+  });
+  return list;
+}
+
+async function getSessionUser(req: http.IncomingMessage, storage: IStorage): Promise<UserRecord | null> {
+  const cookies = parseCookies(req);
+  const sessionId = cookies["mctl_session"];
+  if (!sessionId) return null;
+  const session = await storage.getWebSession(sessionId);
+  if (!session?.userId) return null;
+  return storage.getUser(session.userId);
 }
 
 
@@ -247,6 +285,8 @@ export interface AuthResult {
   service?: StationService;
   error?: "invalid_token" | "invalid_request";
   errorMessage?: string;
+  userId?: string;
+  scope?: string;
 }
 
 export function buildWwwAuthenticate(baseUrl: string, error?: "invalid_token" | "invalid_request"): string {
@@ -262,7 +302,7 @@ export function authenticateRequest(
   req: http.IncomingMessage,
   defaultService: StationService,
   defaultQuasar?: QuasarClient,
-  oauthStorage?: OAuthStorage,
+  oauthStorage?: IStorage,
   telemetryStorage?: TelemetryStorage,
   authRequired = false
 ): AuthResult {
@@ -285,29 +325,55 @@ export function authenticateRequest(
 
     // 1. Check if rawToken is an issued OAuth Bearer token in oauthStorage
     if (oauthStorage) {
-      const tokenRecord = oauthStorage.getToken(rawToken);
+      const tokenRecord = oauthStorage.getToken(rawToken) as any;
       if (tokenRecord) {
         if (tokenRecord.expiresAt && tokenRecord.expiresAt < Date.now()) {
           return { authenticated: false, error: "invalid_token", errorMessage: "The access token has expired" };
         }
         try {
           let client: YandexIoTClient | null = null;
-          if (tokenRecord.yandexAccessToken) {
+          let userQuasar: QuasarClient | undefined = undefined;
+
+          if (tokenRecord.userId) {
+            const creds = oauthStorage.getUserCredentials(tokenRecord.userId) as any;
+            if (creds?.yandexAccessToken) {
+              client = new YandexIoTClient(creds.yandexAccessToken, {
+                useKeychain: false,
+                persistEnv: false,
+                refreshToken: creds.yandexRefreshToken,
+              });
+            }
+            if (creds?.quasarCookie) {
+              userQuasar = new QuasarClient({
+                cookie: creds.quasarCookie,
+                useKeychain: false,
+                persistEnv: false,
+                userId: tokenRecord.userId,
+              });
+            }
+          }
+
+          if (!client && tokenRecord.yandexAccessToken) {
             client = new YandexIoTClient(tokenRecord.yandexAccessToken, {
               useKeychain: false,
               persistEnv: false,
               refreshToken: tokenRecord.yandexRefreshToken,
             });
-          } else {
+          }
+
+          if (!client && !authRequired) {
             try {
               client = new YandexIoTClient(undefined, { useKeychain: false, persistEnv: false });
             } catch {
               client = null;
             }
           }
+
           return {
             authenticated: true,
-            service: new StationService(client || undefined, customQuasar, telemetryStorage),
+            service: new StationService(client || undefined, userQuasar || customQuasar, telemetryStorage),
+            userId: tokenRecord.userId,
+            scope: tokenRecord.scope,
           };
         } catch (err: any) {
           return { authenticated: false, error: "invalid_token", errorMessage: err.message };
@@ -315,23 +381,25 @@ export function authenticateRequest(
       }
     }
 
-    // 2. Direct Yandex OAuth token fallback (or bearer matching process.env.YANDEX_OAUTH_TOKEN)
-    if (process.env.YANDEX_OAUTH_TOKEN && rawToken === process.env.YANDEX_OAUTH_TOKEN) {
-      return { authenticated: true, service: defaultService };
-    }
+    // Direct token fallbacks ONLY allowed when authRequired is false
+    if (!authRequired) {
+      if (process.env.YANDEX_OAUTH_TOKEN && rawToken === process.env.YANDEX_OAUTH_TOKEN) {
+        return { authenticated: true, service: defaultService, scope: "*" };
+      }
 
-    // Direct Yandex OAuth token format check (y0_..., y1_..., AQAAAA...)
-    const isDirectYandexToken =
-      rawToken.startsWith("y0_") || rawToken.startsWith("y1_") || rawToken.startsWith("AQAAAA");
-    if (isDirectYandexToken) {
-      try {
-        const client = new YandexIoTClient(rawToken, { useKeychain: false, persistEnv: false });
-        return {
-          authenticated: true,
-          service: new StationService(client, customQuasar, telemetryStorage),
-        };
-      } catch {
-        return { authenticated: false, error: "invalid_token", errorMessage: "Invalid access token" };
+      const isDirectYandexToken =
+        rawToken.startsWith("y0_") || rawToken.startsWith("y1_") || rawToken.startsWith("AQAAAA");
+      if (isDirectYandexToken) {
+        try {
+          const client = new YandexIoTClient(rawToken, { useKeychain: false, persistEnv: false });
+          return {
+            authenticated: true,
+            service: new StationService(client, customQuasar, telemetryStorage),
+            scope: "*",
+          };
+        } catch {
+          return { authenticated: false, error: "invalid_token", errorMessage: "Invalid access token" };
+        }
       }
     }
 
@@ -356,19 +424,22 @@ function getServiceForRequest(
   req: http.IncomingMessage,
   defaultService: StationService,
   defaultQuasar?: QuasarClient,
-  oauthStorage?: OAuthStorage,
+  oauthStorage?: IStorage,
   telemetryStorage?: TelemetryStorage
 ): StationService {
   const auth = authenticateRequest(req, defaultService, defaultQuasar, oauthStorage, telemetryStorage, false);
   return auth.service || defaultService;
 }
 
-export function createMcpServer(service: StationService | (() => StationService)): Server {
+export function createMcpServer(
+  service: StationService | (() => StationService),
+  scope?: string
+): Server {
   const getService = typeof service === "function" ? service : () => service;
   const server = new Server(
     {
       name: "mctl-alice",
-      version: "1.8.0",
+      version: "2.0.0",
     },
     {
       capabilities: {
@@ -385,7 +456,7 @@ export function createMcpServer(service: StationService | (() => StationService)
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
-    return handleToolCall(name, args, getService());
+    return handleToolCall(name, args, getService(), scope);
   });
 
   return server;
@@ -483,7 +554,12 @@ export function createHttpServer(
     }
   }
 
-  async function handleSingleRpc(rpcReq: any, req: http.IncomingMessage, svc?: StationService): Promise<any | null> {
+  async function handleSingleRpc(
+    rpcReq: any,
+    req: http.IncomingMessage,
+    svc?: StationService,
+    scope?: string
+  ): Promise<any | null> {
     if (!rpcReq || typeof rpcReq !== "object") {
       return {
         jsonrpc: "2.0",
@@ -507,7 +583,7 @@ export function createHttpServer(
         result: {
           protocolVersion: rpcReq.params?.protocolVersion || "2024-11-05",
           capabilities: { tools: {} },
-          serverInfo: { name: "mctl-alice", version: "1.8.0" },
+          serverInfo: { name: "mctl-alice", version: "2.0.0" },
         },
       };
     }
@@ -531,8 +607,8 @@ export function createHttpServer(
     if (method === "tools/call") {
       const { name, arguments: args } = rpcReq.params || {};
       try {
-        const activeSvc = svc || getServiceForRequest(req, stationService, quasarClient, oauthStorage, options.storage);
-        const result = await handleToolCall(name, args, activeSvc);
+        const activeSvc = svc || (await getServiceForRequest(req, stationService, quasarClient, oauthStorage, options.storage));
+        const result = await handleToolCall(name, args, activeSvc, scope);
         return {
           jsonrpc: "2.0",
           id,
@@ -575,7 +651,7 @@ export function createHttpServer(
     // Health check for Kubernetes probes
     if (url.pathname === "/healthz" || url.pathname === "/readyz") {
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ status: "ok", service: "mctl-alice", version: "1.8.0" }));
+      res.end(JSON.stringify({ status: "ok", service: "mctl-alice", version: "2.0.0" }));
       return;
     }
 
@@ -641,7 +717,7 @@ export function createHttpServer(
     if (url.pathname === "/oauth/register" && req.method === "POST") {
       try {
         const body = await parseRequestBody(req);
-        const clientInfo = oauthController.registerClient(body);
+        const clientInfo = await oauthController.registerClient(body);
         res.writeHead(201, { "Content-Type": "application/json; charset=utf-8" });
         res.end(JSON.stringify(clientInfo));
       } catch (err: any) {
@@ -660,12 +736,13 @@ export function createHttpServer(
       if (sessionIdParam && actionParam) {
         try {
           if (actionParam === "deny") {
-            const result = oauthController.denyAuthorization(sessionIdParam);
+            const result = await oauthController.denyAuthorization(sessionIdParam);
             res.writeHead(302, { Location: result.redirectUrl });
             res.end();
             return;
           }
-          const result = oauthController.approveAuthorization(sessionIdParam);
+          const user = await getSessionUser(req, oauthStorage);
+          const result = await oauthController.approveAuthorization(sessionIdParam, user?.id);
           res.writeHead(302, { Location: result.redirectUrl });
           res.end();
           return;
@@ -805,14 +882,15 @@ export function createHttpServer(
         }
 
         if (action === "deny") {
-          const result = oauthController.denyAuthorization(sessionId);
+          const result = await oauthController.denyAuthorization(sessionId);
           console.log(`[OAuth] /oauth/authorize denied, redirecting: ${result.redirectUrl}`);
           res.writeHead(302, { Location: result.redirectUrl });
           res.end();
           return;
         }
 
-        const result = oauthController.approveAuthorization(sessionId);
+        const user = await getSessionUser(req, oauthStorage);
+        const result = await oauthController.approveAuthorization(sessionId, user?.id);
         console.log(`[OAuth] /oauth/authorize approved, redirecting: ${result.redirectUrl}`);
         res.writeHead(302, { Location: result.redirectUrl });
         res.end();
@@ -896,7 +974,7 @@ export function createHttpServer(
         const body = await parseRequestBody(req);
         const token = body?.token || url.searchParams.get("token") || "";
         console.log(`[OAuth] /oauth/revoke token=${token ? "present" : "missing"}`);
-        oauthController.handleRevoke(token);
+        await oauthController.handleRevoke(token);
         res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
         res.end(JSON.stringify({ status: "ok" }));
       } catch (err: any) {
@@ -926,7 +1004,7 @@ export function createHttpServer(
       req.method === "POST";
 
     if (isMcpPost) {
-      const auth = authenticateRequest(req, stationService, quasarClient, oauthStorage, options.storage, authRequired);
+      const auth = await authenticateRequest(req, stationService, quasarClient, oauthStorage, options.storage, authRequired);
       if (!auth.authenticated) {
         sendUnauthorized(auth.error, auth.errorMessage);
         return;
@@ -945,7 +1023,7 @@ export function createHttpServer(
           if (Array.isArray(rpcData)) {
             const results = [];
             for (const item of rpcData) {
-              const resItem = await handleSingleRpc(item, req, activeSvc);
+              const resItem = await handleSingleRpc(item, req, activeSvc, auth.scope);
               if (resItem !== null) {
                 results.push(resItem);
               }
@@ -956,7 +1034,7 @@ export function createHttpServer(
               sendMcpResponse(req, res, results);
             }
           } else {
-            const result = await handleSingleRpc(rpcData, req, activeSvc);
+            const result = await handleSingleRpc(rpcData, req, activeSvc, auth.scope);
             if (result === null) {
               sendMcpResponse(req, res, null, 202);
             } else {
@@ -989,7 +1067,7 @@ export function createHttpServer(
       req.method === "GET";
 
     if (isSseRequest) {
-      const auth = authenticateRequest(req, stationService, quasarClient, oauthStorage, options.storage, authRequired);
+      const auth = await authenticateRequest(req, stationService, quasarClient, oauthStorage, options.storage, authRequired);
       if (!auth.authenticated) {
         sendUnauthorized(auth.error, auth.errorMessage);
         return;
@@ -1005,7 +1083,7 @@ export function createHttpServer(
           sseTransports.delete(sessionId);
         };
 
-        const mcpServer = createMcpServer(svc);
+        const mcpServer = createMcpServer(svc, auth.scope);
         await mcpServer.connect(transport);
       } catch (err: any) {
         if (!res.headersSent) {
@@ -1018,7 +1096,7 @@ export function createHttpServer(
 
     // Standard HTTP GET /mcp (not SSE, e.g. RFC 9728 discovery probe, ping, or client info check)
     if (url.pathname === "/mcp" && req.method === "GET") {
-      const auth = authenticateRequest(req, stationService, quasarClient, oauthStorage, options.storage, authRequired);
+      const auth = await authenticateRequest(req, stationService, quasarClient, oauthStorage, options.storage, authRequired);
       if (!auth.authenticated) {
         sendUnauthorized(auth.error, auth.errorMessage);
         return;
@@ -1067,7 +1145,7 @@ export function createHttpServer(
 
     // REST API auth gate (when authRequired is true)
     if (url.pathname.startsWith("/api/") && url.pathname !== "/api/info") {
-      const auth = authenticateRequest(req, stationService, quasarClient, oauthStorage, options.storage, authRequired);
+      const auth = await authenticateRequest(req, stationService, quasarClient, oauthStorage, options.storage, authRequired);
       if (!auth.authenticated) {
         sendUnauthorized(auth.error, auth.errorMessage);
         return;
@@ -1078,7 +1156,7 @@ export function createHttpServer(
     if (url.pathname === "/api/devices" && req.method === "GET") {
       try {
         const onlySpeakers = url.searchParams.get("only_speakers") === "true";
-        const svc = getServiceForRequest(req, stationService, quasarClient, oauthStorage, options.storage);
+        const svc = await getServiceForRequest(req, stationService, quasarClient, oauthStorage, options.storage);
         const result = await svc.listDevices(onlySpeakers);
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ status: "ok", ...result }));
@@ -1100,7 +1178,7 @@ export function createHttpServer(
           res.end(JSON.stringify({ status: "error", message: "Parameter 'phrase' is required" }));
           return;
         }
-        const svc = getServiceForRequest(req, stationService, quasarClient, oauthStorage, options.storage);
+        const svc = await getServiceForRequest(req, stationService, quasarClient, oauthStorage, options.storage);
         const result = await svc.sayPhrase(phrase, body.device);
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ...result }));
@@ -1122,7 +1200,7 @@ export function createHttpServer(
           res.end(JSON.stringify({ status: "error", message: "Parameter 'command' is required" }));
           return;
         }
-        const svc = getServiceForRequest(req, stationService, quasarClient, oauthStorage, options.storage);
+        const svc = await getServiceForRequest(req, stationService, quasarClient, oauthStorage, options.storage);
         const result = await svc.sendCommand(command, body.device);
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ...result }));
@@ -1149,7 +1227,7 @@ export function createHttpServer(
           );
           return;
         }
-        const svc = getServiceForRequest(req, stationService, quasarClient, oauthStorage, options.storage);
+        const svc = await getServiceForRequest(req, stationService, quasarClient, oauthStorage, options.storage);
         const result = await svc.setVolume(level, body.device);
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ...result }));
@@ -1176,7 +1254,7 @@ export function createHttpServer(
           );
           return;
         }
-        const svc = getServiceForRequest(req, stationService, quasarClient, oauthStorage, options.storage);
+        const svc = await getServiceForRequest(req, stationService, quasarClient, oauthStorage, options.storage);
         const result = await svc.mediaControl(action, body.device);
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ...result }));
@@ -1198,7 +1276,7 @@ export function createHttpServer(
           res.end(JSON.stringify({ status: "error", message: "Parameter 'scenario' is required" }));
           return;
         }
-        const svc = getServiceForRequest(req, stationService, quasarClient, oauthStorage, options.storage);
+        const svc = await getServiceForRequest(req, stationService, quasarClient, oauthStorage, options.storage);
         const result = await svc.triggerScenario(scenario);
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ...result }));
@@ -1207,6 +1285,132 @@ export function createHttpServer(
         res.writeHead(status, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ status: "error", message: err.message }));
       }
+      return;
+    }
+
+    // Public Informational & Legal Pages
+    if (url.pathname === "/about" && req.method === "GET") {
+      setSecurityHeaders(res);
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(
+        renderAuthPage({
+          title: "mctl-alice — О сервисе",
+          titleKey: "about_title",
+          contentHtml: renderAboutPage(baseUrl),
+        })
+      );
+      return;
+    }
+
+    if (url.pathname === "/privacy" && req.method === "GET") {
+      setSecurityHeaders(res);
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(
+        renderAuthPage({
+          title: "mctl-alice — Политика конфиденциальности",
+          titleKey: "privacy_title",
+          contentHtml: renderPrivacyPage(baseUrl),
+        })
+      );
+      return;
+    }
+
+    if (url.pathname === "/terms" && req.method === "GET") {
+      setSecurityHeaders(res);
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(
+        renderAuthPage({
+          title: "mctl-alice — Условия использования",
+          titleKey: "terms_title",
+          contentHtml: renderTermsPage(baseUrl),
+        })
+      );
+      return;
+    }
+
+    if (url.pathname === "/security" && req.method === "GET") {
+      setSecurityHeaders(res);
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(
+        renderAuthPage({
+          title: "mctl-alice — Безопасность",
+          titleKey: "security_title",
+          contentHtml: renderSecurityPage(baseUrl),
+        })
+      );
+      return;
+    }
+
+    // Account Management Dashboard
+    if (url.pathname === "/account" && req.method === "GET") {
+      setSecurityHeaders(res);
+      const user = await getSessionUser(req, oauthStorage);
+      const creds = user ? await oauthStorage.getUserCredentials(user.id) : null;
+      const grants =
+        user && (oauthStorage as any).listUserGrants
+          ? (oauthStorage as any).listUserGrants(user.id)
+          : [];
+
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(
+        renderAuthPage({
+          title: "mctl-alice — Личный кабинет",
+          titleKey: "account_title",
+          contentHtml: renderAccountPage({
+            user,
+            creds,
+            grants,
+            escapeHtml,
+            baseUrl,
+          }),
+        })
+      );
+      return;
+    }
+
+    if (url.pathname === "/account/delete" && req.method === "POST") {
+      setSecurityHeaders(res);
+      const user = await getSessionUser(req, oauthStorage);
+      if (user) {
+        await oauthStorage.deleteUser(user.id);
+      }
+      res.writeHead(302, {
+        "Set-Cookie": "mctl_session=; Path=/; HttpOnly; Max-Age=0",
+        Location: "/?deleted=true",
+      });
+      res.end();
+      return;
+    }
+
+    if (url.pathname === "/account/disconnect-quasar" && req.method === "POST") {
+      setSecurityHeaders(res);
+      const user = await getSessionUser(req, oauthStorage);
+      if (user) {
+        const creds = await oauthStorage.getUserCredentials(user.id);
+        if (creds) {
+          await oauthStorage.saveUserCredentials(user.id, {
+            ...creds,
+            quasarCookie: undefined,
+            quasarUpdatedAt: undefined,
+          });
+        }
+        await oauthStorage.deleteQuasarScenarios(user.id);
+      }
+      res.writeHead(302, { Location: "/account?quasar_disconnected=true" });
+      res.end();
+      return;
+    }
+
+    if (url.pathname === "/account/revoke-grant" && req.method === "POST") {
+      setSecurityHeaders(res);
+      const user = await getSessionUser(req, oauthStorage);
+      const body = await parseRequestBody(req);
+      const clientIdParam = body?.client_id;
+      if (user && clientIdParam && (oauthStorage as any).deleteUserClientTokens) {
+        (oauthStorage as any).deleteUserClientTokens(user.id, clientIdParam);
+      }
+      res.writeHead(302, { Location: "/account?grant_revoked=true" });
+      res.end();
       return;
     }
 
@@ -1283,6 +1487,37 @@ export function createHttpServer(
             saveRefreshTokenToEnvFile(tokens.refresh_token);
             saveTokenToKeychain(tokens.refresh_token, "mctl-alice-refresh-token");
           }
+
+          let userId = "usr_local";
+          try {
+            const profile = await fetchYandexProfile(tokens.access_token);
+            userId = profile.id;
+            await oauthStorage.saveUser({
+              id: userId,
+              yandexUid: profile.yandexUid,
+              login: profile.login,
+              displayName: profile.displayName,
+              createdAt: Date.now(),
+              updatedAt: Date.now(),
+            });
+          } catch {
+            await oauthStorage.saveUser({
+              id: userId,
+              yandexUid: "local_uid",
+              createdAt: Date.now(),
+              updatedAt: Date.now(),
+            });
+          }
+
+          await oauthStorage.saveUserCredentials(userId, {
+            yandexAccessToken: tokens.access_token,
+            yandexRefreshToken: tokens.refresh_token,
+            yandexExpiresAt: tokens.expires_in ? Date.now() + tokens.expires_in * 1000 : undefined,
+          });
+
+          const webSessionId = randomUUID();
+          await oauthStorage.saveWebSession(webSessionId, userId, Date.now() + 30 * 86400 * 1000);
+          res.setHeader("Set-Cookie", `mctl_session=${webSessionId}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000`);
 
           const speakerHtml =
             speakerNames.length > 0
@@ -1407,13 +1642,46 @@ export function createHttpServer(
           const devices = await stationService.listDevices(true);
           const speakerNames = devices.speakers.map((s) => `${s.name} (${s.room})`);
 
-          saveTokenToEnvFile(token);
-          saveTokenToKeychain(token, "mctl-alice");
+          if (!authRequired) {
+            saveTokenToEnvFile(token);
+            saveTokenToKeychain(token, "mctl-alice");
 
-          if (refreshToken) {
-            saveRefreshTokenToEnvFile(refreshToken);
-            saveTokenToKeychain(refreshToken, "mctl-alice-refresh-token");
+            if (refreshToken) {
+              saveRefreshTokenToEnvFile(refreshToken);
+              saveTokenToKeychain(refreshToken, "mctl-alice-refresh-token");
+            }
           }
+
+          let userId = "usr_local";
+          try {
+            const profile = await fetchYandexProfile(token);
+            userId = profile.id;
+            await oauthStorage.saveUser({
+              id: userId,
+              yandexUid: profile.yandexUid,
+              login: profile.login,
+              displayName: profile.displayName,
+              createdAt: Date.now(),
+              updatedAt: Date.now(),
+            });
+          } catch {
+            await oauthStorage.saveUser({
+              id: userId,
+              yandexUid: "local_uid",
+              createdAt: Date.now(),
+              updatedAt: Date.now(),
+            });
+          }
+
+          await oauthStorage.saveUserCredentials(userId, {
+            yandexAccessToken: token,
+            yandexRefreshToken: refreshToken,
+            yandexExpiresAt: Date.now() + 30 * 86400 * 1000,
+          });
+
+          const webSessionId = randomUUID();
+          await oauthStorage.saveWebSession(webSessionId, userId, Date.now() + 30 * 86400 * 1000);
+          res.setHeader("Set-Cookie", `mctl_session=${webSessionId}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000`);
 
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ status: "ok", speakers: speakerNames }));
@@ -1427,6 +1695,16 @@ export function createHttpServer(
 
     // Quasar Cookie Setup Page
     if (url.pathname === "/auth/cookie" && req.method === "GET") {
+      setSecurityHeaders(res);
+      if (authRequired) {
+        const user = await getSessionUser(req, oauthStorage);
+        if (!user) {
+          res.writeHead(302, { Location: "/auth/login" });
+          res.end();
+          return;
+        }
+      }
+
       const content = `
         <h2 data-i18n="cookie_title">mctl-alice — Настройка Quasar (Динамический голос и команды)</h2>
         <p style="color: var(--surface-fg-muted); margin-bottom: 24px;" data-i18n-html="cookie_lead">
@@ -1463,6 +1741,18 @@ export function createHttpServer(
               <li data-i18n-html="cookie_step4">Найдите строку с куки <code>Session_id</code> и скопируйте её значение (или скопируйте всю строку заголовка Cookie).</li>
               <li data-i18n-html="cookie_step5">Вставьте в поле ввода ниже и нажмите <strong>Сохранить и проверить</strong>.</li>
             </ol>
+            <div class="alert alert-warning" style="margin-top: 14px; margin-bottom: 14px; font-size: 13px; border-left: 4px solid #f59e0b; background: rgba(245, 158, 11, 0.08); padding: 12px 14px; border-radius: var(--mctl-radius-sm);">
+              <strong>⚠️ Важно о приватности и хранении команд:</strong><br>
+              <span data-i18n="cookie_scenario_disclosure">
+                Воспроизведение произвольного текста (TTS) и выполнение голосовых команд через Quasar происходит путём создания сценариев в вашем умном доме Яндекс. Текст и параметры команды передаются на серверы Яндекса и сохраняются в истории сценариев вашего аккаунта. mctl-alice изолирует сценарии по пользователям и удаляет сценарий сразу после выполнения.
+              </span>
+              <div style="margin-top: 10px;">
+                <label style="display: flex; align-items: center; gap: 8px; font-weight: 500; cursor: pointer; user-select: none;">
+                  <input type="checkbox" id="scenarioAckCheckbox" required style="width: 16px; height: 16px; cursor: pointer;">
+                  <span data-i18n="cookie_scenario_ack">Я понимаю, что команды Quasar сохраняются в истории сценариев Яндекс</span>
+                </label>
+              </div>
+            </div>
             <form id="cookieForm" style="margin-top: 16px;">
               <label for="cookieInput" style="display: block; font-weight: 500; font-size: 14px; margin-bottom: 6px;" data-i18n="cookie_label">Значение Cookie (Session_id):</label>
               <textarea id="cookieInput" class="form-textarea" placeholder="Session_id=3:17... или значение Session_id" data-i18n-placeholder="cookie_placeholder" required spellcheck="false"></textarea>
@@ -1639,48 +1929,28 @@ export function createHttpServer(
         const result = await checkQrAuthStatus(sessionId);
         if (result.status === "ok" && result.cookie) {
           const cookie = result.cookie;
-          saveCookieToEnvFile(cookie);
-          saveCookieToKeychain(cookie);
 
-          quasarClient = new QuasarClient({ cookie, useKeychain: true, persistEnv: true });
-          stationService = new StationService(undefined, quasarClient);
+          const user = await getSessionUser(req, oauthStorage);
+          if (user) {
+            const existingCreds = (await oauthStorage.getUserCredentials(user.id)) || { yandexAccessToken: "" };
+            await oauthStorage.saveUserCredentials(user.id, {
+              ...existingCreds,
+              quasarCookie: cookie,
+              quasarUpdatedAt: Date.now(),
+            });
+          }
 
-          // Optionally populate OAuth token via token_by_sessionid if token missing
-          try {
-            const tokenRes = await fetch(
-              "https://mobileproxy.passport.yandex.net/1/bundle/oauth/token_by_sessionid",
-              {
-                method: "POST",
-                headers: {
-                  "Ya-Client-Host": "passport.yandex.ru",
-                  "Ya-Client-Cookie": cookie,
-                  "Content-Type": "application/x-www-form-urlencoded",
-                  "User-Agent":
-                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
-                },
-                body: new URLSearchParams({
-                  client_id: "c0ebe342af7d48fbbbfcf2d2eedb8f9e",
-                  client_secret: "ad0a908f0aa341a182a37ecd75bc319e",
-                }).toString(),
-              }
-            );
-            if (tokenRes.ok) {
-              const tokenData = (await tokenRes.json()) as any;
-              if (tokenData.access_token) {
-                saveTokenToEnvFile(tokenData.access_token);
-                saveTokenToKeychain(tokenData.access_token, "mctl-alice");
-                if (tokenData.refresh_token) {
-                  saveRefreshTokenToEnvFile(tokenData.refresh_token);
-                  saveTokenToKeychain(tokenData.refresh_token, "mctl-alice-refresh-token");
-                }
-              }
-            }
-          } catch {
-            // ignore optional token autofill
+          if (!authRequired) {
+            saveCookieToEnvFile(cookie);
+            saveCookieToKeychain(cookie);
+
+            quasarClient = new QuasarClient({ cookie, useKeychain: true, persistEnv: true, userId: user?.id, storage: oauthStorage });
+            stationService = new StationService(undefined, quasarClient);
           }
         }
+        const { cookie: _unused, ...safeResult } = result;
         res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify(result));
+        res.end(JSON.stringify(safeResult));
       } catch (err: any) {
         res.writeHead(500, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ status: "error", message: err.message }));
@@ -1694,6 +1964,13 @@ export function createHttpServer(
       req.on("data", (chunk) => (body += chunk));
       req.on("end", async () => {
         try {
+          const user = await getSessionUser(req, oauthStorage);
+          if (authRequired && !user) {
+            res.writeHead(401, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ status: "error", message: "Unauthorized: Web session required" }));
+            return;
+          }
+
           const data = JSON.parse(body);
           const cookie = data.cookie?.trim();
           if (!cookie) {
@@ -1703,14 +1980,25 @@ export function createHttpServer(
           }
 
           // Test verification with Quasar
-          const testQuasar = new QuasarClient({ cookie, useKeychain: false, persistEnv: false });
+          const testQuasar = new QuasarClient({ cookie, useKeychain: false, persistEnv: false, userId: user?.id, storage: oauthStorage });
           await testQuasar.getCsrfToken();
 
-          saveCookieToEnvFile(cookie);
-          saveCookieToKeychain(cookie);
+          if (!authRequired) {
+            saveCookieToEnvFile(cookie);
+            saveCookieToKeychain(cookie);
 
-          quasarClient = new QuasarClient();
-          stationService = new StationService(undefined, quasarClient);
+            quasarClient = new QuasarClient({ cookie, useKeychain: false, persistEnv: false, userId: user?.id, storage: oauthStorage });
+            stationService = new StationService(undefined, quasarClient);
+          }
+
+          if (user) {
+            const existingCreds = (await oauthStorage.getUserCredentials(user.id)) || { yandexAccessToken: "" };
+            await oauthStorage.saveUserCredentials(user.id, {
+              ...existingCreds,
+              quasarCookie: cookie,
+              quasarUpdatedAt: Date.now(),
+            });
+          }
 
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ status: "ok", message: "Cookie saved and verified successfully" }));

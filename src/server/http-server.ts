@@ -202,7 +202,7 @@ try {
   </a>
   <nav class="topbar-links">
     <a href="/" data-i18n="nav_home">Главная</a>
-    <a href="/account">Аккаунт</a>
+    <a href="/account" data-i18n="nav_account">Аккаунт</a>
     <a href="/auth/login" data-i18n="nav_login">Вход (OAuth)</a>
     <a href="/auth/cookie" data-i18n="nav_cookie">Quasar Cookie</a>
     <a href="https://github.com/mctlhq/mctl-alice" target="_blank" rel="noopener" data-i18n="nav_github">GitHub</a>
@@ -231,11 +231,11 @@ try {
     <span data-i18n-html="footer_part">mctl-alice — часть платформы <a href="https://mctl.ai" target="_blank" rel="noopener">mctl</a>.</span>
     <span>
       <a href="/" data-i18n="nav_home">Главная</a> ·
-      <a href="/account">Личный кабинет</a> ·
-      <a href="/about">О сервисе</a> ·
-      <a href="/privacy">Конфиденциальность</a> ·
-      <a href="/terms">Условия</a> ·
-      <a href="/security">Безопасность</a> ·
+      <a href="/account" data-i18n="footer_account">Личный кабинет</a> ·
+      <a href="/about" data-i18n="footer_about">О сервисе</a> ·
+      <a href="/privacy" data-i18n="footer_privacy">Конфиденциальность</a> ·
+      <a href="/terms" data-i18n="footer_terms">Условия</a> ·
+      <a href="/security" data-i18n="footer_security">Безопасность</a> ·
       <a href="https://github.com/mctlhq/mctl-alice" target="_blank" rel="noopener" data-i18n="nav_github">GitHub</a>
     </span>
   </div>

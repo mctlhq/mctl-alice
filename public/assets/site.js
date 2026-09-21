@@ -174,7 +174,90 @@
       oauth_scope_control: "Управление устройствами, симуляция голосовых команд и воспроизведение речи",
       oauth_status_connected: "Подключение к умному дому Яндекс Алисы активно.",
       oauth_btn_approve: "Разрешить доступ",
-      oauth_btn_deny: "Отклонить"
+      oauth_btn_deny: "Отклонить",
+
+      // Navigation & Footer
+      nav_account: "Аккаунт",
+      footer_account: "Личный кабинет",
+      footer_about: "О сервисе",
+      footer_privacy: "Конфиденциальность",
+      footer_terms: "Условия",
+      footer_security: "Безопасность",
+      nav_privacy: "Конфиденциальность",
+      nav_terms: "Условия использования",
+      nav_security: "Безопасность",
+      nav_about: "О сервисе",
+
+      // Account Dashboard
+      account_title: "Личный кабинет",
+      account_user_label: "Пользователь",
+      account_logout_btn: "Выйти",
+      account_login_title: "Личный кабинет mctl-alice",
+      account_login_desc: "Войдите через Яндекс ID, чтобы управлять подключениями AI-ассистентов, интеграцией с колонками и сохранёнными данными.",
+      btn_login_yandex: "Войти через Яндекс ID",
+      account_status_label: "Статус",
+      account_quasar_title: "Голосовое управление колонками (Quasar)",
+      account_quasar_status_connected: "🟢 Подключено (доступны произвольные фразы и команды)",
+      account_quasar_status_not_configured: "⚪ Не настроено",
+      account_quasar_disconnect_btn: "Отключить Quasar",
+      account_quasar_setup_btn: "Настроить Quasar Cookie (QR)",
+      account_mcp_title: "Подключённые AI-клиенты (MCP)",
+      account_mcp_no_clients: "Нет активных подключений ассистентов (Claude, ChatGPT, Codex).",
+      account_th_client: "Клиент",
+      account_th_scope: "Разрешения",
+      account_th_connected: "Подключен",
+      account_th_action: "Действие",
+      account_btn_revoke: "Отозвать",
+      account_danger_title: "Опасная зона: удаление аккаунта",
+      account_danger_desc: "Вы можете полностью удалить все данные своей учётной записи из mctl-alice. Будут немедленно отозваны все MCP-токены, удалены сохранённые зашифрованные токены Яндекса, сессии и прокси-сценарии.",
+      account_delete_all_btn: "Удалить все мои данные",
+      account_btn_home: "← На главную",
+
+      // About Page
+      about_title: "О сервисе mctl-alice",
+      about_subtitle: "Модель контекстного протокола (MCP) и мост для подключения ИИ-ассистентов к Умному дому и колонкам Яндекса.",
+      about_arch_title: "🏗 Архитектура и изоляция",
+      about_arch_desc: "Сервис работает в многопользовательском (multi-tenant) режиме. Учетные данные и токены пользователей хранятся в зашифрованном виде (AES-256-GCM) с привязкой к идентификатору пользователя в качестве AAD (Additional Authenticated Data). Доступ между тенантами изолирован на криптографическом уровне.",
+      about_operator_title: "👤 Информация об операторе",
+      about_operator_desc: "<strong>Оператор платформы:</strong> Дмитрий Машков<br><strong>Юрисдикция:</strong> Подгорица, Черногория<br><strong>Контакты поддержки:</strong> <a href=\"mailto:support@mctl.ai\">support@mctl.ai</a><br><strong>Безопасность:</strong> <a href=\"mailto:security@mctl.ai\">security@mctl.ai</a>",
+      about_license_title: "⚖️ Открытый исходный код",
+      about_license_desc: "mctl-alice разрабатывается как открытое ПО под лицензией Apache 2.0. Вы можете развернуть собственный экземпляр сервиса на своем сервере или в локальной сети. Исходный код доступен в <a href=\"https://github.com/mctlhq/mctl-alice\" target=\"_blank\" rel=\"noopener\">репозитории GitHub</a>.",
+
+      // Privacy Policy Page
+      privacy_title: "Политика конфиденциальности",
+      privacy_version: "Версия 2.0.0 (Сентябрь 2026)",
+      privacy_sec1_title: "1. Собираемые данные",
+      privacy_sec1_desc: "<p style=\"margin: 0;\">При подключении сервиса мы сохраняем минимально необходимый набор данных для обеспечения работы ИИ-интеграции:</p><ul style=\"margin: 8px 0 0 20px; padding: 0;\"><li><strong>Идентификатор пользователя:</strong> Яндекс UID, имя пользователя и аватар (для отображения в интерфейсе).</li><li><strong>Токены авторизации:</strong> Upstream OAuth access/refresh токены для доступа к API Умного дома Яндекса.</li><li><strong>Quasar сессия (опционально):</strong> Cookie сессии для прямого управления умными колонками через TTS.</li></ul>",
+      privacy_sec2_title: "2. Модель угроз и защита данных (Threat Model)",
+      privacy_sec2_desc: "<strong>Шифрование at-rest:</strong> Все upstream токены и cookies хранятся в зашифрованном виде с алгоритмом AES-256-GCM. В качестве дополнительных аутентифицированных данных (AAD) используется User ID, что исключает перекрестную подмену токенов между аккаунтами.<br><br><strong>Честное раскрытие архитектурных границ:</strong> В силу архитектуры протокола MCP наш сервер выступает доверенным прокси-исполнителем между ИИ-клиентом и API Яндекса. В момент вызова инструмента токен расшифровывается в оперативной памяти процесса для выполнения запроса к Yandex API. Мы не заявляем о так называемом «Zero-Knowledge», так как любой серверный прокси неизбежно обрабатывает запрос в памяти.",
+      privacy_sec3_title: "3. Особенности работы с колонками (Yandex Quasar)",
+      privacy_sec3_desc: "Управление воспроизведением и голосовыми командами колонок осуществляется через создание временных сценариев автоматизации в облаке Яндекса. Текстовые фразы передаются в Yandex Cloud и сохраняются на серверах Яндекса в соответствии с политикой конфиденциальности ООО «Яндекс».",
+      privacy_sec4_title: "4. Полное удаление данных (Right to Erasure)",
+      privacy_sec4_desc: "Вы можете в любой момент отозвать доступ и полностью удалить свои данные из нашей системы через <a href=\"/account\">Личный кабинет</a>. При удалении все токены, сессии и связанные сценарии стираются из базы данных немедленно (криптографическое уничтожение).",
+
+      // Terms of Service Page
+      terms_title: "Условия использования",
+      terms_version: "Версия 2.0.0 (Сентябрь 2026)",
+      terms_sec1_title: "1. Статус сервиса (Бета)",
+      terms_sec1_desc: "Сервис mctl-alice предоставляется на условиях «как есть» (as is). Мы прилагаем все усилия для обеспечения высокой доступности и стабильности, однако не гарантируем бесперебойную работу сторонних API Яндекса или AI-провайдеров.",
+      terms_sec2_title: "2. Ответственность за физические устройства",
+      terms_sec2_desc: "Вы несете полную ответственность за любые действия, которые ИИ-ассистент производит в вашем умном доме (включение/выключение обогревателей, электроприборов, розеток, замков). Мы категорически не рекомендуем подключать к управлению ИИ критически опасные приборы без физических термопредохранителей и автоматических выключателей.",
+      terms_sec3_title: "3. Ограничения и лимиты (Fair Use)",
+      terms_sec3_desc: "Запрещается использование сервиса для спама, DDoS-атак, сканирования уязвимостей или попыток несанкционированного доступа к чужим тенантам. Действуют автоматические ограничения по количеству запросов в минуту (rate limiting).",
+
+      // Security Page
+      security_title: "Политика безопасности и раскрытия уязвимостей",
+      security_lead: "Vulnerability Disclosure Policy & Safe Harbor",
+      security_sec1_title: "🛡 Safe Harbor для исследователей",
+      security_sec1_desc: "Мы приветствуем и поддерживаем независимых исследователей безопасности. Если вы обнаружили потенциальную уязвимость (обход авторизации, SSRF, утечку токенов или инъекцию), пожалуйста, сообщите нам до публичного раскрытия. Мы обязуемся не предпринимать юридических действий против исследователей, действующих добросовестно.",
+      security_sec2_title: "📬 Канал связи",
+      security_sec2_desc: "Для сообщений об уязвимостях используйте выделенный адрес: <a href=\"mailto:security@mctl.ai\"><strong>security@mctl.ai</strong></a>.<br>Мы стараемся отвечать на первичные обращения в течение 24 часов.",
+      security_sec3_title: "🔒 Применяемые меры защиты",
+      security_sec3_desc: "<li>Строгое шифрование токенов (AES-256-GCM) с аутентификацией каждого шифротекста.</li><li>Защита от SSRF при динамической регистрации клиентов (RFC 7591) с фильтрацией внутренних IP сетей.</li><li>Заголовки безопасности: Content-Security-Policy, X-Frame-Options: DENY, HSTS.</li><li>Регулярное автоматизированное сканирование зависимостей и тесты изоляции тенантов.</li>",
+
+      // Quasar Cookie Page Additions
+      cookie_scenario_disclosure: "Воспроизведение произвольного текста (TTS) и выполнение голосовых команд через Quasar происходит путём создания сценариев в вашем умном доме Яндекс. Текст и параметры команды передаются на серверы Яндекса и сохраняются в истории сценариев вашего аккаунта. mctl-alice изолирует сценарии по пользователям и удаляет сценарий сразу после выполнения.",
+      cookie_scenario_ack: "Я понимаю, что команды Quasar сохраняются в истории сценариев Яндекс"
     },
     en: {
       meta_title: "mctl-alice — Yandex Station & Smart Home Control via AI (MCP)",
@@ -290,7 +373,90 @@
       oauth_scope_control: "Control devices, simulate voice commands and speech synthesis",
       oauth_status_connected: "Connection to Yandex Alice Smart Home is active.",
       oauth_btn_approve: "Authorize Access",
-      oauth_btn_deny: "Cancel"
+      oauth_btn_deny: "Cancel",
+
+      // Navigation & Footer
+      nav_account: "Account",
+      footer_account: "Account",
+      footer_about: "About",
+      footer_privacy: "Privacy",
+      footer_terms: "Terms",
+      footer_security: "Security",
+      nav_privacy: "Privacy",
+      nav_terms: "Terms of Service",
+      nav_security: "Security",
+      nav_about: "About",
+
+      // Account Dashboard
+      account_title: "Account Dashboard",
+      account_user_label: "User",
+      account_logout_btn: "Log out",
+      account_login_title: "mctl-alice Account Dashboard",
+      account_login_desc: "Sign in with Yandex ID to manage AI assistant connections, speaker integration, and stored data.",
+      btn_login_yandex: "Sign in with Yandex ID",
+      account_status_label: "Status",
+      account_quasar_title: "Voice Speaker Control (Quasar)",
+      account_quasar_status_connected: "🟢 Connected (arbitrary phrases and commands enabled)",
+      account_quasar_status_not_configured: "⚪ Not configured",
+      account_quasar_disconnect_btn: "Disconnect Quasar",
+      account_quasar_setup_btn: "Configure Quasar Cookie (QR)",
+      account_mcp_title: "Connected AI Clients (MCP)",
+      account_mcp_no_clients: "No active assistant connections (Claude, ChatGPT, Codex).",
+      account_th_client: "Client",
+      account_th_scope: "Permissions",
+      account_th_connected: "Connected",
+      account_th_action: "Action",
+      account_btn_revoke: "Revoke",
+      account_danger_title: "Danger Zone: Account Deletion",
+      account_danger_desc: "You can completely delete all your account data from mctl-alice. All MCP tokens will be immediately revoked, and stored encrypted Yandex tokens, sessions, and proxy routines will be deleted.",
+      account_delete_all_btn: "Delete all my data",
+      account_btn_home: "← Back to Home",
+
+      // About Page
+      about_title: "About mctl-alice",
+      about_subtitle: "Model Context Protocol (MCP) server and bridge connecting AI assistants to Yandex Smart Home and Alice speakers.",
+      about_arch_title: "🏗 Architecture & Multi-Tenancy",
+      about_arch_desc: "The service operates in multi-tenant mode. User credentials and upstream tokens are stored encrypted at-rest using AES-256-GCM with User ID bound as Additional Authenticated Data (AAD). Tenant isolation is enforced cryptographically.",
+      about_operator_title: "👤 Operator Information",
+      about_operator_desc: "<strong>Platform Operator:</strong> Dmitrii Mashkov<br><strong>Jurisdiction:</strong> Podgorica, Montenegro<br><strong>Support Contact:</strong> <a href=\"mailto:support@mctl.ai\">support@mctl.ai</a><br><strong>Security:</strong> <a href=\"mailto:security@mctl.ai\">security@mctl.ai</a>",
+      about_license_title: "⚖️ Open Source",
+      about_license_desc: "mctl-alice is open source software distributed under the Apache 2.0 license. You can deploy your own private instance on your own server or local network. Source code is available in the <a href=\"https://github.com/mctlhq/mctl-alice\" target=\"_blank\" rel=\"noopener\">GitHub repository</a>.",
+
+      // Privacy Policy Page
+      privacy_title: "Privacy Policy",
+      privacy_version: "Version 2.0.0 (September 2026)",
+      privacy_sec1_title: "1. Data We Collect",
+      privacy_sec1_desc: "<p style=\"margin: 0;\">When you connect the service, we store the minimal set of data required for AI integration:</p><ul style=\"margin: 8px 0 0 20px; padding: 0;\"><li><strong>User Identity:</strong> Yandex UID, display name, and avatar (for UI presentation).</li><li><strong>Authorization Tokens:</strong> Upstream OAuth access/refresh tokens to communicate with the Yandex Smart Home API.</li><li><strong>Quasar Session (optional):</strong> Session cookie for direct speaker speech synthesis (TTS) control.</li></ul>",
+      privacy_sec2_title: "2. Threat Model & Data Protection",
+      privacy_sec2_desc: "<strong>Encryption At-Rest:</strong> All upstream credentials and cookies are encrypted with AES-256-GCM with the User ID used as Additional Authenticated Data (AAD), preventing cross-tenant substitution attacks.<br><br><strong>Architectural Disclosure:</strong> Under the MCP protocol architecture, our server acts as a trusted proxy between the AI client and the Yandex API. During a tool call, credentials are decrypted in volatile memory to make the outbound HTTPS request. We do not claim 'Zero-Knowledge', as any server-side proxy must process credentials in memory.",
+      privacy_sec3_title: "3. Speaker Operations (Yandex Quasar)",
+      privacy_sec3_desc: "Playback control and spoken commands on Alice speakers are executed by dynamically creating short-lived automation routines in the Yandex cloud. Text phrases are transmitted to Yandex Cloud and retained on Yandex servers subject to Yandex LLC privacy policies.",
+      privacy_sec4_title: "4. Right to Erasure",
+      privacy_sec4_desc: "You may revoke access and completely delete all your data at any time via your <a href=\"/account\">Account Dashboard</a>. Upon deletion, all tokens, sessions, and linked scenarios are purged immediately (cryptographic erasure).",
+
+      // Terms of Service Page
+      terms_title: "Terms of Service",
+      terms_version: "Version 2.0.0 (September 2026)",
+      terms_sec1_title: "1. Service Status (Beta)",
+      terms_sec1_desc: "The mctl-alice service is provided 'as is'. While we strive for high availability and reliability, we do not guarantee uninterrupted availability of third-party Yandex or AI provider APIs.",
+      terms_sec2_title: "2. Responsibility for Physical Devices",
+      terms_sec2_desc: "You bear full responsibility for actions performed by AI assistants in your smart home (switching heaters, appliances, sockets, locks). We strongly advise against controlling hazardous equipment without physical thermal fuses and automatic circuit breakers.",
+      terms_sec3_title: "3. Fair Use & Rate Limits",
+      terms_sec3_desc: "Use of the service for spam, DDoS attacks, vulnerability scanning, or unauthorized access attempts against other tenants is strictly prohibited. Automated request limits (rate limiting) are enforced.",
+
+      // Security Page
+      security_title: "Security Policy & Vulnerability Disclosure",
+      security_lead: "Vulnerability Disclosure Policy & Safe Harbor",
+      security_sec1_title: "🛡 Security Researcher Safe Harbor",
+      security_sec1_desc: "We welcome and support independent security researchers. If you identify a potential vulnerability (auth bypass, SSRF, token leakage, or injection), please report it to us prior to public disclosure. We pledge not to pursue legal action against researchers acting in good faith.",
+      security_sec2_title: "📬 Contact Channel",
+      security_sec2_desc: "For vulnerability disclosures, contact us at: <a href=\"mailto:security@mctl.ai\"><strong>security@mctl.ai</strong></a>.<br>We aim to respond to initial inquiries within 24 hours.",
+      security_sec3_title: "🔒 Applied Security Controls",
+      security_sec3_desc: "<li>Rigorous token encryption (AES-256-GCM) with ciphertext authentication.</li><li>SSRF protection during dynamic client registration (RFC 7591) with internal IP filtering.</li><li>Hardened HTTP headers: Content-Security-Policy, X-Frame-Options: DENY, HSTS.</li><li>Automated dependency vulnerability audits and continuous multi-tenant isolation testing.</li>",
+
+      // Quasar Cookie Page Additions
+      cookie_scenario_disclosure: "Arbitrary text-to-speech (TTS) playback and voice commands via Quasar work by dynamically generating routines in your Yandex Smart Home. The command text and parameters are sent to Yandex servers and recorded in your account routine history. mctl-alice isolates routines per user and purges them immediately after execution.",
+      cookie_scenario_ack: "I understand that Quasar commands are recorded in my Yandex routine history"
     }
   };
 

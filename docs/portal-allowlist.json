@@ -1,0 +1,68 @@
+{
+  "$comment": "Source of truth for the Cloudflare MCP portal mapping of server `alice` (mctlhq/.github#35). Every tool this server registers must appear here with an explicit decision; tests/portal-allowlist.test.ts fails the build otherwise. An enabled tool must carry a `reason` that says what it exposes or changes and why that is acceptable on the shared portal -- a tool that mutates the smart home must additionally be named in mutatingOnPortal in that test. Apply with scripts/portal-allowlist-apply.sh, same operator-run flow as the other upstreams (mctl-telegram, mctl-api). All 12 tools enabled by owner decision 2026-09-22: the portal's only members are the two named addresses in infrastructure/cloudflare/account/portal-mcp-apps.tf (portal_member_alice), so this is the owner's own smart home, not a shared surface with other identities.",
+  "portal": "mcp",
+  "server": "alice",
+  "default_disabled": true,
+  "tools": [
+    {
+      "name": "alice_list_devices",
+      "enabled": true,
+      "reason": "Lists speakers, rooms and device IDs in the home; discovery only, no state change and no telemetry values."
+    },
+    {
+      "name": "alice_send_command",
+      "enabled": true,
+      "reason": "Sends an arbitrary voice command to a speaker (equivalent to speaking to Alice aloud); mutating, enabled by owner decision -- see mutatingOnPortal."
+    },
+    {
+      "name": "alice_say_phrase",
+      "enabled": true,
+      "reason": "Makes a speaker say a phrase via TTS; mutating (audible side effect), enabled by owner decision -- see mutatingOnPortal."
+    },
+    {
+      "name": "alice_set_volume",
+      "enabled": true,
+      "reason": "Sets a speaker's volume level; mutating, enabled by owner decision -- see mutatingOnPortal."
+    },
+    {
+      "name": "alice_media_control",
+      "enabled": true,
+      "reason": "Controls playback (play/pause/stop/next/prev) on a speaker; mutating, enabled by owner decision -- see mutatingOnPortal."
+    },
+    {
+      "name": "alice_trigger_scenario",
+      "enabled": true,
+      "reason": "Runs a predefined Yandex Smart Home scenario by name or ID; mutating (can affect many devices at once), enabled by owner decision -- see mutatingOnPortal."
+    },
+    {
+      "name": "alice_control_device",
+      "enabled": true,
+      "reason": "Turns a device on/off or sets AC temperature/mode via the Yandex IoT API; mutating, enabled by owner decision -- see mutatingOnPortal."
+    },
+    {
+      "name": "alice_get_device_state",
+      "enabled": true,
+      "reason": "Reads real-time status/telemetry (power, voltage, temperature, humidity, battery, on/off) of a device; read-only."
+    },
+    {
+      "name": "alice_get_device_history",
+      "enabled": true,
+      "reason": "Reads historical telemetry time-series and energy consumption for a device; read-only."
+    },
+    {
+      "name": "alice_set_light",
+      "enabled": true,
+      "reason": "Controls a light's on/off state, brightness, color temperature or scene; mutating, enabled by owner decision -- see mutatingOnPortal."
+    },
+    {
+      "name": "alice_control_room",
+      "enabled": true,
+      "reason": "Batch turns devices in a room (or the whole home) on/off by category; mutating and the widest blast radius of any tool here, enabled by owner decision -- see mutatingOnPortal."
+    },
+    {
+      "name": "alice_get_home_summary",
+      "enabled": true,
+      "reason": "Reads a combined status overview (climate, security sensors, lighting, sockets, battery levels) for the home or a room; read-only."
+    }
+  ]
+}

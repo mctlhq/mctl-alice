@@ -1,0 +1,53 @@
+name: Claude PR review
+
+# mctl-alice had no automated reviewer at all until now: every PR reached
+# `main` with only `ci.yml` behind it. This service terminates an OAuth flow
+# against Yandex and holds smart-home control (arbitrary voice commands,
+# device on/off, whole-room batch actions) behind it, so it is a poor
+# candidate for the least review coverage in the organisation.
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+  issue_comment:
+    types: [created]
+
+permissions: {}
+
+jobs:
+  claude-review:
+    uses: mctlhq/.github/.github/workflows/claude-review.yml@2e8ad777cf4db98f368f4f70d11cec79bba26f47
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      id-token: write
+    with:
+      allowed-bots: "mctl-claude-remote,github-actions,dependabot,mctl-agents"
+      # Everything that decides who a caller is, or what a verified identity
+      # is allowed to do to the Yandex account behind it, lives here.
+      sensitive-paths: '^src/(auth|tools)/'
+      conventions: |
+        This service is an MCP server fronting a Yandex Alice smart home,
+        with its own OAuth controller in front of it. Focus on:
+        - Authorization: OAuth/PKCE handling in src/auth/, redirect_uri
+          comparison, session and token storage, and the check that decides
+          whether a verified identity may reach this account's devices at
+          all.
+        - Multi-tenancy: a request must reach the Yandex account of the
+          identity that made it, never another user's, and never a shared
+          default.
+        - Blast radius of the tools themselves (src/tools/). alice_control_room
+          and alice_trigger_scenario can affect many devices in one call;
+          treat a missing bound, a wrong room/device resolution, or a
+          scenario/command string built by concatenation (rather than
+          passed as a parameter) as a finding, not a style question.
+        - Credentials at rest. Yandex OAuth tokens and cookies must be
+          sealed before they reach storage and must never be returned by an
+          endpoint, logged, or rendered into a page.
+        - Tests that cannot fail. Several defects here are invisible to an
+          assertion that only checks a value is present; prefer assertions
+          that break when the guard is removed.
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      CLAUDE_CODE_OAUTH_TOKEN_2: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN_2 }}

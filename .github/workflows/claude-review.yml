@@ -22,6 +22,10 @@ jobs:
       pull-requests: write
       issues: write
       id-token: write
+      # The reusable review job asks for actions: read (its github_ci MCP
+      # server reads the PR's check runs). A caller that grants less makes
+      # the run a startup_failure, which is why no review ever ran here.
+      actions: read
     with:
       allowed-bots: "mctl-claude-remote,github-actions,dependabot,mctl-agents"
       # Everything that decides who a caller is, or what a verified identity

@@ -34,13 +34,14 @@ jobs:
           fi
 
       # The cross-repo dispatch needs a token that can run workflows in
-      # mctl-gitops; the mctl-agents App provides it (org secrets
-      # AGENTS_APP_ID / AGENTS_APP_PRIVATE_KEY, visibility=all).
+      # mctl-gitops; the mctl-agents App provides it (org variable
+      # AGENTS_APP_CLIENT_ID and org secret AGENTS_APP_PRIVATE_KEY,
+      # visibility=all).
       - name: Generate Platform App token
         id: app
-        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ secrets.AGENTS_APP_ID }}
+          client-id: ${{ vars.AGENTS_APP_CLIENT_ID }}
           private-key: ${{ secrets.AGENTS_APP_PRIVATE_KEY }}
           owner: mctlhq
           repositories: mctl-gitops

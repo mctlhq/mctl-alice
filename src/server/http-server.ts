@@ -1478,16 +1478,24 @@ export function createHttpServer(
             clientId,
             clientSecret,
           });
-          stationService = new StationService(client);
-          const devices = await stationService.listDevices(true);
+          const userService = new StationService(client);
+          const devices = await userService.listDevices(true);
           const speakerNames = devices.speakers.map((s) => `${s.name} (${s.room})`);
 
-          saveTokenToEnvFile(tokens.access_token);
-          saveTokenToKeychain(tokens.access_token, "mctl-alice");
+          // Single-user (local) mode only, like the token, QR and cookie
+          // handlers: with AUTH_REQUIRED the credentials belong to one user
+          // and are stored per user below, so they must not become the
+          // process-wide default service or land in a shared .env file
+          // (which is also read-only in the cluster).
+          if (!authRequired) {
+            stationService = userService;
+            saveTokenToEnvFile(tokens.access_token);
+            saveTokenToKeychain(tokens.access_token, "mctl-alice");
 
-          if (tokens.refresh_token) {
-            saveRefreshTokenToEnvFile(tokens.refresh_token);
-            saveTokenToKeychain(tokens.refresh_token, "mctl-alice-refresh-token");
+            if (tokens.refresh_token) {
+              saveRefreshTokenToEnvFile(tokens.refresh_token);
+              saveTokenToKeychain(tokens.refresh_token, "mctl-alice-refresh-token");
+            }
           }
 
           let userId = "usr_local";
@@ -1640,11 +1648,12 @@ export function createHttpServer(
 
           // Verify with Yandex API
           const client = new YandexIoTClient(token, { useKeychain: false, persistEnv: false });
-          stationService = new StationService(client, quasarClient);
-          const devices = await stationService.listDevices(true);
+          const userService = new StationService(client, quasarClient);
+          const devices = await userService.listDevices(true);
           const speakerNames = devices.speakers.map((s) => `${s.name} (${s.room})`);
 
           if (!authRequired) {
+            stationService = userService;
             saveTokenToEnvFile(token);
             saveTokenToKeychain(token, "mctl-alice");
 

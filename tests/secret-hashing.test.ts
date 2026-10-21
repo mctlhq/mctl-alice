@@ -22,7 +22,7 @@ async function writeAll(storage: IStorage) {
 }
 
 // Every behavior both backends must share.
-function contract(name: string, open: () => Promise<{ storage: IStorage; dump: () => Promise<string>; rawInsert: (sql: string[]) => Promise<void>; reopen: () => Promise<IStorage> }>) {
+function contract(name: string, open: () => Promise<{ storage: IStorage; dump: () => Promise<string>; rawInsert: (sql: string[]) => Promise<void>; reopen: (options?: { rehash?: boolean }) => Promise<IStorage> }>) {
   describe(name, () => {
     it("stores no bearer secret in clear text and still resolves each one", async () => {
       const { storage, dump } = await open();
@@ -35,6 +35,14 @@ function contract(name: string, open: () => Promise<{ storage: IStorage; dump: (
       expect(await storage.getBrowserTransaction(secrets.tx)).toBe("payload");
       expect((await storage.consumeAuthCode(secrets.code))?.code).toBe(secrets.code);
       expect(await storage.consumeAuthCode(secrets.code)).toBeNull();
+    });
+    it("deleting a session or browser transaction invalidates it", async () => {
+      const { storage } = await open();
+      await writeAll(storage);
+      await storage.deleteWebSession(secrets.session);
+      expect(await storage.getWebSession(secrets.session)).toBeNull();
+      await storage.deleteBrowserTransaction(secrets.tx);
+      expect(await storage.getBrowserTransaction(secrets.tx)).toBeNull();
     });
     it("never accepts a stored digest as the secret", async () => {
       const { storage } = await open();
@@ -61,7 +69,7 @@ function contract(name: string, open: () => Promise<{ storage: IStorage; dump: (
         `INSERT INTO oauth_tokens (access_token, refresh_token, client_id, user_id, yandex_access_token, scope, created_at, expires_at) VALUES ('old_at', 'old_rt', 'client', 'alice', '', 'iot:view', ${now}, ${now + 3600000})`,
         `INSERT INTO oauth_codes (code, client_id, redirect_uri, user_id, yandex_access_token, scope, created_at, expires_at) VALUES ('old_code', 'client', 'http://localhost/cb', 'alice', '', 'iot:view', ${now}, ${now + 60000})`,
       ]);
-      const migrated = await reopen();
+      const migrated = await reopen({ rehash: true });
       const contents = await dump();
       for (const value of ["old_at", "old_rt", "old_code"]) expect(contents, value).not.toContain(`'${value}'`);
       expect((await migrated.getToken("old_at"))?.userId).toBe("alice");
@@ -111,7 +119,7 @@ describe("bearer secrets at rest", () => {
       const schema = "alice_secrets_" + randomUUID().replaceAll("-", ""); schemas.push(schema);
       await admin.query(`CREATE SCHEMA ${schema}`);
       const options = { connectionString, options: `-c search_path=${schema}` };
-      const make = async () => { const pool = new pg.Pool(options); pools.push(pool); const s = new PostgresStorage({ pool }); await s.ready(); return s; };
+      const make = async ({ rehash = false } = {}) => { const pool = new pg.Pool(options); pools.push(pool); const s = new PostgresStorage({ pool, rehashStoredSecrets: rehash }); await s.ready(); return s; };
       const storage = await make();
       const query = new pg.Pool(options); pools.push(query);
       return {
@@ -121,6 +129,19 @@ describe("bearer secrets at rest", () => {
         rawInsert: async sql => { for (const q of sql) await query.query(q); },
         reopen: make,
       };
+    });
+    it("leaves rows an older pod can read untouched until rehashing is enabled", async () => {
+      const schema = "alice_secrets_" + randomUUID().replaceAll("-", ""); schemas.push(schema);
+      await admin.query(`CREATE SCHEMA ${schema}`);
+      const options = { connectionString, options: `-c search_path=${schema}` };
+      const pool = new pg.Pool(options); pools.push(pool);
+      await new PostgresStorage({ pool }).ready();
+      await pool.query(`INSERT INTO web_sessions (session_hash, user_id, created_at, expires_at) VALUES ('old_session', 'alice', ${now}, ${now + 60000})`);
+      await new PostgresStorage({ pool }).ready();
+      // An older pod looks rows up by the raw value.
+      expect((await pool.query("SELECT user_id FROM web_sessions WHERE session_hash = 'old_session'")).rowCount).toBe(1);
+      await new PostgresStorage({ pool, rehashStoredSecrets: true }).ready();
+      expect((await pool.query("SELECT user_id FROM web_sessions WHERE session_hash = 'old_session'")).rowCount).toBe(0);
     });
   });
 });

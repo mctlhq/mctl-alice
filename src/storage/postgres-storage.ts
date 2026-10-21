@@ -23,13 +23,21 @@ export interface PostgresStorageOptions {
   connectionString?: string;
   pool?: pg.Pool;
   ssl?: boolean | object;
+  /**
+   * Rewrite bearer secrets stored before hashing into digests at startup.
+   * Off by default: a pod from before hashing cannot read rewritten rows, so
+   * enable it (REHASH_STORED_SECRETS=true) only once no such pod serves traffic.
+   */
+  rehashStoredSecrets?: boolean;
 }
 
 export class PostgresStorage implements IStorage {
   private pool: pg.Pool;
+  private rehashStoredSecrets: boolean;
   private initPromise: Promise<void> | null = null;
 
   constructor(options: PostgresStorageOptions = {}) {
+    this.rehashStoredSecrets = options.rehashStoredSecrets ?? process.env.REHASH_STORED_SECRETS === "true";
     if (options.pool) {
       this.pool = options.pool;
     } else {
@@ -160,14 +168,17 @@ export class PostgresStorage implements IStorage {
       `);
 
       // Replace bearer secrets stored before hashing with their digests
-      // (idempotent: digests carry the sha256: prefix).
-      const digest = (column: string) => `'${SECRET_DIGEST_PREFIX}' || encode(sha256(convert_to(${column}, 'UTF8')), 'hex')`;
-      const raw = (column: string) => `${column} NOT LIKE '${SECRET_DIGEST_PREFIX}%'`;
-      await client.query(`UPDATE oauth_tokens SET access_token = ${digest("access_token")} WHERE ${raw("access_token")}`);
-      await client.query(`UPDATE oauth_tokens SET refresh_token = ${digest("refresh_token")} WHERE refresh_token IS NOT NULL AND ${raw("refresh_token")}`);
-      await client.query(`UPDATE oauth_codes SET code = ${digest("code")} WHERE ${raw("code")}`);
-      await client.query(`UPDATE web_sessions SET session_hash = ${digest("session_hash")} WHERE ${raw("session_hash")}`);
-      await client.query(`UPDATE browser_transactions SET key = ${digest("key")} WHERE ${raw("key")}`);
+      // (idempotent: digests carry the sha256: prefix). Until this runs,
+      // lookups fall back to the raw value, see secretLookupKeys.
+      if (this.rehashStoredSecrets) {
+        const digest = (column: string) => `'${SECRET_DIGEST_PREFIX}' || encode(sha256(convert_to(${column}, 'UTF8')), 'hex')`;
+        const raw = (column: string) => `${column} NOT LIKE '${SECRET_DIGEST_PREFIX}%'`;
+        await client.query(`UPDATE oauth_tokens SET access_token = ${digest("access_token")} WHERE ${raw("access_token")}`);
+        await client.query(`UPDATE oauth_tokens SET refresh_token = ${digest("refresh_token")} WHERE refresh_token IS NOT NULL AND ${raw("refresh_token")}`);
+        await client.query(`UPDATE oauth_codes SET code = ${digest("code")} WHERE ${raw("code")}`);
+        await client.query(`UPDATE web_sessions SET session_hash = ${digest("session_hash")} WHERE ${raw("session_hash")}`);
+        await client.query(`UPDATE browser_transactions SET key = ${digest("key")} WHERE ${raw("key")}`);
+      }
 
       await client.query("COMMIT");
     } catch (err) {

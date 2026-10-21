@@ -206,16 +206,24 @@ export class OAuthStorage implements IStorage {
       // Ignore if cannot index
     }
 
-    // Replace bearer secrets stored before hashing with their digests.
+    // Replace bearer secrets stored before hashing with their digests. SQLite
+    // is a single local process, so there is no older reader to protect.
     const migrate = (table: string, column: string) => {
       const rows = this.db.prepare(`SELECT ${column} AS v FROM ${table} WHERE ${column} IS NOT NULL AND ${column} NOT LIKE '${SECRET_DIGEST_PREFIX}%'`).all() as Array<{ v: string }>;
       const update = this.db.prepare(`UPDATE ${table} SET ${column} = ? WHERE ${column} = ?`);
       for (const { v } of rows) update.run(secretDigest(v), v);
     };
-    migrate("oauth_tokens", "access_token");
-    migrate("oauth_tokens", "refresh_token");
-    migrate("oauth_codes", "code");
-    migrate("browser_transactions", "key");
+    this.db.exec("BEGIN");
+    try {
+      migrate("oauth_tokens", "access_token");
+      migrate("oauth_tokens", "refresh_token");
+      migrate("oauth_codes", "code");
+      migrate("browser_transactions", "key");
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   private prepareStatements() {

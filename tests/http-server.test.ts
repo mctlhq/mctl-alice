@@ -373,7 +373,7 @@ describe("HTTP Server & ChatGPT REST API", () => {
   it("should validate missing cookie on /auth/save-cookie", async () => {
     const res = await fetch(`${baseUrl}/auth/save-cookie`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { Origin: baseUrl, "Content-Type": "application/json" },
       body: JSON.stringify({}),
     });
     expect(res.status).toBe(400);
@@ -436,7 +436,7 @@ describe("HTTP Server & ChatGPT REST API", () => {
     // 2. POST /oauth/authorize with approve action
     const approveRes = await fetch(`${baseUrl}/oauth/authorize`, {
       method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      headers: { Origin: baseUrl, "Content-Type": "application/x-www-form-urlencoded" },
       body: `session_id=${encodeURIComponent(sessionId)}&action=approve`,
       redirect: "manual",
     });
@@ -476,7 +476,7 @@ describe("HTTP Server & ChatGPT REST API", () => {
     // 2. Deny authorization
     const denyRes = await fetch(`${baseUrl}/oauth/authorize`, {
       method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      headers: { Origin: baseUrl, "Content-Type": "application/x-www-form-urlencoded" },
       body: `session_id=${encodeURIComponent(sessionId)}&action=deny`,
       redirect: "manual",
     });

@@ -23,10 +23,13 @@ describe("CLI auth helper", () => {
         new Promise<void>(resolve => created[0].listening ? resolve() : created[0].once("listening", () => resolve())),
         started.then(() => { throw new Error("helper finished before listening"); }),
       ]);
-      const send = (origin: string) => fetch(`http://127.0.0.1:${port}/save-token`, {
-        method: "POST", headers: { Origin: origin, "Content-Type": "text/plain" }, body: '{"token":""}',
+      // Nothing beyond this machine can reach it.
+      expect((created[0].address() as import("node:net").AddressInfo).address).toBe("127.0.0.1");
+      const send = (origin?: string) => fetch(`http://127.0.0.1:${port}/save-token`, {
+        method: "POST", headers: { ...(origin ? { Origin: origin } : {}), "Content-Type": "text/plain" }, body: '{"token":""}',
       });
       expect((await send("https://evil.example")).status).toBe(403);
+      expect((await send()).status).toBe(403);
       // Its own page passes the origin check and reaches the token validation.
       expect((await send(`http://localhost:${port}`)).status).toBe(400);
     } finally {

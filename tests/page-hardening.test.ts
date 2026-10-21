@@ -171,6 +171,9 @@ describe("CSP, CORS and HTML hardening", () => {
       // A text/plain form needs no preflight and parses as JSON on the server.
       const crossSite = await fetch(base + path, { method: "POST", headers: { Origin: "https://evil.example", "Content-Type": "text/plain" }, body: '{"token":"attacker","x":"="}' });
       expect(crossSite.status, path).toBe(403);
+      // A plain curl from the LAN carries no Origin and must not write either.
+      const originless = await fetch(base + path, { method: "POST", headers: { "Content-Type": "application/json" }, body: '{"token":"attacker"}' });
+      expect(originless.status, path).toBe(403);
       const local = await fetch(base + path, { method: "POST", headers: { Origin: "http://localhost", "Content-Type": "application/json" }, body: "{}" });
       expect(local.status, path).not.toBe(403);
     }

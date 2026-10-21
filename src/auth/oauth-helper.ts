@@ -232,8 +232,10 @@ export function startAuthServer(options: AuthServerOptions): Promise<{
 
       if (url.pathname === "/save-token" && req.method === "POST") {
         // Only this helper's own page may hand it a token: a cross-site
-        // text/plain form would otherwise store an attacker's account.
-        if (!isLocalOrigin(req.headers.origin, `http://localhost:${port}`)) {
+        // text/plain form would otherwise store an attacker's account. Its
+        // fetch always carries Origin, so a request without one is refused.
+        const origin = req.headers.origin;
+        if (origin === undefined || !isLocalOrigin(origin, `http://localhost:${port}`)) {
           res.writeHead(403); res.end("Invalid origin"); return;
         }
         let body = "";
@@ -289,7 +291,9 @@ export function startAuthServer(options: AuthServerOptions): Promise<{
       res.end("Not Found");
     });
 
-    server.listen(port, () => {
+    // Loopback only: the redirect URI is localhost, and nothing on the
+    // network should be able to reach /save-token while the flow is open.
+    server.listen(port, "127.0.0.1", () => {
       // server is ready
     });
 

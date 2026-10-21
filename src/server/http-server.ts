@@ -676,9 +676,11 @@ export function createHttpServer(
     const url = new URL(req.url || "/", baseUrl);
     if (req.method === "POST" && (url.pathname.startsWith("/account/") || ["/oauth/authorize", "/auth/save-cookie", "/auth/save-token"].includes(url.pathname))) {
       // State-changing forms. Hosted: exactly our origin. Self-hosted: these
-      // need no session and rewrite the stored Yandex credentials, so a
-      // cross-site text/plain form must not reach them either.
-      const allowed = authRequired ? req.headers.origin === new URL(baseUrl).origin : isLocalOrigin(req.headers.origin, baseUrl);
+      // need no session and rewrite the stored Yandex credentials, so neither
+      // a cross-site text/plain form nor an Origin-less non-browser request
+      // may reach them; a browser always sends Origin on POST.
+      const origin = req.headers.origin;
+      const allowed = authRequired ? origin === new URL(baseUrl).origin : origin !== undefined && isLocalOrigin(origin, baseUrl);
       if (!allowed) {
         res.writeHead(403); res.end("Invalid origin"); return;
       }

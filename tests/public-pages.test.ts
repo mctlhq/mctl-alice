@@ -98,6 +98,7 @@ describe("Public Informational Pages and Account Dashboard", () => {
     const delRes = await fetch(`${baseUrl}/account/delete`, {
       method: "POST",
       headers: {
+        Origin: baseUrl,
         Cookie: `mctl_session=${sessionId}`,
       },
       redirect: "manual",

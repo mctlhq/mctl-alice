@@ -1,19 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import dns from "node:dns";
 import { OAuthStorage } from "../src/storage/oauth-storage.js";
-import { OAuthController, isNonPublicAddress, redirectUriMatches, validateRedirectUris } from "../src/auth/oauth-controller.js";
+import { Readable } from "node:stream";
+import { OAuthController, fetchMetadataDocument, isNonPublicAddress, publicOnlyLookup, readCapped, redirectUriMatches, validateRedirectUris } from "../src/auth/oauth-controller.js";
 
 const baseUrl = "https://alice.mctl.ai";
 const challenge = "a".repeat(43);
 const metadataUrl = "https://client.example/oauth/client.json";
-
-function jsonResponse(body: unknown, init: ResponseInit = {}) {
-  return new Response(typeof body === "string" ? body : JSON.stringify(body), {
-    status: 200,
-    headers: { "content-type": "application/json" },
-    ...init,
-  });
-}
 
 describe("hosted OAuth client binding", () => {
   let storage: OAuthStorage;
@@ -80,6 +73,7 @@ describe("hosted OAuth client binding", () => {
         await expect(controller.registerClient({ redirect_uris: redirect_uris as string[] }), JSON.stringify(redirect_uris)).rejects.toThrow();
       }
       expect(() => validateRedirectUris(["https://a.example/" + "x".repeat(2048)])).toThrow();
+      await expect(controller.registerClient({ redirect_uris: ["javascript:x"] })).rejects.toMatchObject({ code: "invalid_redirect_uri" });
     });
   });
 
@@ -87,55 +81,82 @@ describe("hosted OAuth client binding", () => {
     it("accepts this server and rejects any other audience", async () => {
       expect(await authorize("web", "https://app.example/cb", { resource: `${baseUrl}/mcp` })).toMatchObject({ type: "consent" });
       expect(await authorize("web", "https://app.example/cb", { resource: `${baseUrl}/` })).toMatchObject({ type: "consent" });
-      expect(await authorize("web", "https://app.example/cb", { resource: "https://other.example/mcp" })).toMatchObject({ error: "invalid_target" });
-      await expect(controller.handleToken({ grant_type: "refresh_token", refresh_token: "x", resource: "https://other.example/mcp" })).rejects.toThrow("resource");
+      for (const path of ["/sse", "/mcp/sse", "/messages", "/mcp/messages"]) {
+        expect(await authorize("web", "https://app.example/cb", { resource: `${baseUrl}${path}` }), path).toMatchObject({ type: "consent" });
+      }
+      for (const resource of ["https://other.example/mcp", `${baseUrl}/admin`, `${baseUrl}.evil.example/mcp`]) {
+        expect(await authorize("web", "https://app.example/cb", { resource }), resource).toMatchObject({ error: "invalid_target" });
+      }
+      await expect(controller.handleToken({ grant_type: "refresh_token", refresh_token: "x", resource: "https://other.example/mcp" })).rejects.toMatchObject({ code: "invalid_target" });
     });
   });
 
   describe("client metadata documents", () => {
-    const publicDns = () => vi.spyOn(dns.promises, "lookup").mockResolvedValue([{ address: "93.184.215.14", family: 4 }] as never);
     const validDocument = { client_id: metadataUrl, client_name: "Example", redirect_uris: ["https://client.example/cb"] };
+    const doc = (body: unknown, status = 200, contentType = "application/json") => ({ status, contentType, body: typeof body === "string" ? body : JSON.stringify(body) });
+    // A controller whose metadata fetcher serves the queued responses and fails on anything extra.
+    function withDocuments(...responses: ReturnType<typeof doc>[]) {
+      const fetcher = vi.fn(async () => { const next = responses.shift(); if (!next) throw new Error("unexpected metadata fetch"); return next; });
+      return { fetcher, hosted: new OAuthController({ baseUrl, yandexClientId: "app", storage, authRequired: true, fetchMetadataDocument: fetcher }) };
+    }
 
     it("stores a self-identifying document and binds its redirect URIs", async () => {
-      publicDns();
-      const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(validDocument));
-      expect(await authorize(metadataUrl, "https://client.example/cb")).toMatchObject({ type: "consent", clientName: "Example" });
-      expect(fetchMock.mock.calls[0][1]).toMatchObject({ redirect: "manual" });
-      expect(await authorize(metadataUrl, "https://client.example/elsewhere")).toMatchObject({ error: "invalid_request" });
+      const { hosted, fetcher } = withDocuments(doc(validDocument));
+      const consent = await hosted.handleAuthorize({ client_id: metadataUrl, redirect_uri: "https://client.example/cb", userId: "alice", scope: "iot:view", code_challenge: challenge, code_challenge_method: "S256" });
+      expect(consent).toMatchObject({ type: "consent", clientName: "Example" });
+      expect(await hosted.isAllowedRedirectUri("https://client.example/elsewhere", metadataUrl)).toBe(false);
+      expect(fetcher).toHaveBeenCalledTimes(1);
     });
 
-    it("rejects documents that redirect, lie about identity, are oversized or are not JSON", async () => {
-      publicDns();
-      const fetchMock = vi.spyOn(globalThis, "fetch");
-      for (const response of [
-        new Response(null, { status: 302, headers: { location: "https://169.254.169.254/" } }),
-        jsonResponse({ ...validDocument, client_id: "https://other.example/client.json" }),
-        jsonResponse({ ...validDocument, redirect_uris: ["javascript:alert(1)"] }),
-        jsonResponse({ ...validDocument, client_name: "x".repeat(20000) }),
-        jsonResponse(validDocument, { headers: { "content-type": "text/html" } }),
-        jsonResponse("not json"),
-      ]) {
-        fetchMock.mockResolvedValueOnce(response);
-        expect(await controller.resolveClientMetadata(metadataUrl)).toBe(false);
+    it("rejects documents that redirect, lie about identity, are invalid or are not JSON", async () => {
+      const cases = [
+        doc("", 302),
+        doc({ ...validDocument, client_id: "https://other.example/client.json" }),
+        doc({ ...validDocument, redirect_uris: ["javascript:alert(1)"] }),
+        doc(validDocument, 200, "text/html"),
+        doc("not json"),
+      ];
+      const { hosted, fetcher } = withDocuments(...cases);
+      for (let i = 0; i < 5; i++) {
+        expect(await hosted.resolveClientMetadata(metadataUrl)).toBe(false);
+        expect(fetcher).toHaveBeenCalledTimes(i + 1);
         expect(await storage.getClient(metadataUrl)).toBeNull();
       }
     });
 
-    it("never fetches non-public addresses, including via DNS", async () => {
-      const fetchMock = vi.spyOn(globalThis, "fetch");
-      for (const url of ["https://127.0.0.1/c.json", "https://[::1]/c.json", "https://169.254.169.254/c.json", "https://100.64.0.1/c.json", "https://[::ffff:10.0.0.1]/c.json", "https://0.0.0.0/c.json", "https://client.example:8443/c.json"]) {
-        expect(await controller.resolveClientMetadata(url), url).toBe(false);
+    it("never fetches local names or non-public literals", async () => {
+      const { hosted, fetcher } = withDocuments();
+      for (const url of ["https://127.0.0.1/c.json", "https://[::1]/c.json", "https://169.254.169.254/c.json", "https://100.64.0.1/c.json", "https://[::ffff:10.0.0.1]/c.json", "https://[2002:a00:1::1]/c.json", "https://0.0.0.0/c.json", "https://localhost/c.json", "https://client.example:8443/c.json", "http://client.example/c.json"]) {
+        expect(await hosted.resolveClientMetadata(url), url).toBe(false);
       }
-      vi.spyOn(dns.promises, "lookup").mockResolvedValue([{ address: "93.184.215.14", family: 4 }, { address: "10.0.0.5", family: 4 }] as never);
-      expect(await controller.resolveClientMetadata(metadataUrl)).toBe(false);
-      expect(fetchMock).not.toHaveBeenCalled();
+      expect(fetcher).not.toHaveBeenCalled();
+    });
+
+    it("vets resolved addresses at connect time, so a rebinding answer is refused", async () => {
+      const lookup = vi.spyOn(dns.promises, "lookup")
+        .mockResolvedValueOnce([{ address: "93.184.215.14", family: 4 }, { address: "10.0.0.5", family: 4 }] as never)
+        .mockResolvedValueOnce([{ address: "169.254.169.254", family: 4 }] as never);
+      for (let i = 0; i < 2; i++) {
+        await expect(fetchMetadataDocument(metadataUrl)).rejects.toThrow("non-public");
+      }
+      expect(lookup).toHaveBeenCalledTimes(2);
+      const resolved = await new Promise<unknown>((resolve) => {
+        lookup.mockResolvedValueOnce([{ address: "93.184.215.14", family: 4 }] as never);
+        publicOnlyLookup("client.example", {}, (err, address) => resolve(err ?? address));
+      });
+      expect(resolved).toBe("93.184.215.14");
+    });
+
+    it("caps the document size while reading", async () => {
+      await expect(readCapped(Readable.from([Buffer.alloc(10000), Buffer.alloc(10000)]), 16384)).rejects.toThrow("too large");
+      expect(await readCapped(Readable.from([Buffer.from('{"a":'), Buffer.from("1}")]), 16384)).toBe('{"a":1}');
     });
 
     it("classifies addresses", () => {
-      for (const ip of ["10.1.2.3", "127.0.0.1", "172.16.0.1", "192.168.1.1", "169.254.169.254", "100.86.17.126", "0.0.0.0", "224.0.0.1", "::1", "fd00::1", "fe80::1", "::ffff:127.0.0.1", "::ffff:a00:1", "not-an-ip"]) {
+      for (const ip of ["10.1.2.3", "127.0.0.1", "172.16.0.1", "192.168.1.1", "169.254.169.254", "100.86.17.126", "0.0.0.0", "224.0.0.1", "::1", "fd00::1", "fe80::1", "::ffff:127.0.0.1", "::ffff:a00:1", "::ffff:0:a00:1", "2002:a00:1::1", "2001:0:4136:e378::1", "::a00:1", "not-an-ip"]) {
         expect(isNonPublicAddress(ip), ip).toBe(true);
       }
-      for (const ip of ["93.184.215.14", "1.1.1.1", "172.32.0.1", "2606:4700::1111"]) {
+      for (const ip of ["93.184.215.14", "1.1.1.1", "172.32.0.1", "2606:4700::1111", "2001:4860:4860::8888"]) {
         expect(isNonPublicAddress(ip), ip).toBe(false);
       }
     });

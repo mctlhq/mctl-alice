@@ -1,11 +1,27 @@
 import { validScope } from "../tools/handlers.js";
 import crypto from "node:crypto";
 import dns from "node:dns";
+import https from "node:https";
 import net from "node:net";
 import { IStorage } from "../storage/storage-interface.js";
 import { exchangeCodeForToken, refreshAccessToken } from "./token-storage.js";
 
+/** An OAuth error carrying the RFC error code the endpoint should return. */
+export class OAuthError extends Error {
+  constructor(readonly code: string, message: string) {
+    super(message);
+  }
+}
+
+export interface MetadataResponse {
+  status: number;
+  contentType: string;
+  body: string;
+}
+
 export interface OAuthControllerOptions {
+  /** Fetches a client metadata document; replaceable in tests. */
+  fetchMetadataDocument?: (url: string) => Promise<MetadataResponse>;
   authRequired?: boolean;
   baseUrl: string;
   yandexClientId: string;
@@ -64,16 +80,20 @@ export function isNonPublicAddress(address: string): boolean {
       (a === 192 && b === 0) || (a === 198 && (b === 18 || b === 19));
   }
   if (net.isIPv6(ip)) {
+    // 6to4 (2002::/16), Teredo (2001:0::/32), IPv4-translated (::ffff:0:0/96)
+    // and IPv4-compatible (::/96) addresses embed an IPv4 address: never public here.
+    if (/^2002:/.test(ip) || /^2001:0?:/.test(ip) || ip.startsWith("::ffff:0:") || /^::[0-9a-f]{1,4}(:[0-9a-f]{1,4})?$/.test(ip)) return true;
     return ip === "::" || ip === "::1" || /^f[cd]/.test(ip) || /^fe[89ab]/.test(ip) || ip.startsWith("ff") || ip.startsWith("64:ff9b:") || ip.startsWith("2001:db8:");
   }
   return true;
 }
 
 /**
- * Validates that an HTTPS URL does not point to loopback, private, link-local, or cloud metadata ranges.
- * Hostnames are resolved and every resolved address must be public.
+ * Static checks on a client metadata URL: HTTPS on 443, no userinfo, and not a
+ * local name or a non-public IP literal. Hostnames are vetted at connect time
+ * by publicOnlyLookup.
  */
-async function isSafePublicHttpsUrl(urlString: string): Promise<boolean> {
+function isAcceptableMetadataUrl(urlString: string): boolean {
   let u: URL;
   try {
     u = new URL(urlString);
@@ -83,13 +103,62 @@ async function isSafePublicHttpsUrl(urlString: string): Promise<boolean> {
   if (u.protocol !== "https:" || u.username || u.password || u.port && u.port !== "443") return false;
   const host = u.hostname.toLowerCase();
   if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host.endsWith(".internal")) return false;
-  if (net.isIP(host.replace(/^\[|\]$/g, ""))) return !isNonPublicAddress(host);
-  try {
-    const addresses = await dns.promises.lookup(host, { all: true, verbatim: true });
-    return addresses.length > 0 && addresses.every((a) => !isNonPublicAddress(a.address));
-  } catch {
-    return false;
+  const bare = host.replace(/^\[|\]$/g, "");
+  return !net.isIP(bare) || !isNonPublicAddress(bare);
+}
+
+/**
+ * dns.lookup replacement for outbound metadata requests. The connection uses
+ * exactly the addresses vetted here, so a rebinding answer between a check and
+ * the connect cannot slip through.
+ */
+export function publicOnlyLookup(
+  hostname: string,
+  options: dns.LookupOptions,
+  callback: (err: NodeJS.ErrnoException | null, address: string | dns.LookupAddress[], family?: number) => void,
+): void {
+  dns.promises.lookup(hostname, { all: true, verbatim: true }).then((addresses) => {
+    if (!addresses.length || addresses.some((a) => isNonPublicAddress(a.address))) {
+      callback(Object.assign(new Error(`Refusing non-public address for ${hostname}`), { code: "ENOTFOUND" }), []);
+    } else if (options.all) {
+      callback(null, addresses);
+    } else {
+      callback(null, addresses[0].address, addresses[0].family);
+    }
+  }, (err) => callback(err, []));
+}
+
+/** Concatenates a body stream, failing as soon as it exceeds the limit. */
+export async function readCapped(stream: AsyncIterable<Buffer | string>, limit: number): Promise<string> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of stream) {
+    const buf = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
+    size += buf.byteLength;
+    if (size > limit) throw new Error("Client metadata document is too large");
+    chunks.push(buf);
   }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+/** GET a metadata document: no redirects, public addresses only, 4 s, size-capped. */
+export function fetchMetadataDocument(url: string): Promise<MetadataResponse> {
+  return new Promise((resolve, reject) => {
+    const req = https.get(url, { lookup: publicOnlyLookup as any, headers: { Accept: "application/json", "User-Agent": "mctl-alice" } }, (res) => {
+      const declared = Number(res.headers["content-length"]);
+      if (Number.isFinite(declared) && declared > MAX_METADATA_BYTES) {
+        res.destroy();
+        reject(new Error("Client metadata document is too large"));
+        return;
+      }
+      readCapped(res, MAX_METADATA_BYTES).then(
+        (body) => resolve({ status: res.statusCode || 0, contentType: String(res.headers["content-type"] || ""), body }),
+        (err) => { res.destroy(); reject(err); },
+      );
+    });
+    req.setTimeout(4000, () => req.destroy(new Error("Client metadata request timed out")));
+    req.on("error", reject);
+  });
 }
 
 function isLoopbackHttp(u: URL): boolean {
@@ -114,19 +183,19 @@ export function redirectUriMatches(registered: string, presented: string): boole
 
 /** Returns the normalized redirect URI list, or throws when any entry is unacceptable. */
 export function validateRedirectUris(value: unknown): string[] {
-  if (!Array.isArray(value) || value.length === 0) throw new Error("redirect_uris must be a non-empty array");
-  if (value.length > MAX_REDIRECT_URIS) throw new Error(`At most ${MAX_REDIRECT_URIS} redirect_uris are allowed`);
+  if (!Array.isArray(value) || value.length === 0) throw new OAuthError("invalid_redirect_uri", "redirect_uris must be a non-empty array");
+  if (value.length > MAX_REDIRECT_URIS) throw new OAuthError("invalid_redirect_uri", `At most ${MAX_REDIRECT_URIS} redirect_uris are allowed`);
   return value.map((entry) => {
-    if (typeof entry !== "string" || !entry || entry.length > MAX_URI_LENGTH) throw new Error("Invalid redirect_uri");
+    if (typeof entry !== "string" || !entry || entry.length > MAX_URI_LENGTH) throw new OAuthError("invalid_redirect_uri", "Invalid redirect_uri");
     let u: URL;
     try {
       u = new URL(entry);
     } catch {
-      throw new Error("redirect_uri must be an absolute URI");
+      throw new OAuthError("invalid_redirect_uri", "redirect_uri must be an absolute URI");
     }
-    if (u.hash || entry.includes("#")) throw new Error("redirect_uri must not contain a fragment");
-    if (FORBIDDEN_REDIRECT_SCHEMES.has(u.protocol)) throw new Error("redirect_uri scheme is not allowed");
-    if (u.username || u.password) throw new Error("redirect_uri must not contain credentials");
+    if (u.hash || entry.includes("#")) throw new OAuthError("invalid_redirect_uri", "redirect_uri must not contain a fragment");
+    if (FORBIDDEN_REDIRECT_SCHEMES.has(u.protocol)) throw new OAuthError("invalid_redirect_uri", "redirect_uri scheme is not allowed");
+    if (u.username || u.password) throw new OAuthError("invalid_redirect_uri", "redirect_uri must not contain credentials");
     return entry;
   });
 }
@@ -137,26 +206,6 @@ function sanitizeClientName(value: unknown, fallback: string): string {
   return name ? name.slice(0, MAX_CLIENT_NAME_LENGTH) : fallback;
 }
 
-async function readCappedText(res: Response, limit: number): Promise<string> {
-  const declared = Number(res.headers.get("content-length"));
-  if (Number.isFinite(declared) && declared > limit) throw new Error("Client metadata document is too large");
-  if (!res.body) return "";
-  const reader = res.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    size += value.byteLength;
-    if (size > limit) {
-      await reader.cancel();
-      throw new Error("Client metadata document is too large");
-    }
-    chunks.push(value);
-  }
-  return Buffer.concat(chunks).toString("utf8");
-}
-
 export class OAuthController {
   private authRequired: boolean;
   private baseUrl: string;
@@ -164,6 +213,7 @@ export class OAuthController {
   private yandexClientSecret?: string;
   private storage: IStorage;
   private yandexCallbackUri: string;
+  private fetchMetadata: (url: string) => Promise<MetadataResponse>;
 
   constructor(options: OAuthControllerOptions) {
     this.authRequired = options.authRequired ?? false;
@@ -171,6 +221,7 @@ export class OAuthController {
     this.yandexClientId = options.yandexClientId;
     this.yandexClientSecret = options.yandexClientSecret;
     this.storage = options.storage;
+    this.fetchMetadata = options.fetchMetadataDocument ?? fetchMetadataDocument;
     this.yandexCallbackUri =
       options.yandexCallbackUri ||
       process.env.YANDEX_CALLBACK_URL ||
@@ -258,10 +309,13 @@ export class OAuthController {
     };
   }
 
-  /** RFC 8707: the only protected resource this server issues tokens for is itself. */
+  /**
+   * RFC 8707: the only protected resource this server issues tokens for is
+   * itself, under any of the MCP endpoints it serves.
+   */
   isOwnResource(resource: string): boolean {
     const normalized = resource.replace(/\/+$/, "");
-    return normalized === this.baseUrl || normalized === `${this.baseUrl}/mcp`;
+    return ["", "/mcp", "/sse", "/mcp/sse", "/messages", "/mcp/messages"].some((path) => normalized === `${this.baseUrl}${path}`);
   }
 
   /**
@@ -352,22 +406,16 @@ export class OAuthController {
     }
 
     // SSRF protection
-    if (!(await isSafePublicHttpsUrl(clientId))) {
+    if (!isAcceptableMetadataUrl(clientId)) {
       console.warn(`[OAuth] Blocked metadata fetch for unsafe URL: ${clientId}`);
       return false;
     }
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 4000);
     try {
-      const res = await fetch(clientId, {
-        headers: { Accept: "application/json" },
-        redirect: "manual",
-        signal: controller.signal,
-      });
+      const res = await this.fetchMetadata(clientId);
       if (res.status !== 200) return false;
-      if (!(res.headers.get("content-type") || "").toLowerCase().includes("json")) return false;
-      const data = JSON.parse(await readCappedText(res, MAX_METADATA_BYTES)) as { client_id?: unknown; redirect_uris?: unknown; client_name?: unknown };
+      if (!res.contentType.toLowerCase().includes("json")) return false;
+      const data = JSON.parse(res.body) as { client_id?: unknown; redirect_uris?: unknown; client_name?: unknown };
       // draft-ietf-oauth-client-id-metadata-document: the document must name itself.
       if (!data || typeof data !== "object" || data.client_id !== clientId) return false;
       await this.storage.saveClient({
@@ -380,8 +428,6 @@ export class OAuthController {
       return true;
     } catch (err: any) {
       console.warn(`[OAuth] Failed to resolve client metadata document for ${clientId}:`, err.message);
-    } finally {
-      clearTimeout(timeoutId);
     }
     return false;
   }
@@ -659,7 +705,7 @@ export class OAuthController {
     scope?: string;
   }> {
     const grantType = body.grant_type;
-    if (body.resource !== undefined && !this.isOwnResource(body.resource)) throw new Error("resource does not identify this server");
+    if (body.resource !== undefined && !this.isOwnResource(body.resource)) throw new OAuthError("invalid_target", "resource does not identify this server");
 
     if (grantType === "authorization_code") {
       if (!body.code) {

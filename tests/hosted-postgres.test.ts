@@ -41,6 +41,18 @@ describe.skipIf(!connectionString)("hosted isolation with real PostgreSQL", () =
     expect(await auth("bob")).toMatchObject({ authenticated: false, status: 401 });
     expect(await storage.getTokenByRefreshToken("rt-bob")).toBeNull();
   });
+  it("revokes both access and refresh tokens only for the selected user/client", async () => {
+    for (const [userId, clientId] of [["erin", "one"], ["erin", "two"], ["frank", "one"]]) {
+      const key = `${userId}-${clientId}`;
+      await storage.saveToken({ accessToken: key, refreshToken: `rt-${key}`, userId, clientId, scope: "iot:view", yandexAccessToken: "user-token", createdAt: Date.now(), expiresAt: Date.now() + 60000 });
+    }
+    expect(await storage.listUserGrants("erin")).toHaveLength(2);
+    expect(await storage.revokeUserGrant("erin", "one")).toBe(true);
+    expect(await storage.getToken("erin-one")).toBeNull();
+    expect(await storage.getTokenByRefreshToken("rt-erin-one")).toBeNull();
+    expect(await storage.getToken("erin-two")).not.toBeNull();
+    expect(await storage.getToken("frank-one")).not.toBeNull();
+  });
   it("rejects expired, unowned, missing-owner and empty-scope grants without upstream calls", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch");
     try {

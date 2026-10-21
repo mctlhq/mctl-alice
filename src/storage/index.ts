@@ -12,6 +12,11 @@ export function createStorage(dbPath?: string): IStorage {
     console.log("🐘 [Storage] Initialized PostgreSQL storage backend");
     return new PostgresStorage({ connectionString: process.env.DATABASE_URL });
   }
+  if (process.env.MINIO_ENDPOINT || process.env.MINIO_ACCESS_KEY) {
+    // The MinIO backend was removed; starting on an empty local SQLite store
+    // instead would look healthy while every existing grant is gone.
+    throw new Error("MinIO storage is no longer supported; set DATABASE_URL for PostgreSQL");
+  }
   console.log("💾 [Storage] Initialized SQLite local storage backend");
   return new OAuthStorage(dbPath);
 }

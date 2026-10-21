@@ -47,6 +47,7 @@ describe("hosted access boundary", () => {
     vi.stubEnv("YANDEX_COOKIE", "Session_id=shared-home");
     db = new OAuthStorage(":memory:"); storage = asynchronous(db); telemetry = new TelemetryStorage(":memory:");
     await seed(storage, "alice"); await seed(storage, "bob", "iot:view");
+    await storage.saveClient({ clientId: "client", clientSecret: "", clientName: "Test client", redirectUris: ["http://localhost/callback"], createdAt: now });
   });
   afterEach(async () => {
     vi.restoreAllMocks(); vi.unstubAllEnvs();

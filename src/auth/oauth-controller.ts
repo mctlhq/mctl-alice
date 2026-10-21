@@ -1,5 +1,7 @@
 import { validScope } from "../tools/handlers.js";
 import crypto from "node:crypto";
+import dns from "node:dns";
+import net from "node:net";
 import { IStorage } from "../storage/storage-interface.js";
 import { exchangeCodeForToken, refreshAccessToken } from "./token-storage.js";
 
@@ -33,32 +35,126 @@ export type AuthorizeResult =
       status: number;
     };
 
+const MAX_REDIRECT_URIS = 10;
+const MAX_URI_LENGTH = 2048;
+const MAX_CLIENT_NAME_LENGTH = 100;
+const MAX_METADATA_BYTES = 16 * 1024;
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
+const FORBIDDEN_REDIRECT_SCHEMES = new Set(["javascript:", "data:", "file:", "vbscript:", "blob:", "about:"]);
+
+/**
+ * True for addresses that must never be fetched server-side: loopback, private,
+ * CGNAT, link-local (incl. cloud metadata), unspecified, multicast and reserved.
+ */
+export function isNonPublicAddress(address: string): boolean {
+  const ip = address.replace(/^\[|\]$/g, "").toLowerCase();
+  const mapped = ip.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+  if (mapped) return isNonPublicAddress(mapped[1]);
+  // URL parsing rewrites IPv4-mapped literals to hex, e.g. [::ffff:10.0.0.1] -> [::ffff:a00:1].
+  const mappedHex = ip.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+  if (mappedHex) {
+    const [hi, lo] = mappedHex.slice(1).map((h) => parseInt(h, 16));
+    return isNonPublicAddress(`${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`);
+  }
+  if (net.isIPv4(ip)) {
+    const [a, b] = ip.split(".").map(Number);
+    return a === 0 || a === 10 || a === 127 || a >= 224 ||
+      (a === 100 && b >= 64 && b <= 127) || (a === 169 && b === 254) ||
+      (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) ||
+      (a === 192 && b === 0) || (a === 198 && (b === 18 || b === 19));
+  }
+  if (net.isIPv6(ip)) {
+    return ip === "::" || ip === "::1" || /^f[cd]/.test(ip) || /^fe[89ab]/.test(ip) || ip.startsWith("ff") || ip.startsWith("64:ff9b:") || ip.startsWith("2001:db8:");
+  }
+  return true;
+}
+
 /**
  * Validates that an HTTPS URL does not point to loopback, private, link-local, or cloud metadata ranges.
+ * Hostnames are resolved and every resolved address must be public.
  */
-function isSafePublicHttpsUrl(urlString: string): boolean {
+async function isSafePublicHttpsUrl(urlString: string): Promise<boolean> {
+  let u: URL;
   try {
-    const u = new URL(urlString);
-    if (u.protocol !== "https:") return false;
-    const host = u.hostname.toLowerCase();
-    if (
-      host === "localhost" ||
-      host.endsWith(".localhost") ||
-      host.endsWith(".local") ||
-      host.endsWith(".internal") ||
-      host === "127.0.0.1" ||
-      host.startsWith("127.") ||
-      host.startsWith("169.254.") ||
-      host.startsWith("10.") ||
-      host.startsWith("192.168.") ||
-      /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(host)
-    ) {
-      return false;
-    }
-    return true;
+    u = new URL(urlString);
   } catch {
     return false;
   }
+  if (u.protocol !== "https:" || u.username || u.password || u.port && u.port !== "443") return false;
+  const host = u.hostname.toLowerCase();
+  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host.endsWith(".internal")) return false;
+  if (net.isIP(host.replace(/^\[|\]$/g, ""))) return !isNonPublicAddress(host);
+  try {
+    const addresses = await dns.promises.lookup(host, { all: true, verbatim: true });
+    return addresses.length > 0 && addresses.every((a) => !isNonPublicAddress(a.address));
+  } catch {
+    return false;
+  }
+}
+
+function isLoopbackHttp(u: URL): boolean {
+  return u.protocol === "http:" && LOOPBACK_HOSTS.has(u.hostname);
+}
+
+/**
+ * Exact redirect URI matching, with the RFC 8252 section 7.3 exception that a
+ * loopback redirect may use any port.
+ */
+export function redirectUriMatches(registered: string, presented: string): boolean {
+  if (registered === presented) return true;
+  try {
+    const r = new URL(registered);
+    const p = new URL(presented);
+    return isLoopbackHttp(r) && isLoopbackHttp(p) && r.hostname === p.hostname &&
+      r.pathname === p.pathname && r.search === p.search && !p.hash && !p.username && !p.password;
+  } catch {
+    return false;
+  }
+}
+
+/** Returns the normalized redirect URI list, or throws when any entry is unacceptable. */
+export function validateRedirectUris(value: unknown): string[] {
+  if (!Array.isArray(value) || value.length === 0) throw new Error("redirect_uris must be a non-empty array");
+  if (value.length > MAX_REDIRECT_URIS) throw new Error(`At most ${MAX_REDIRECT_URIS} redirect_uris are allowed`);
+  return value.map((entry) => {
+    if (typeof entry !== "string" || !entry || entry.length > MAX_URI_LENGTH) throw new Error("Invalid redirect_uri");
+    let u: URL;
+    try {
+      u = new URL(entry);
+    } catch {
+      throw new Error("redirect_uri must be an absolute URI");
+    }
+    if (u.hash || entry.includes("#")) throw new Error("redirect_uri must not contain a fragment");
+    if (FORBIDDEN_REDIRECT_SCHEMES.has(u.protocol)) throw new Error("redirect_uri scheme is not allowed");
+    if (u.username || u.password) throw new Error("redirect_uri must not contain credentials");
+    return entry;
+  });
+}
+
+function sanitizeClientName(value: unknown, fallback: string): string {
+  if (typeof value !== "string") return fallback;
+  const name = value.replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, "").trim();
+  return name ? name.slice(0, MAX_CLIENT_NAME_LENGTH) : fallback;
+}
+
+async function readCappedText(res: Response, limit: number): Promise<string> {
+  const declared = Number(res.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > limit) throw new Error("Client metadata document is too large");
+  if (!res.body) return "";
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > limit) {
+      await reader.cancel();
+      throw new Error("Client metadata document is too large");
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString("utf8");
 }
 
 export class OAuthController {
@@ -140,8 +236,8 @@ export class OAuthController {
     }
 
     const clientSecret = crypto.randomUUID().replace(/-/g, "");
-    const redirectUris = Array.isArray(body.redirect_uris) ? body.redirect_uris : [];
-    const clientName = body.client_name || "ChatGPT Client";
+    const redirectUris = validateRedirectUris(body.redirect_uris);
+    const clientName = sanitizeClientName(body.client_name, "MCP Client");
 
     await this.storage.saveClient({
       clientId,
@@ -162,11 +258,24 @@ export class OAuthController {
     };
   }
 
+  /** RFC 8707: the only protected resource this server issues tokens for is itself. */
+  isOwnResource(resource: string): boolean {
+    const normalized = resource.replace(/\/+$/, "");
+    return normalized === this.baseUrl || normalized === `${this.baseUrl}/mcp`;
+  }
+
   /**
    * Check whether a redirect URI is permissible
    */
   async isAllowedRedirectUri(redirectUri: string, clientId?: string): Promise<boolean> {
     if (!redirectUri) return false;
+
+    // Hosted mode: only URIs registered for this exact client (DCR or client metadata document).
+    if (this.authRequired) {
+      if (!clientId) return false;
+      const client = await this.storage.getClient(clientId);
+      return !!client && client.redirectUris.some((registered) => redirectUriMatches(registered, redirectUri));
+    }
 
     try {
       const u = new URL(redirectUri);
@@ -243,36 +352,36 @@ export class OAuthController {
     }
 
     // SSRF protection
-    if (!isSafePublicHttpsUrl(clientId)) {
+    if (!(await isSafePublicHttpsUrl(clientId))) {
       console.warn(`[OAuth] Blocked metadata fetch for unsafe URL: ${clientId}`);
       return false;
     }
 
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 4000);
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 4000);
       const res = await fetch(clientId, {
         headers: { Accept: "application/json" },
+        redirect: "manual",
         signal: controller.signal,
       });
-      clearTimeout(timeoutId);
-
-      if (!res.ok) return false;
-      const data = (await res.json()) as { redirect_uris?: string[]; client_name?: string };
-      if (data && typeof data === "object") {
-        const redirectUris = Array.isArray(data.redirect_uris) ? data.redirect_uris : [];
-        const clientName = data.client_name || "Remote MCP Client";
-        await this.storage.saveClient({
-          clientId,
-          clientSecret: "",
-          clientName,
-          redirectUris,
-          createdAt: Date.now(),
-        });
-        return true;
-      }
+      if (res.status !== 200) return false;
+      if (!(res.headers.get("content-type") || "").toLowerCase().includes("json")) return false;
+      const data = JSON.parse(await readCappedText(res, MAX_METADATA_BYTES)) as { client_id?: unknown; redirect_uris?: unknown; client_name?: unknown };
+      // draft-ietf-oauth-client-id-metadata-document: the document must name itself.
+      if (!data || typeof data !== "object" || data.client_id !== clientId) return false;
+      await this.storage.saveClient({
+        clientId,
+        clientSecret: "",
+        clientName: sanitizeClientName(data.client_name, new URL(clientId).hostname),
+        redirectUris: validateRedirectUris(data.redirect_uris),
+        createdAt: Date.now(),
+      });
+      return true;
     } catch (err: any) {
       console.warn(`[OAuth] Failed to resolve client metadata document for ${clientId}:`, err.message);
+    } finally {
+      clearTimeout(timeoutId);
     }
     return false;
   }
@@ -305,9 +414,13 @@ export class OAuthController {
     auto_approve?: boolean;
     prompt?: string;
     userId?: string;
+    resource?: string;
   }): Promise<AuthorizeResult> {
     if (!params.client_id) {
       return { error: "invalid_request", description: "client_id is required", status: 400 };
+    }
+    if (params.resource !== undefined && !this.isOwnResource(params.resource)) {
+      return { error: "invalid_target", description: "resource does not identify this server", status: 400 };
     }
 
     if (params.client_id.startsWith("https://")) {
@@ -537,6 +650,7 @@ export class OAuthController {
     code_verifier?: string;
     refresh_token?: string;
     scope?: string;
+    resource?: string;
   }): Promise<{
     access_token: string;
     token_type: string;
@@ -545,6 +659,7 @@ export class OAuthController {
     scope?: string;
   }> {
     const grantType = body.grant_type;
+    if (body.resource !== undefined && !this.isOwnResource(body.resource)) throw new Error("resource does not identify this server");
 
     if (grantType === "authorization_code") {
       if (!body.code) {

@@ -756,6 +756,7 @@ export function createHttpServer(
         scope: url.searchParams.get("scope") || undefined,
         auto_approve: autoApprove,
         prompt,
+        resource: url.searchParams.get("resource") ?? undefined,
       });
 
       if ("error" in result) {

@@ -3,7 +3,7 @@ import dotenv from "dotenv";
 dotenv.config();
 
 import readline from "node:readline";
-import { exec } from "node:child_process";
+import { execFile } from "node:child_process";
 import {
   startAuthServer,
   buildOAuthUrl,
@@ -31,14 +31,15 @@ function prompt(question: string): Promise<string> {
 }
 
 function openBrowser(url: string) {
-  const openCommand =
+  // No shell: the URL is passed as a single argument to the opener.
+  const [command, args]: [string, string[]] =
     process.platform === "darwin"
-      ? `open "${url}"`
+      ? ["open", [url]]
       : process.platform === "win32"
-      ? `start "" "${url}"`
-      : `xdg-open "${url}"`;
+      ? ["rundll32", ["url.dll,FileProtocolHandler", url]]
+      : ["xdg-open", [url]];
 
-  exec(openCommand, () => {
+  execFile(command, args, () => {
     // Ignore error if open fails
   });
 }

@@ -227,7 +227,7 @@
       privacy_title: "Политика конфиденциальности",
       privacy_version: "Версия 2.0.0 (Сентябрь 2026)",
       privacy_sec1_title: "1. Собираемые данные",
-      privacy_sec1_desc: "<p style=\"margin: 0;\">При подключении сервиса мы сохраняем минимально необходимый набор данных для обеспечения работы ИИ-интеграции:</p><ul style=\"margin: 8px 0 0 20px; padding: 0;\"><li><strong>Идентификатор пользователя:</strong> Яндекс UID, имя пользователя и аватар (для отображения в интерфейсе).</li><li><strong>Токены авторизации:</strong> Upstream OAuth access/refresh токены для доступа к API Умного дома Яндекса.</li><li><strong>Quasar сессия (опционально):</strong> Cookie сессии для прямого управления умными колонками через TTS.</li></ul>",
+      privacy_sec1_desc: "<p class=\"s-2a0ca8\">При подключении сервиса мы сохраняем минимально необходимый набор данных для обеспечения работы ИИ-интеграции:</p><ul class=\"s-a0190f\"><li><strong>Идентификатор пользователя:</strong> Яндекс UID, имя пользователя и аватар (для отображения в интерфейсе).</li><li><strong>Токены авторизации:</strong> Upstream OAuth access/refresh токены для доступа к API Умного дома Яндекса.</li><li><strong>Quasar сессия (опционально):</strong> Cookie сессии для прямого управления умными колонками через TTS.</li></ul>",
       privacy_sec2_title: "2. Модель угроз и защита данных (Threat Model)",
       privacy_sec2_desc: "<strong>Шифрование at-rest:</strong> Все upstream токены и cookies хранятся в зашифрованном виде с алгоритмом AES-256-GCM. В качестве дополнительных аутентифицированных данных (AAD) используется User ID, что исключает перекрестную подмену токенов между аккаунтами.<br><br><strong>Честное раскрытие архитектурных границ:</strong> В силу архитектуры протокола MCP наш сервер выступает доверенным прокси-исполнителем между ИИ-клиентом и API Яндекса. В момент вызова инструмента токен расшифровывается в оперативной памяти процесса для выполнения запроса к Yandex API. Мы не заявляем о так называемом «Zero-Knowledge», так как любой серверный прокси неизбежно обрабатывает запрос в памяти.",
       privacy_sec3_title: "3. Особенности работы с колонками (Yandex Quasar)",
@@ -426,7 +426,7 @@
       privacy_title: "Privacy Policy",
       privacy_version: "Version 2.0.0 (September 2026)",
       privacy_sec1_title: "1. Data We Collect",
-      privacy_sec1_desc: "<p style=\"margin: 0;\">When you connect the service, we store the minimal set of data required for AI integration:</p><ul style=\"margin: 8px 0 0 20px; padding: 0;\"><li><strong>User Identity:</strong> Yandex UID, display name, and avatar (for UI presentation).</li><li><strong>Authorization Tokens:</strong> Upstream OAuth access/refresh tokens to communicate with the Yandex Smart Home API.</li><li><strong>Quasar Session (optional):</strong> Session cookie for direct speaker speech synthesis (TTS) control.</li></ul>",
+      privacy_sec1_desc: "<p class=\"s-2a0ca8\">When you connect the service, we store the minimal set of data required for AI integration:</p><ul class=\"s-a0190f\"><li><strong>User Identity:</strong> Yandex UID, display name, and avatar (for UI presentation).</li><li><strong>Authorization Tokens:</strong> Upstream OAuth access/refresh tokens to communicate with the Yandex Smart Home API.</li><li><strong>Quasar Session (optional):</strong> Session cookie for direct speaker speech synthesis (TTS) control.</li></ul>",
       privacy_sec2_title: "2. Threat Model & Data Protection",
       privacy_sec2_desc: "<strong>Encryption At-Rest:</strong> All upstream credentials and cookies are encrypted with AES-256-GCM with the User ID used as Additional Authenticated Data (AAD), preventing cross-tenant substitution attacks.<br><br><strong>Architectural Disclosure:</strong> Under the MCP protocol architecture, our server acts as a trusted proxy between the AI client and the Yandex API. During a tool call, credentials are decrypted in volatile memory to make the outbound HTTPS request. We do not claim 'Zero-Knowledge', as any server-side proxy must process credentials in memory.",
       privacy_sec3_title: "3. Speaker Operations (Yandex Quasar)",
@@ -571,4 +571,13 @@
   }
 
   applyLanguage(initialLang);
+
+  // ── Confirm before destructive forms ────────────────────────────────────
+  // Forms carry data-confirm instead of inline onsubmit handlers, which the
+  // Content-Security-Policy does not allow.
+  document.addEventListener("submit", function (event) {
+    var form = event.target;
+    var message = form && form.getAttribute ? form.getAttribute("data-confirm") : null;
+    if (message && !window.confirm(message)) event.preventDefault();
+  });
 })();

@@ -2,7 +2,7 @@ import { CredentialDecryptionError } from "./storage-interface.js";
 import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync, StatementSync } from "node:sqlite";
-import { encryptToken, decryptToken, hashToken, secretDigest, secretLookupKeys, storedSecret, SECRET_DIGEST_PREFIX } from "./crypto.js";
+import { encryptToken, decryptToken, decryptStoredToken, hashToken, secretDigest, secretLookupKeys, storedSecret, SECRET_DIGEST_PREFIX } from "./crypto.js";
 
 import {
   IStorage,
@@ -686,19 +686,11 @@ export class OAuthStorage implements IStorage {
     let yandexRefreshToken: string | undefined = undefined;
 
     if (row.yandex_access_token) {
-      try {
-        yandexAccessToken = decryptToken(row.yandex_access_token, userId);
-      } catch {
-        yandexAccessToken = row.yandex_access_token; // Plaintext fallback for legacy rows
-      }
+      yandexAccessToken = decryptStoredToken(row.yandex_access_token, userId);
     }
 
     if (row.yandex_refresh_token) {
-      try {
-        yandexRefreshToken = decryptToken(row.yandex_refresh_token, userId);
-      } catch {
-        yandexRefreshToken = row.yandex_refresh_token;
-      }
+      yandexRefreshToken = decryptStoredToken(row.yandex_refresh_token, userId);
     }
 
     return {
@@ -750,19 +742,11 @@ export class OAuthStorage implements IStorage {
     let yandexRefreshToken: string | undefined = undefined;
 
     if (row.yandex_access_token) {
-      try {
-        yandexAccessToken = decryptToken(row.yandex_access_token, userId);
-      } catch {
-        yandexAccessToken = row.yandex_access_token;
-      }
+      yandexAccessToken = decryptStoredToken(row.yandex_access_token, userId);
     }
 
     if (row.yandex_refresh_token) {
-      try {
-        yandexRefreshToken = decryptToken(row.yandex_refresh_token, userId);
-      } catch {
-        yandexRefreshToken = row.yandex_refresh_token;
-      }
+      yandexRefreshToken = decryptStoredToken(row.yandex_refresh_token, userId);
     }
 
     return {
@@ -788,19 +772,11 @@ export class OAuthStorage implements IStorage {
     let yandexRefreshToken: string | undefined = undefined;
 
     if (row.yandex_access_token) {
-      try {
-        yandexAccessToken = decryptToken(row.yandex_access_token, userId);
-      } catch {
-        yandexAccessToken = row.yandex_access_token;
-      }
+      yandexAccessToken = decryptStoredToken(row.yandex_access_token, userId);
     }
 
     if (row.yandex_refresh_token) {
-      try {
-        yandexRefreshToken = decryptToken(row.yandex_refresh_token, userId);
-      } catch {
-        yandexRefreshToken = row.yandex_refresh_token;
-      }
+      yandexRefreshToken = decryptStoredToken(row.yandex_refresh_token, userId);
     }
 
     return {

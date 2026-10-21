@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 
 export interface OAuthTokenResponse {
   access_token: string;
@@ -80,7 +80,9 @@ export function saveTokenToKeychain(
 ): boolean {
   if (process.platform !== "darwin") return false;
   try {
-    execSync(`security add-generic-password -a "${account}" -s "${service}" -w "${token}" -U`, {
+    // Arguments go straight to the binary, never through a shell: the token
+    // comes from an OAuth response and must not be interpreted.
+    execFileSync("security", ["add-generic-password", "-a", account, "-s", service, "-w", token, "-U"], {
       stdio: ["pipe", "pipe", "ignore"],
     });
     return true;
@@ -92,7 +94,7 @@ export function saveTokenToKeychain(
 export function getTokenFromKeychain(service = "mctl-alice"): string | null {
   if (process.platform !== "darwin") return null;
   try {
-    const out = execSync(`security find-generic-password -s "${service}" -w`, {
+    const out = execFileSync("security", ["find-generic-password", "-s", service, "-w"], {
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "ignore"],
     });

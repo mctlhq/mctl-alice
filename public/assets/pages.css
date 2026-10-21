@@ -1,0 +1,446 @@
+/*
+ * Page styles that used to be inline style="..." attributes in the
+ * server-rendered pages. The Content-Security-Policy no longer allows inline
+ * styles, so each distinct declaration block lives here as one class. The
+ * class is doubled in the selector so it keeps winning over component rules,
+ * as the inline attribute did; scripts still toggle element.style at runtime.
+ */
+
+.s-b68d49.s-b68d49 {
+  color: var(--accent);
+}
+
+.s-de799f.s-de799f {
+  color: var(--surface-fg-muted);
+}
+
+.s-4fe212.s-4fe212 {
+  text-align: center;
+  margin-bottom: 24px;
+}
+
+.s-8931b9.s-8931b9 {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: var(--surface-elevated);
+  border: 1px solid var(--surface-line-strong);
+  margin-bottom: 16px;
+}
+
+.s-6e1a2b.s-6e1a2b {
+  margin: 0 0 8px 0;
+}
+
+.s-1ebcf8.s-1ebcf8 {
+  color: var(--surface-fg-muted);
+  margin: 0;
+  font-size: 15px;
+}
+
+.s-874b5b.s-874b5b {
+  background: var(--surface-elevated);
+  border: 1px solid var(--surface-line);
+  border-radius: var(--mctl-radius-md);
+  padding: 18px;
+  margin-bottom: 20px;
+}
+
+.s-096cd3.s-096cd3 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.s-818cd7.s-818cd7 {
+  font-size: 13px;
+  color: var(--surface-fg-muted);
+}
+
+.s-e694bb.s-e694bb {
+  font-weight: 600;
+  font-size: 15px;
+  color: var(--surface-fg);
+}
+
+.s-c4e802.s-c4e802 {
+  font-size: 12px;
+  color: var(--surface-fg-muted);
+  word-break: break-all;
+  margin-bottom: 6px;
+}
+
+.s-67130d.s-67130d {
+  font-family: var(--font-mono);
+}
+
+.s-e8b790.s-e8b790 {
+  font-size: 12px;
+  color: var(--surface-fg-muted);
+  word-break: break-all;
+}
+
+.s-eb4739.s-eb4739 {
+  margin-bottom: 24px;
+}
+
+.s-cd2ba0.s-cd2ba0 {
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 12px;
+}
+
+.s-63b8a5.s-63b8a5 {
+  margin-bottom: 24px;
+  font-size: 13px;
+}
+
+.s-a8904c.s-a8904c {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+}
+
+.s-634a28.s-634a28 {
+  flex: 1;
+}
+
+.s-08ec4a.s-08ec4a {
+  flex: 2;
+}
+
+.s-b84785.s-b84785 {
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+  padding: 40px;
+  max-width: 600px;
+  margin: auto;
+}
+
+.s-f892ee.s-f892ee {
+  color: #0f172a;
+}
+
+.s-128036.s-128036 {
+  color: #dc2626;
+}
+
+.s-518b09.s-518b09 {
+  color: #2563eb;
+}
+
+.s-4ef6bf.s-4ef6bf {
+  margin-top: 24px;
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.s-c57e59.s-c57e59 {
+  margin-top: 16px;
+  padding: 14px 16px;
+  background: var(--surface-elevated);
+  border: 1px solid var(--surface-line);
+  border-radius: var(--mctl-radius-md);
+}
+
+.s-02b10e.s-02b10e {
+  margin-top: 16px;
+  padding: 14px 16px;
+  background: var(--surface-elevated);
+  border: 1px solid var(--surface-line);
+  border-radius: var(--mctl-radius-md);
+  color: var(--surface-fg-muted);
+}
+
+.s-fdd932.s-fdd932 {
+  display:none;
+  margin-top: 16px;
+  padding: 14px 16px;
+  background: var(--surface-elevated);
+  border: 1px solid var(--surface-line);
+  border-radius: var(--mctl-radius-md);
+}
+
+.s-ce02ff.s-ce02ff {
+  margin-top: 24px;
+  display: none;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.s-fe289b.s-fe289b {
+  color: var(--surface-fg-muted);
+  margin-bottom: 24px;
+}
+
+.s-49f975.s-49f975 {
+  margin: 0 0 8px;
+}
+
+.s-855e12.s-855e12 {
+  color: var(--surface-fg-muted);
+  margin: 0 0 16px;
+  max-width: 540px;
+  font-size: 14px;
+}
+
+.s-15aa3d.s-15aa3d {
+  margin-top: 12px;
+  max-width: 480px;
+  width: 100%;
+}
+
+.s-8cb777.s-8cb777 {
+  display: flex;
+  gap: 10px;
+  margin-top: 14px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.s-5790ff.s-5790ff {
+  display: none;
+}
+
+.s-339f95.s-339f95 {
+  margin-top: 24px;
+  border: 1px solid var(--surface-line);
+  border-radius: var(--mctl-radius-md);
+  padding: 14px 18px;
+}
+
+.s-81a067.s-81a067 {
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.s-4c0544.s-4c0544 {
+  margin-top: 16px;
+}
+
+.s-05854e.s-05854e {
+  font-size: 14px;
+}
+
+.s-5380fd.s-5380fd {
+  margin-top: 14px;
+  margin-bottom: 14px;
+  font-size: 13px;
+  border-left: 4px solid #f59e0b;
+  background: rgba(245, 158, 11, 0.08);
+  padding: 12px 14px;
+  border-radius: var(--mctl-radius-sm);
+}
+
+.s-e5a6d3.s-e5a6d3 {
+  margin-top: 10px;
+}
+
+.s-d3ef24.s-d3ef24 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 500;
+  cursor: pointer;
+  user-select: none;
+}
+
+.s-2d067f.s-2d067f {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+.s-d81573.s-d81573 {
+  display: block;
+  font-weight: 500;
+  font-size: 14px;
+  margin-bottom: 6px;
+}
+
+.s-b12d12.s-b12d12 {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+.s-46936a.s-46936a {
+  display: none;
+  margin-top: 12px;
+}
+
+.s-784e59.s-784e59 {
+  margin-top: 24px;
+}
+
+.s-6f220e.s-6f220e {
+  color: var(--surface-fg-muted);
+  margin-top: 8px;
+}
+
+.s-c72ddd.s-c72ddd {
+  width: 100%;
+  margin-top: 12px;
+  border-collapse: collapse;
+}
+
+.s-2f8e9d.s-2f8e9d {
+  text-align: left;
+  border-bottom: 1px solid var(--surface-line);
+}
+
+.s-c079ee.s-c079ee {
+  padding: 8px 0;
+}
+
+.s-776427.s-776427 {
+  padding: 8px 0;
+  text-align: right;
+}
+
+.s-b6be4b.s-b6be4b {
+  border-bottom: 1px solid var(--surface-line);
+}
+
+.s-8160b0.s-8160b0 {
+  padding: 10px 0;
+}
+
+.s-4f7a36.s-4f7a36 {
+  padding: 10px 0;
+  text-align: right;
+}
+
+.s-2f8710.s-2f8710 {
+  display: inline;
+}
+
+.s-0da61a.s-0da61a {
+  padding: 4px 10px;
+  font-size: 13px;
+}
+
+.s-6c8f3b.s-6c8f3b {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid var(--surface-line);
+  padding-bottom: 16px;
+}
+
+.s-2a0ca8.s-2a0ca8 {
+  margin: 0;
+}
+
+.s-8f25ff.s-8f25ff {
+  color: var(--surface-fg-muted);
+  font-size: 14px;
+  margin-top: 4px;
+}
+
+.s-5b419e.s-5b419e {
+  margin-top: 24px;
+  padding: 16px;
+  background: var(--surface-elevated);
+  border: 1px solid var(--surface-line);
+  border-radius: var(--mctl-radius-md);
+}
+
+.s-b6884e.s-b6884e {
+  margin-top: 0;
+  font-size: 16px;
+}
+
+.s-563961.s-563961 {
+  font-size: 14px;
+  margin: 8px 0;
+  color: var(--surface-fg-muted);
+}
+
+.s-04e22a.s-04e22a {
+  margin-top: 12px;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.s-b504ec.s-b504ec {
+  margin-top: 32px;
+  padding: 16px;
+  border: 1px solid rgba(220, 38, 38, 0.3);
+  background: rgba(220, 38, 38, 0.05);
+  border-radius: var(--mctl-radius-md);
+}
+
+.s-788ad3.s-788ad3 {
+  margin-top: 0;
+  font-size: 16px;
+  color: #dc2626;
+}
+
+.s-bdde6e.s-bdde6e {
+  font-size: 14px;
+  color: var(--surface-fg-muted);
+  margin: 8px 0;
+}
+
+.s-4bb900.s-4bb900 {
+  margin-top: 12px;
+}
+
+.s-877506.s-877506 {
+  background: #dc2626;
+  color: #fff;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.s-d8f4e6.s-d8f4e6 {
+  color: var(--surface-fg-muted);
+  margin-bottom: 20px;
+}
+
+.s-89dbb6.s-89dbb6 {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.s-8f4f37.s-8f4f37 {
+  background: var(--surface-elevated);
+  padding: 18px;
+  border: 1px solid var(--surface-line);
+  border-radius: var(--mctl-radius-md);
+}
+
+.s-96cfba.s-96cfba {
+  margin-top: 0;
+  margin-bottom: 8px;
+}
+
+.s-3b8e6c.s-3b8e6c {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.s-71e873.s-71e873 {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.s-a0190f.s-a0190f {
+  margin: 8px 0 0 20px;
+  padding: 0;
+}

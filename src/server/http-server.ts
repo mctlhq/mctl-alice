@@ -1,3 +1,5 @@
+import { BrowserTransactions } from "../storage/browser-transactions.js";
+import { CredentialDecryptionError } from "../storage/storage-interface.js";
 import { VERSION } from "../version.js";
 import http from "node:http";
 import fs from "node:fs";
@@ -460,9 +462,9 @@ export function createHttpServer(
   // Keep track of active legacy SSE transports
   const sseTransports = new Map<string, SSEServerTransport>();
 
-  const browserTransactions = new Map<string, { browser: string; expires: number }>();
-  const loginTransactions = new Map<string, { browser: string; expires: number; returnTo: string }>();
-  const qrOwners = new Map<string, { userId: string; browser: string; expires: number }>();
+  const browserTransactions = new BrowserTransactions<{ browser: string; expires: number }>(oauthStorage, "consent");
+  const loginTransactions = new BrowserTransactions<{ browser: string; expires: number; returnTo: string }>(oauthStorage, "login");
+  const qrOwners = new BrowserTransactions<{ userId: string; browser: string; expires: number }>(oauthStorage, "qr-owner");
   const browserId = (req: http.IncomingMessage) => parseCookies(req).mctl_session || "";
   const sseOwners = new Map<string, { userId?: string; clientId?: string; fingerprint: string }>();
   const fingerprint = (req: http.IncomingMessage) => createHash("sha256").update((req.headers.authorization || "").replace(/^Bearer +/i, "")).digest("hex");
@@ -475,13 +477,6 @@ export function createHttpServer(
       }
     }
   }
-
-  const transactionCleanup = setInterval(() => {
-    for (const map of [browserTransactions, loginTransactions, qrOwners]) {
-      for (const [id, entry] of map) if (entry.expires <= Date.now()) map.delete(id);
-    }
-  }, 60000);
-  transactionCleanup.unref();
 
   // Helper for pure stateless MCP response (supports JSON and SSE format)
   function sendMcpResponse(
@@ -774,7 +769,7 @@ export function createHttpServer(
         return;
       }
 
-      if (authRequired) browserTransactions.set(result.sessionId, { browser: browserId(req), expires: Date.now() + 600000 });
+      if (authRequired) await browserTransactions.set(result.sessionId, { browser: browserId(req), expires: Date.now() + 600000 });
       // Render Consent Page
       const clientName = escapeHtml(result.clientName);
       const safeClientId = escapeHtml(result.clientId);
@@ -807,7 +802,7 @@ export function createHttpServer(
 
         <div style="margin-bottom: 24px;">
           <div style="font-weight: 600; font-size: 14px; margin-bottom: 12px;" data-i18n="oauth_scopes_title">Запрашиваемые права доступа:</div>
-          <ul>${result.scope.split(/\s+/).map(scope => `<li><label><input form="consent" type="checkbox" name="scope_${scope}" value="yes" checked> ${escapeHtml(scope)}</label></li>`).join("")}</ul>
+          <ul>${result.scope.split(/\s+/).map(scope => `<li><label><input form="consent" type="checkbox" name="scope_${escapeHtml(scope)}" value="yes" checked> ${escapeHtml(scope)}</label></li>`).join("")}</ul>
         </div>
 
         <div class="alert alert-info" style="margin-bottom: 24px; font-size: 13px;">
@@ -844,10 +839,10 @@ export function createHttpServer(
         }
 
         if (authRequired) {
-          const transaction = browserTransactions.get(sessionId);
+          const transaction = await browserTransactions.get(sessionId);
           const user = await getSessionUser(req, oauthStorage);
           if (!user || !transaction || transaction.expires <= Date.now() || transaction.browser !== browserId(req)) throw new Error("Invalid browser transaction");
-          browserTransactions.delete(sessionId);
+          await browserTransactions.delete(sessionId);
         }
         if (action === "deny") {
           const result = await oauthController.denyAuthorization(sessionId);
@@ -1336,7 +1331,12 @@ export function createHttpServer(
     if (url.pathname === "/account" && req.method === "GET") {
       setSecurityHeaders(res);
       const user = await getSessionUser(req, oauthStorage);
-      const creds = user ? await oauthStorage.getUserCredentials(user.id) : null;
+      let creds = null;
+      let credentialError = false;
+      if (user) {
+        try { creds = await oauthStorage.getUserCredentials(user.id); }
+        catch (error) { if (!(error instanceof CredentialDecryptionError)) throw error; credentialError = true; }
+      }
       const grants = user && oauthStorage.listUserGrants ? await oauthStorage.listUserGrants(user.id) : [];
 
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
@@ -1344,7 +1344,7 @@ export function createHttpServer(
         renderAuthPage({
           title: "mctl-alice — Личный кабинет",
           titleKey: "account_title",
-          contentHtml: renderAccountPage({
+          contentHtml: (credentialError ? '<div class="alert alert-error">Saved credentials cannot be decrypted. <a href="/auth/login">Reconnect your Yandex account</a>.</div>' : '') + renderAccountPage({
             user,
             creds,
             grants,
@@ -1414,7 +1414,7 @@ export function createHttpServer(
         const browser = randomUUID();
         const requestedReturn = url.searchParams.get("return_to") || "/account";
         const returnTo = requestedReturn.startsWith("/oauth/authorize?") ? requestedReturn : "/account";
-        loginTransactions.set(state, { browser, expires: Date.now() + 600000, returnTo });
+        await loginTransactions.set(state, { browser, expires: Date.now() + 600000, returnTo });
         res.setHeader("Set-Cookie", `mctl_login=${browser}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=600`);
         const target = new URL(oauthUrl); target.searchParams.set("state", state); oauthUrl = target.toString();
       }
@@ -1430,11 +1430,11 @@ export function createHttpServer(
       const error = url.searchParams.get("error");
       let loginReturnTo: string | undefined;
       if (authRequired) {
-        const transaction = state ? loginTransactions.get(state) : undefined;
+        const transaction = state ? await loginTransactions.get(state) : undefined;
         if (!transaction || transaction.expires <= Date.now() || transaction.browser !== parseCookies(req).mctl_login) {
           res.writeHead(400); res.end("Invalid login transaction; sign in again"); return;
         }
-        loginTransactions.delete(state!);
+        await loginTransactions.delete(state!);
         loginReturnTo = transaction.returnTo;
       }
       const isPending = Boolean(state && await oauthStorage.getPendingAuth(state));
@@ -1505,7 +1505,7 @@ export function createHttpServer(
 
           let userId = "usr_local";
           try {
-            const profile = await fetchYandexProfile(tokens.access_token);
+            const profile = await fetchYandexProfile(tokens.access_token, authRequired);
             userId = profile.id;
             await oauthStorage.saveUser({
               id: userId,
@@ -1525,6 +1525,12 @@ export function createHttpServer(
             });
           }
 
+          // Only a newly verified Yandex login may replace unreadable credentials.
+          try { await oauthStorage.getUserCredentials(userId); }
+          catch (error) {
+            if (!(error instanceof CredentialDecryptionError)) throw error;
+            await oauthStorage.deleteUserCredentials(userId);
+          }
           await oauthStorage.saveUserCredentials(userId, {
             yandexAccessToken: tokens.access_token,
             yandexRefreshToken: tokens.refresh_token,
@@ -1672,7 +1678,7 @@ export function createHttpServer(
 
           let userId = "usr_local";
           try {
-            const profile = await fetchYandexProfile(token);
+            const profile = await fetchYandexProfile(token, authRequired);
             userId = profile.id;
             await oauthStorage.saveUser({
               id: userId,
@@ -1928,8 +1934,8 @@ export function createHttpServer(
       try {
         const user = await getSessionUser(req, oauthStorage);
         if (authRequired && !user) { res.writeHead(401); res.end("Sign in required"); return; }
-        const qrData = await initQrAuth();
-        if (authRequired && user) qrOwners.set(qrData.sessionId, { userId: user.id, browser: browserId(req), expires: Date.now() + 600000 });
+        const qrData = await initQrAuth(authRequired ? oauthStorage : undefined);
+        if (authRequired && user) await qrOwners.set(qrData.sessionId, { userId: user.id, browser: browserId(req), expires: Date.now() + 600000 });
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ status: "ok", ...qrData }));
       } catch (err: any) {
@@ -1949,16 +1955,16 @@ export function createHttpServer(
       }
       try {
         if (authRequired) {
-          const owner = qrOwners.get(sessionId);
+          const owner = await qrOwners.get(sessionId);
           const user = await getSessionUser(req, oauthStorage);
           if (!owner || owner.expires <= Date.now() || !user || user.id !== owner.userId || browserId(req) !== owner.browser) {
             res.writeHead(401); res.end("Invalid QR owner"); return;
           }
         }
-        const result = await checkQrAuthStatus(sessionId);
+        const result = await checkQrAuthStatus(sessionId, authRequired ? oauthStorage : undefined);
         if (result.status === "ok" && result.cookie) {
           const cookie = result.cookie;
-          qrOwners.delete(sessionId);
+          await qrOwners.delete(sessionId);
 
           const user = await getSessionUser(req, oauthStorage);
           if (user) {
@@ -2092,7 +2098,6 @@ export function createHttpServer(
   });
 
   server.on("close", () => {
-    clearInterval(transactionCleanup);
     for (const transport of sseTransports.values()) void transport.close();
     if (sampler) sampler.stop();
     if (!options.storage) void telemetryStorage.close();

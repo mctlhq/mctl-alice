@@ -25,6 +25,11 @@ describe("hosted QR owner binding", () => {
   it("only the initiating browser owner can finish QR and receives no cookie", async () => {
     expect((await fetch(base + "/auth/qr-code")).status).toBe(401); expect(initQrAuth).not.toHaveBeenCalled();
     expect((await fetch(base + "/auth/qr-code", { headers: { Cookie: "mctl_session=alice" } })).status).toBe(200);
+    server.closeAllConnections();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    server = createHttpServer(0, { authRequired: true, oauthStorage: storage, storage: history, enableSampler: false });
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    base = `http://127.0.0.1:${(server.address() as import("node:net").AddressInfo).port}`;
     expect((await fetch(base + "/auth/qr-status?sessionId=test-qr", { headers: { Cookie: "mctl_session=bob" } })).status).toBe(401);
     expect(checkQrAuthStatus).not.toHaveBeenCalled();
     const response = await fetch(base + "/auth/qr-status?sessionId=test-qr", { headers: { Cookie: "mctl_session=alice" } });

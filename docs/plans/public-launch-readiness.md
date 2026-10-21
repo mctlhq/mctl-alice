@@ -1,6 +1,6 @@
 # Public launch readiness: audit and implementation plan
 
-Status: hosted isolation implementation and local verification in progress; production remediation pending; **not ready for public promotion**.
+Status: production isolation candidate deployed and verified; public PR review and final `2.2.2` release in progress; **not ready for public promotion**.
 
 Reviewed on 2026-09-20 against repository commit `5496ece` and the deployed
 `ghcr.io/mctlhq/mctl-alice:1.9.4` image. This is the canonical plan. The findings
@@ -462,3 +462,17 @@ site, actual tools and documented permissions agree; all public links work.
 - [ ] Deliver consent, account controls and optional Quasar/history flows.
 - [ ] Complete public documentation, README, GitHub metadata and CI protections.
 - [ ] Pass staging and invited-user acceptance checks before promotion.
+
+### Public review follow-up — 21 October 2026
+
+PR [#51](https://github.com/mctlhq/mctl-alice/pull/51) identified three P2 follow-ups after the production isolation candidate was verified:
+
+- Preserve fail-closed MCP behavior for corrupt credentials (503), but show a recovery link in the account page. Only a freshly verified Yandex login can replace that owner's unreadable credentials. Hosted profile lookup now rejects failed identity verification without synthesizing an owner from a token hash.
+- Store browser-bound login, consent, QR owner and upstream QR state in shared encrypted, expiring storage (SQLite, PostgreSQL and MinIO). Login, consent and QR tests replace the HTTP server during the flow; PostgreSQL tests read state through a separate storage instance. Existing grants remain unchanged.
+- Require S256 PKCE for new hosted authorization requests and code exchanges. Existing access/refresh grants continue to work; local mode retains optional PKCE.
+
+Additional review dispositions: consent attribute values are escaped and dangling MinIO refresh pointers no longer report a successful revocation. Invalid MinIO listing entries remain a storage error rather than an incomplete successful listing, per the workspace fail-closed rule. Owner-scoped telemetry pruning remains intentional; personal sampling is disabled and future opt-in collection must include owner-aware retention. All observed production grants already include `quasar`; the separate Quasar permission follows the approved access model.
+
+Verification: all 218 tests passed on Node 22, including the disposable PostgreSQL 17 suite; typecheck and production build passed.
+
+The candidate deployment remains healthy while these follow-ups go through tests and a review of the new PR head; final `2.2.2` tagging is still pending.

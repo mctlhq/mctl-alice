@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import http from "node:http";
 import { authenticateRequest, createHttpServer } from "../src/server/http-server.js";
@@ -11,6 +13,8 @@ import { OAuthController } from "../src/auth/oauth-controller.js";
 import { ALICE_TOOLS } from "../src/tools/definitions.js";
 import { checkScope, TOOL_SCOPES } from "../src/tools/handlers.js";
 
+const verifier = "a".repeat(43);
+const challenge = createHash("sha256").update(verifier).digest("base64url");
 const realFetch = globalThis.fetch;
 const request = (token?: string) => ({ headers: token ? { authorization: `Bearer ${token}` } : {} }) as http.IncomingMessage;
 const now = Date.now();
@@ -154,9 +158,35 @@ describe("hosted access boundary", () => {
     await storage.revokeUserGrant("alice", "client"); expect((await post("mcp-alice")).status).toBe(401);
     abort.abort(); await reader.cancel().catch(() => {});
   });
+  it("offers recovery for corrupt credentials while MCP remains fail-closed", async () => {
+    const sql = (db as unknown as { db: DatabaseSync }).db;
+    sql.exec("UPDATE user_credentials SET encrypted_yandex_access_token='corrupt' WHERE user_id='alice'");
+    await storage.saveWebSession("browser-a", "alice", Date.now() + 60000);
+    await start();
+    const page = await realFetch(base + "/account", { headers: { Cookie: "mctl_session=browser-a" } });
+    expect(page.status).toBe(200);
+    expect(await page.text()).toContain("Reconnect your Yandex account");
+    expect(await authenticate(storage, "mcp-alice")).toMatchObject({ authenticated: false, status: 503 });
+    expect(await authenticate(storage, "mcp-bob")).toMatchObject({ authenticated: true });
+  });
+  it("requires S256 for new hosted grants and validates the verifier", async () => {
+    const controller = new OAuthController({ baseUrl: "http://localhost", yandexClientId: "app", storage, authRequired: true });
+    const params = { client_id: "client", redirect_uri: "http://localhost/callback", userId: "alice", scope: "iot:view" };
+    for (const pkce of [{}, { code_challenge: challenge, code_challenge_method: "plain" }]) {
+      expect(await controller.handleAuthorize({ ...params, ...pkce })).toMatchObject({ error: "invalid_request" });
+    }
+    for (const codeVerifier of [undefined, "wrong", verifier]) {
+      const consent = await controller.handleAuthorize({ ...params, code_challenge: challenge, code_challenge_method: "S256" });
+      if (!("sessionId" in consent)) throw new Error("Expected consent");
+      const approval = await controller.approveAuthorization(consent.sessionId, "alice");
+      const exchange = controller.handleToken({ grant_type: "authorization_code", client_id: "client", redirect_uri: params.redirect_uri, code: new URL(approval.redirectUrl).searchParams.get("code")!, code_verifier: codeVerifier });
+      if (codeVerifier === verifier) expect(await exchange).toMatchObject({ scope: "iot:view" });
+      else await expect(exchange).rejects.toThrow();
+    }
+  });
   it("hosted consent requires an existing owner and never honors auto approval", async () => {
     const controller = new OAuthController({ baseUrl: "http://localhost", yandexClientId: "app", storage, authRequired: true });
-    const params = { client_id: "client", redirect_uri: "http://localhost/callback", scope: "iot:view", auto_approve: true };
+    const params = { client_id: "client", redirect_uri: "http://localhost/callback", scope: "iot:view", auto_approve: true, code_challenge: challenge, code_challenge_method: "S256" };
     expect(await controller.handleAuthorize(params)).toMatchObject({ error: "login_required" });
     const consent = await controller.handleAuthorize({ ...params, userId: "alice" }); expect(consent).toMatchObject({ type: "consent" });
     if (!("sessionId" in consent)) throw new Error("Expected consent");
@@ -169,13 +199,16 @@ describe("hosted access boundary", () => {
     await start();
     await storage.saveWebSession("browser-a", "alice", Date.now() + 60000);
     await storage.saveWebSession("browser-b", "bob", Date.now() + 60000);
-    const query = "/oauth/authorize?client_id=client&redirect_uri=http://localhost/callback&scope=iot:view&auto_approve=true";
+    const query = "/oauth/authorize?client_id=client&redirect_uri=http://localhost/callback&scope=iot:view&auto_approve=true&code_challenge_method=S256&code_challenge=" + challenge;
     const login = await realFetch(base + query, { redirect: "manual" }); expect(login.status).toBe(302); expect(login.headers.get("location")).toMatch(/^\/auth\/login/);
     const consent = await realFetch(base + query, { headers: { Cookie: "mctl_session=browser-a" } });
     expect(consent.status).toBe(200); const html = await consent.text();
     const id = /name="session_id" value="([^"]+)"/.exec(html)![1];
     const get = await realFetch(base + `/oauth/authorize?session_id=${id}&action=approve`, { headers: { Cookie: "mctl_session=browser-a" }, redirect: "manual" });
     expect(get.headers.get("location") || "").not.toContain("code=");
+    server!.closeAllConnections();
+    await new Promise<void>(resolve => server!.close(() => resolve()));
+    await start(); // A different server instance must retain the browser-bound transaction.
     const body = `session_id=${id}&action=approve&scope_iot%3Aview=yes`;
     const forged = await realFetch(base + "/oauth/authorize", { method: "POST", headers: { Cookie: "mctl_session=browser-a", "Content-Type": "application/x-www-form-urlencoded" }, body }); expect(forged.status).toBe(403);
     const wrong = await realFetch(base + "/oauth/authorize", { method: "POST", headers: { Cookie: "mctl_session=browser-b", Origin: "http://localhost", "Content-Type": "application/x-www-form-urlencoded" }, body }); expect(wrong.status).toBe(400);

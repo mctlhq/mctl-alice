@@ -1,3 +1,4 @@
+import { IStorage } from "../storage/storage-interface.js";
 import QRCode from "qrcode";
 
 export interface QrAuthSession {
@@ -79,7 +80,7 @@ class CookieJar {
 const PASSPORT_USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
-export async function initQrAuth(): Promise<{ sessionId: string; link: string; qrSvg: string }> {
+export async function initQrAuth(storage?: IStorage): Promise<{ sessionId: string; link: string; qrSvg: string }> {
   cleanExpiredSessions();
   const jar = new CookieJar();
 
@@ -176,7 +177,7 @@ export async function initQrAuth(): Promise<{ sessionId: string; link: string; q
 
   const sessionId = trackId;
   const authCsrfToken: string = data2.csrf_token || pageCsrf;
-  sessions.set(sessionId, {
+  const session: QrAuthSession = {
     sessionId,
     trackId,
     pageCsrf,
@@ -184,19 +185,22 @@ export async function initQrAuth(): Promise<{ sessionId: string; link: string; q
     cookies: jar.toString(),
     link,
     createdAt: Date.now(),
-  });
+  };
+  if (storage) await storage.saveBrowserTransaction(`qr-state:${sessionId}`, JSON.stringify(session), session.createdAt + SESSION_TTL_MS);
+  else sessions.set(sessionId, session);
 
   return { sessionId, link, qrSvg };
 }
 
-export async function checkQrAuthStatus(sessionId: string): Promise<{
+export async function checkQrAuthStatus(sessionId: string, storage?: IStorage): Promise<{
   status: "waiting" | "ok" | "expired" | "error";
   cookie?: string;
   message?: string;
 }> {
   cleanExpiredSessions();
 
-  const session = sessions.get(sessionId);
+  const payload = storage ? await storage.getBrowserTransaction(`qr-state:${sessionId}`) : null;
+  const session: QrAuthSession | undefined = storage ? (payload ? JSON.parse(payload) : undefined) : sessions.get(sessionId);
   if (!session) {
     return {
       status: "expired",
@@ -278,7 +282,8 @@ export async function checkQrAuthStatus(sessionId: string): Promise<{
     }
 
     // Done, delete session
-    sessions.delete(sessionId);
+    if (storage) await storage.deleteBrowserTransaction(`qr-state:${sessionId}`);
+    else sessions.delete(sessionId);
     return {
       status: "ok",
       cookie: fullCookies,

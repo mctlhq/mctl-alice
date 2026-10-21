@@ -326,6 +326,9 @@ export class OAuthController {
       return { error: "login_required", description: "Sign in before approving access", status: 401 };
     }
     if (params.scope !== undefined && !validScope(params.scope)) return { error: "invalid_scope", description: "Invalid scopes", status: 400 };
+    if (this.authRequired && (params.code_challenge_method !== "S256" || !params.code_challenge || !/^[A-Za-z0-9_-]{43}$/.test(params.code_challenge))) {
+      return { error: "invalid_request", description: "PKCE S256 code_challenge is required", status: 400 };
+    }
     const sessionId = crypto.randomUUID();
     const clientState = params.state || "";
     const scope = params.scope || "iot:view iot:control";
@@ -557,6 +560,7 @@ export class OAuthController {
         if (!authCode.userId || ["legacy_user", "usr_local"].includes(authCode.userId) || !await this.storage.getUser(authCode.userId) || !validScope(authCode.scope)) throw new Error("Invalid grant");
         if (body.client_id !== authCode.clientId || body.redirect_uri !== authCode.redirectUri) throw new Error("Client or redirect mismatch");
       }
+      if (this.authRequired && (!authCode.codeChallenge || authCode.codeChallengeMethod !== "S256")) throw new Error("PKCE S256 is required");
       // PKCE verification
       if (authCode.codeChallenge) {
         if (!body.code_verifier) {

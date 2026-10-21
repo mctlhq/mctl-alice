@@ -1,3 +1,4 @@
+import { OAuthStorage } from "../src/storage/oauth-storage.js";
 import { describe, it, expect, vi } from "vitest";
 import { initQrAuth, checkQrAuthStatus } from "../src/auth/yandex-qr-auth.js";
 
@@ -111,6 +112,20 @@ describe("Yandex QR Auth", () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+
+  it("persists hosted QR state outside the process-local map", async () => {
+    const storage = new OAuthStorage(":memory:");
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = createMockFetch("otp_auth_finished");
+    try {
+      const qr = await initQrAuth(storage);
+      expect(storage.getBrowserTransaction(`qr-state:${qr.sessionId}`)).toContain("mock_csrf_token_123");
+      const result = await checkQrAuthStatus(qr.sessionId, storage);
+      expect(result.status).toBe("ok");
+      expect(storage.getBrowserTransaction(`qr-state:${qr.sessionId}`)).toBeNull();
+      expect((await checkQrAuthStatus(qr.sessionId, storage)).status).toBe("expired");
+    } finally { globalThis.fetch = originalFetch; storage.close(); }
   });
 
   it("should return expired for unknown sessionId", async () => {

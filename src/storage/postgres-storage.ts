@@ -64,6 +64,9 @@ export class PostgresStorage implements IStorage {
       await client.query("BEGIN");
 
       await client.query(`
+        CREATE TABLE IF NOT EXISTS browser_transactions (
+          key TEXT PRIMARY KEY, payload TEXT NOT NULL, expires_at BIGINT NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS users (
           id VARCHAR(255) PRIMARY KEY,
           yandex_uid VARCHAR(255) UNIQUE NOT NULL,
@@ -296,6 +299,21 @@ export class PostgresStorage implements IStorage {
   }
 
   // --- Web Sessions ---
+
+  async saveBrowserTransaction(key: string, payload: string, expiresAt: number): Promise<void> {
+    await this.ready();
+    await this.pool.query("DELETE FROM browser_transactions WHERE expires_at <= $1", [Date.now()]);
+    await this.pool.query("INSERT INTO browser_transactions VALUES ($1,$2,$3) ON CONFLICT (key) DO UPDATE SET payload=EXCLUDED.payload, expires_at=EXCLUDED.expires_at", [key, encryptToken(payload, key), expiresAt]);
+  }
+  async getBrowserTransaction(key: string): Promise<string | null> {
+    await this.ready();
+    const result = await this.pool.query("SELECT payload FROM browser_transactions WHERE key=$1 AND expires_at>$2", [key, Date.now()]);
+    return result.rows[0] ? decryptToken(result.rows[0].payload, key) : null;
+  }
+  async deleteBrowserTransaction(key: string): Promise<void> {
+    await this.ready();
+    await this.pool.query("DELETE FROM browser_transactions WHERE key=$1", [key]);
+  }
 
   async saveWebSession(sessionId: string, userId: string, expiresAt: number): Promise<void> {
     await this.ready();

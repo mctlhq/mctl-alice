@@ -1,3 +1,4 @@
+import { CredentialDecryptionError } from "./storage-interface.js";
 import crypto from "node:crypto";
 import {
   IStorage,
@@ -219,7 +220,7 @@ export class MinioStorage implements IStorage {
         quasarUpdatedAt: raw.quasarUpdatedAt || undefined,
       };
     } catch {
-      throw new Error("Credential decryption failed");
+      throw new CredentialDecryptionError();
     }
   }
 
@@ -238,6 +239,19 @@ export class MinioStorage implements IStorage {
   }
 
   // --- Web Sessions ---
+
+  async saveBrowserTransaction(key: string, payload: string, expiresAt: number): Promise<void> {
+    await this.putObject(`transactions/${hashToken(key)}.json`, { payload: encryptToken(payload, key), expiresAt });
+  }
+  async getBrowserTransaction(key: string): Promise<string | null> {
+    const record = await this.getObject<{ payload: string; expiresAt: number }>(`transactions/${hashToken(key)}.json`);
+    if (!record) return null;
+    if (record.expiresAt <= Date.now()) { await this.deleteBrowserTransaction(key); return null; }
+    return decryptToken(record.payload, key);
+  }
+  async deleteBrowserTransaction(key: string): Promise<void> {
+    await this.deleteObject(`transactions/${hashToken(key)}.json`);
+  }
 
   async saveWebSession(sessionId: string, userId: string, expiresAt: number): Promise<void> {
     const hash = hashToken(sessionId);
@@ -518,6 +532,7 @@ export class MinioStorage implements IStorage {
       if (!pointer) return false;
       key = `tokens/${pointer.accessTokenHash}.json`;
       record = await this.getObject<OAuthTokenRecord>(key);
+      if (!record) { await this.deleteObject(`tokens_refresh/${hashToken(token)}.json`); return false; }
     }
     await this.deleteObject(key);
     if (record?.refreshToken) await this.deleteObject(`tokens_refresh/${hashToken(record.refreshToken)}.json`);

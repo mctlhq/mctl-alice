@@ -64,6 +64,19 @@ describe.skipIf(!connectionString)("hosted isolation with real PostgreSQL", () =
       expect(result).toMatchObject({ authenticated: false, status: 503 }); expect(fetchMock).not.toHaveBeenCalled();
     } finally { await pool.query("ALTER TABLE unavailable_tokens RENAME TO oauth_tokens"); fetchMock.mockRestore(); }
   });
+  it("shares encrypted expiring browser transactions between storage instances", async () => {
+    const second = new PostgresStorage({ pool: new pg.Pool(poolOptions) });
+    try {
+      await storage.saveBrowserTransaction("login:pending", "browser-secret", Date.now() + 60000);
+      expect(await second.getBrowserTransaction("login:pending")).toBe("browser-secret");
+      const row = await pool.query("SELECT payload FROM browser_transactions WHERE key='login:pending'");
+      expect(row.rows[0].payload).not.toContain("browser-secret");
+      await second.deleteBrowserTransaction("login:pending");
+      expect(await storage.getBrowserTransaction("login:pending")).toBeNull();
+      await storage.saveBrowserTransaction("qr:expired", "secret", Date.now() - 1);
+      expect(await second.getBrowserTransaction("qr:expired")).toBeNull();
+    } finally { await second.close(); }
+  });
   it("migrates and isolates all history resolutions, stats and pruning", async () => {
     await verifyHistory(history);
     const second = new PostgresTelemetryStorage({ pool: new pg.Pool(poolOptions) }); await second.ready(); await second.close();

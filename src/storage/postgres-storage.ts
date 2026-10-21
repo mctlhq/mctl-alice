@@ -715,11 +715,11 @@ export class PostgresStorage implements IStorage {
 
   async revokeUserGrant(userId: string, clientId: string): Promise<boolean> {
     await this.ready();
-    await this.pool.query(
+    const result = await this.pool.query(
       "DELETE FROM oauth_tokens WHERE user_id = $1 AND client_id = $2",
       [userId, clientId]
     );
-    return true;
+    return (result.rowCount ?? 0) > 0;
   }
 
   async pruneExpired(): Promise<void> {

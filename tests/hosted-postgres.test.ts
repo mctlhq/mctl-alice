@@ -48,6 +48,7 @@ describe.skipIf(!connectionString)("hosted isolation with real PostgreSQL", () =
     }
     expect(await storage.listUserGrants("erin")).toHaveLength(2);
     expect(await storage.revokeUserGrant("erin", "one")).toBe(true);
+    expect(await storage.revokeUserGrant("erin", "one")).toBe(false);
     expect(await storage.getToken("erin-one")).toBeNull();
     expect(await storage.getTokenByRefreshToken("rt-erin-one")).toBeNull();
     expect(await storage.getToken("erin-two")).not.toBeNull();

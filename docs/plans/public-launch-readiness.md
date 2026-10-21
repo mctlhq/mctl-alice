@@ -71,15 +71,19 @@ Candidate state:
   `write:packages` for the active `mashkovd` GitHub CLI account.
 - GitOps PR https://github.com/mctlhq/mctl-gitops/pull/2055 adds the candidate,
   `maxUnavailable=0`, `maxSurge=1`, and readiness `/readyz`. Helm rendering
-  passed; CI/review is in progress. Application source remains local.
+  passed; CI and review passed with no P1/P2 findings; merged as `54c4b0d`.
 - The operator authorized the `mashkoffdmitry` account for read-only production
   verification. No device-control commands are authorized for this smoke test.
-- Production remains on `2.2.1` pending the GitOps merge and rollout.
+- Production rollout completed on 2026-10-21. ArgoCD is Synced/Healthy;
+  the candidate pod is Ready and the old `2.2.1` pod has terminated.
+- Public `/readyz` returns 200/version 2.2.2. Random Bearer returns 401 with
+  RFC 6750 challenge. The existing authorized test grant returns 12 tools
+  and successfully reads devices without issuing control commands.
+- Initial sanitized log inspection: no error lines. Post-remediation source
+  publication/review may now proceed.
 
 Outstanding release gates:
 
-- Deploy through GitOps, check readiness, random-token denial, the test account,
-  and old-pod termination. Observe sanitized auth/upstream outcomes.
 - Publish sources only after remediation; complete public CI/review and release.
 - Personal opt-in history sampling remains explicitly out of scope.
 

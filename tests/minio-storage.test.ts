@@ -28,6 +28,11 @@ describe("MinioStorage (S3 REST Backend)", () => {
           };
         }
 
+        if (opts?.method === "GET" && u.searchParams.get("list-type") === "2") {
+          const prefix = u.searchParams.get("prefix")!;
+          const keys = [...mockBucket.keys()].map(key => key.replace("/test-bucket/", "")).filter(key => key.startsWith(prefix));
+          return { ok: true, text: async () => `<ListBucketResult><IsTruncated>false</IsTruncated>${keys.map(key => `<Contents><Key>${key}</Key></Contents>`).join("")}</ListBucketResult>` };
+        }
         if (opts?.method === "GET") {
           if (!mockBucket.has(path)) {
             return {
@@ -164,4 +169,23 @@ describe("MinioStorage (S3 REST Backend)", () => {
     await storage.deleteQuasarScenarios(userId);
     expect(await storage.getQuasarScenario(userId, "speaker_1")).toBeNull();
   });
+  it("revokes both access and refresh tokens only for the selected user/client", async () => {
+    for (const [userId, clientId] of [["alice", "one"], ["alice", "two"], ["bob", "one"]]) {
+      const key = `${userId}-${clientId}`;
+      await storage.saveToken({ accessToken: key, refreshToken: `rt-${key}`, userId, clientId, scope: "iot:view", yandexAccessToken: "user-token", createdAt: Date.now(), expiresAt: Date.now() + 60000 });
+    }
+    expect(await storage.listUserGrants("alice")).toHaveLength(2);
+    expect(await storage.revokeUserGrant("alice", "one")).toBe(true);
+    expect(await storage.getToken("alice-one")).toBeNull();
+    expect(await storage.getTokenByRefreshToken("rt-alice-one")).toBeNull();
+    expect(await storage.getToken("alice-two")).not.toBeNull();
+    expect(await storage.getToken("bob-one")).not.toBeNull();
+    await storage.revokeToken("rt-alice-two");
+    expect(await storage.getToken("alice-two")).toBeNull();
+  });
+  it("does not interpret failed token listings as an absent grant", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(new Response("unavailable", { status: 503 }));
+    await expect(storage.revokeUserGrant("alice", "one")).rejects.toThrow("listing unavailable");
+  });
+
 });

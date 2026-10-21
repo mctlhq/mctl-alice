@@ -1,8 +1,9 @@
+import { VERSION } from "../version.js";
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import {
@@ -10,7 +11,7 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { ALICE_TOOLS } from "../tools/definitions.js";
-import { handleToolCall } from "../tools/handlers.js";
+import { handleToolCall, checkScope, validScope, TOOL_SCOPES } from "../tools/handlers.js";
 import { StationService } from "../services/station-service.js";
 import { YandexIoTClient } from "../client/yandex-api.js";
 import { QuasarClient } from "../client/quasar-client.js";
@@ -34,7 +35,7 @@ import { initQrAuth, checkQrAuthStatus } from "../auth/yandex-qr-auth.js";
 import { fetchYandexProfile } from "../auth/oauth-helper.js";
 import { renderAboutPage, renderPrivacyPage, renderTermsPage, renderSecurityPage } from "./pages.js";
 import { renderAccountPage } from "./account-page.js";
-import { UserRecord } from "../storage/storage-interface.js";
+import { UserRecord, guardedStorage, StorageUnavailableError } from "../storage/storage-interface.js";
 
 const DEFAULT_CLIENT_ID = "c0ebe342af7d48fbbbfcf2d2eedb8f9e";
 
@@ -275,173 +276,106 @@ async function getSessionUser(req: http.IncomingMessage, storage: IStorage): Pro
   const sessionId = cookies["mctl_session"];
   if (!sessionId) return null;
   const session = await storage.getWebSession(sessionId);
-  if (!session?.userId) return null;
+  if (!session?.userId || ["legacy_user", "usr_local"].includes(session.userId)) return null;
   return storage.getUser(session.userId);
 }
 
 
-export interface AuthResult {
-  authenticated: boolean;
-  service?: StationService;
-  error?: "invalid_token" | "invalid_request";
-  errorMessage?: string;
-  userId?: string;
-  scope?: string;
-}
+export type AuthResult =
+  | { authenticated: true; mode: "hosted"; service: StationService; scope: string; userId: string; clientId: string }
+  | { authenticated: true; mode: "local"; service: StationService; scope: "*"; userId?: never; clientId?: never }
+  | { authenticated: false; service?: never; status: number; error?: "invalid_token" | "invalid_request" | "temporarily_unavailable"; errorMessage: string };
 
-export function buildWwwAuthenticate(baseUrl: string, error?: "invalid_token" | "invalid_request"): string {
+export function buildWwwAuthenticate(baseUrl: string, error?: string): string {
   const metadataUrl = `${baseUrl.replace(/\/+$/, "")}/.well-known/oauth-protected-resource/mcp`;
-  let challenge = `Bearer realm="mctl-alice", resource_metadata="${metadataUrl}"`;
-  if (error) {
-    challenge += `, error="${error}"`;
-  }
-  return challenge;
+  return `Bearer realm="mctl-alice", resource_metadata="${metadataUrl}"${error ? `, error="${error}"` : ""}`;
 }
 
-export function authenticateRequest(
+export async function authenticateRequest(
   req: http.IncomingMessage,
-  defaultService: StationService,
+  defaultService?: StationService,
   defaultQuasar?: QuasarClient,
   oauthStorage?: IStorage,
   telemetryStorage?: ITelemetryStorage,
   authRequired = false
-): AuthResult {
-  const authHeader = req.headers.authorization;
-  const cookieHeader = req.headers["x-yandex-cookie"] as string | undefined;
-
-  let customQuasar = defaultQuasar;
-  if (cookieHeader) {
-    customQuasar = new QuasarClient({ cookie: cookieHeader, useKeychain: false, persistEnv: false });
+): Promise<AuthResult> {
+  const fail = (errorMessage: string, status = 401): AuthResult => ({
+    authenticated: false, status, error: status === 503 ? "temporarily_unavailable" : "invalid_token", errorMessage,
+  });
+  if (req.headers["x-yandex-cookie"]) return fail("Cookie headers are not supported");
+  const header = req.headers.authorization;
+  if (!header) {
+    if (!authRequired && defaultService) return { authenticated: true, mode: "local", service: defaultService, scope: "*" };
+    return { authenticated: false, status: 401, errorMessage: "authentication required" };
   }
-
-  if (authHeader) {
-    if (!authHeader.startsWith("Bearer ") && !authHeader.startsWith("bearer ")) {
-      return { authenticated: false, error: "invalid_request", errorMessage: "Bearer scheme required" };
-    }
-    const rawToken = authHeader.replace(/^Bearer\s+/i, "").trim();
-    if (!rawToken) {
-      return { authenticated: false, error: "invalid_request", errorMessage: "Token is empty" };
-    }
-
-    // 1. Check if rawToken is an issued OAuth Bearer token in oauthStorage
-    if (oauthStorage) {
-      const tokenRecord = oauthStorage.getToken(rawToken) as any;
-      if (tokenRecord) {
-        if (tokenRecord.expiresAt && tokenRecord.expiresAt < Date.now()) {
-          return { authenticated: false, error: "invalid_token", errorMessage: "The access token has expired" };
-        }
-        try {
-          let client: YandexIoTClient | null = null;
-          let userQuasar: QuasarClient | undefined = undefined;
-
-          if (tokenRecord.userId) {
-            const creds = oauthStorage.getUserCredentials(tokenRecord.userId) as any;
-            if (creds?.yandexAccessToken) {
-              client = new YandexIoTClient(creds.yandexAccessToken, {
-                useKeychain: false,
-                persistEnv: false,
-                refreshToken: creds.yandexRefreshToken,
-              });
-            }
-            if (creds?.quasarCookie) {
-              userQuasar = new QuasarClient({
-                cookie: creds.quasarCookie,
-                useKeychain: false,
-                persistEnv: false,
-                userId: tokenRecord.userId,
-              });
-            }
-          }
-
-          if (!client && tokenRecord.yandexAccessToken) {
-            client = new YandexIoTClient(tokenRecord.yandexAccessToken, {
-              useKeychain: false,
-              persistEnv: false,
-              refreshToken: tokenRecord.yandexRefreshToken,
-            });
-          }
-
-          if (!client && !authRequired) {
-            try {
-              client = new YandexIoTClient(undefined, { useKeychain: false, persistEnv: false });
-            } catch {
-              client = null;
-            }
-          }
-
-          return {
-            authenticated: true,
-            service: new StationService(client || undefined, userQuasar || customQuasar, telemetryStorage),
-            userId: tokenRecord.userId,
-            scope: tokenRecord.scope,
-          };
-        } catch (err: any) {
-          return { authenticated: false, error: "invalid_token", errorMessage: err.message };
-        }
+  const match = /^Bearer +([a-zA-Z0-9._~+/-]+=*)$/i.exec(header);
+  if (!match) return fail("Bearer token required");
+  const rawToken = match[1];
+  try {
+    const record = await oauthStorage?.getToken(rawToken);
+    if (record) {
+      if (!authRequired && defaultService && record.expiresAt > Date.now() &&
+          (!record.userId || ["legacy_user", "usr_local"].includes(record.userId))) {
+        return { authenticated: true, mode: "local", service: defaultService, scope: "*" };
       }
+      const userId = record.userId;
+      if (!userId || ["legacy_user", "usr_local"].includes(userId) || !record.clientId ||
+          !Number.isFinite(record.expiresAt) || record.expiresAt <= Date.now() || !validScope(record.scope) ||
+          !await oauthStorage!.getUser(userId)) return fail("Invalid token owner or grant");
+      const creds = await oauthStorage!.getUserCredentials(userId);
+      if (!creds || (!creds.yandexAccessToken && !creds.quasarCookie)) return fail("Reconnect your Yandex account");
+      const client = creds.yandexAccessToken ? new YandexIoTClient(creds.yandexAccessToken, {
+        credentialsMode: "hosted", refreshToken: creds.yandexRefreshToken,
+        onRefresh: async (accessToken, refreshToken, expiresIn) => {
+          if (!await oauthStorage!.getUser(userId)) throw new Error("Account deleted");
+          const current = await oauthStorage!.getUserCredentials(userId);
+          if (!current || current.yandexAccessToken !== creds.yandexAccessToken) throw new Error("Connection changed; retry");
+          await oauthStorage!.saveUserCredentials(userId, { ...current, yandexAccessToken: accessToken,
+            yandexRefreshToken: refreshToken || undefined,
+            yandexExpiresAt: expiresIn ? Date.now() + expiresIn * 1000 : undefined });
+        },
+      }) : undefined;
+      const quasar = record.scope.split(/\s+/).includes("quasar") && creds.quasarCookie
+        ? new QuasarClient({ credentialsMode: "hosted", cookie: creds.quasarCookie, userId, storage: oauthStorage,
+          onCookieRefresh: async cookie => {
+            const current = await oauthStorage!.getUserCredentials(userId);
+            if (!current || current.quasarCookie !== creds.quasarCookie || !await oauthStorage!.getUser(userId)) throw new Error("Quasar connection changed; reconnect");
+            await oauthStorage!.saveUserCredentials(userId, { ...current, quasarCookie: cookie });
+            creds.quasarCookie = cookie;
+          },
+        }) : undefined;
+      return { authenticated: true, mode: "hosted", userId, clientId: record.clientId, scope: record.scope,
+        service: new StationService(client, quasar, telemetryStorage?.forUser(userId), "hosted") };
     }
-
-    // Direct token fallbacks ONLY allowed when authRequired is false
-    if (!authRequired) {
-      if (process.env.YANDEX_OAUTH_TOKEN && rawToken === process.env.YANDEX_OAUTH_TOKEN) {
-        return { authenticated: true, service: defaultService, scope: "*" };
-      }
-
-      const isDirectYandexToken =
-        rawToken.startsWith("y0_") || rawToken.startsWith("y1_") || rawToken.startsWith("AQAAAA");
-      if (isDirectYandexToken) {
-        try {
-          const client = new YandexIoTClient(rawToken, { useKeychain: false, persistEnv: false });
-          return {
-            authenticated: true,
-            service: new StationService(client, customQuasar, telemetryStorage),
-            scope: "*",
-          };
-        } catch {
-          return { authenticated: false, error: "invalid_token", errorMessage: "Invalid access token" };
-        }
-      }
+    if (!authRequired && defaultService) {
+      if (rawToken === process.env.YANDEX_OAUTH_TOKEN) return { authenticated: true, mode: "local", service: defaultService, scope: "*" };
+      if (/^(y0_|y1_|AQAAAA)/.test(rawToken)) return { authenticated: true, mode: "local", scope: "*",
+        service: new StationService(new YandexIoTClient(rawToken, { useKeychain: false, persistEnv: false }), defaultQuasar, telemetryStorage) };
     }
-
-    return { authenticated: false, error: "invalid_token", errorMessage: "Invalid access token" };
+    return fail("Invalid access token");
+  } catch {
+    return fail("Credential storage unavailable", 503);
   }
-
-  if (cookieHeader && customQuasar && customQuasar !== defaultQuasar) {
-    return {
-      authenticated: true,
-      service: new StationService(undefined, customQuasar, telemetryStorage),
-    };
-  }
-
-  if (authRequired) {
-    return { authenticated: false, errorMessage: "authentication required" };
-  }
-
-  return { authenticated: true, service: defaultService };
 }
 
-export function getAuthenticatedService(
-  req: http.IncomingMessage,
-  defaultService: StationService,
-  defaultQuasar?: QuasarClient,
-  oauthStorage?: IStorage,
-  telemetryStorage?: ITelemetryStorage
-): StationService {
-  const auth = authenticateRequest(req, defaultService, defaultQuasar, oauthStorage, telemetryStorage, false);
-  return auth.service || defaultService;
+export async function getAuthenticatedService(
+  req: http.IncomingMessage, defaultService?: StationService, defaultQuasar?: QuasarClient,
+  oauthStorage?: IStorage, telemetryStorage?: ITelemetryStorage, authRequired = false
+): Promise<StationService> {
+  const auth = await authenticateRequest(req, defaultService, defaultQuasar, oauthStorage, telemetryStorage, authRequired);
+  if (!auth.authenticated) throw new Error(auth.errorMessage);
+  return auth.service;
 }
-
-const getServiceForRequest = getAuthenticatedService;
 
 export function createMcpServer(
-  service: StationService | (() => StationService),
-  scope?: string
+  service: StationService | (() => StationService | Promise<StationService>),
+  scope: string = "*"
 ): Server {
   const getService = typeof service === "function" ? service : () => service;
   const server = new Server(
     {
       name: "mctl-alice",
-      version: "2.0.0",
+      version: VERSION,
     },
     {
       capabilities: {
@@ -452,13 +386,14 @@ export function createMcpServer(
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     return {
-      tools: ALICE_TOOLS,
+      tools: ALICE_TOOLS.filter(tool => checkScope(tool.name, scope)),
     };
   });
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
-    return handleToolCall(name, args, getService(), scope);
+    try { return await handleToolCall(name, args, await getService(), scope); }
+    catch (error) { return { isError: true, content: [{ type: "text", text: error instanceof Error ? error.message : "Access check failed" }] }; }
   });
 
   return server;
@@ -498,20 +433,22 @@ export function createHttpServer(
     process.env.YANDEX_CALLBACK_URL ||
     redirectUri;
 
-  const oauthStorage = options.oauthStorage || createStorage();
+  const oauthStorage = guardedStorage(options.oauthStorage || createStorage());
+  const telemetryStorage = options.storage || createTelemetryStorage();
   const oauthController = new OAuthController({
     baseUrl,
     yandexClientId: clientId,
     yandexClientSecret: clientSecret,
     storage: oauthStorage,
     yandexCallbackUri,
+    authRequired,
   });
 
-  let quasarClient = new QuasarClient();
-  let stationService = new StationService(undefined, quasarClient, options.storage);
+  let quasarClient = authRequired ? undefined : new QuasarClient();
+  let stationService = authRequired ? undefined : new StationService(undefined, quasarClient, telemetryStorage);
 
   let sampler: TelemetrySampler | null = null;
-  if (options.enableSampler !== false) {
+  if (!authRequired && stationService && options.enableSampler !== false) {
     try {
       sampler = new TelemetrySampler(stationService, stationService.getStorage());
       sampler.start();
@@ -522,6 +459,29 @@ export function createHttpServer(
 
   // Keep track of active legacy SSE transports
   const sseTransports = new Map<string, SSEServerTransport>();
+
+  const browserTransactions = new Map<string, { browser: string; expires: number }>();
+  const loginTransactions = new Map<string, { browser: string; expires: number; returnTo: string }>();
+  const qrOwners = new Map<string, { userId: string; browser: string; expires: number }>();
+  const browserId = (req: http.IncomingMessage) => parseCookies(req).mctl_session || "";
+  const sseOwners = new Map<string, { userId?: string; clientId?: string; fingerprint: string }>();
+  const fingerprint = (req: http.IncomingMessage) => createHash("sha256").update((req.headers.authorization || "").replace(/^Bearer +/i, "")).digest("hex");
+  async function closeSessions(userId: string, clientId?: string) {
+    for (const [id, owner] of sseOwners) {
+      if (owner.userId === userId && (!clientId || owner.clientId === clientId)) {
+        await sseTransports.get(id)?.close();
+        sseOwners.delete(id);
+        sseTransports.delete(id);
+      }
+    }
+  }
+
+  const transactionCleanup = setInterval(() => {
+    for (const map of [browserTransactions, loginTransactions, qrOwners]) {
+      for (const [id, entry] of map) if (entry.expires <= Date.now()) map.delete(id);
+    }
+  }, 60000);
+  transactionCleanup.unref();
 
   // Helper for pure stateless MCP response (supports JSON and SSE format)
   function sendMcpResponse(
@@ -585,7 +545,7 @@ export function createHttpServer(
         result: {
           protocolVersion: rpcReq.params?.protocolVersion || "2024-11-05",
           capabilities: { tools: {} },
-          serverInfo: { name: "mctl-alice", version: "2.0.0" },
+          serverInfo: { name: "mctl-alice", version: VERSION },
         },
       };
     }
@@ -602,14 +562,17 @@ export function createHttpServer(
       return {
         jsonrpc: "2.0",
         id,
-        result: { tools: ALICE_TOOLS },
+        result: { tools: ALICE_TOOLS.filter(tool => checkScope(tool.name, scope)) },
       };
     }
 
     if (method === "tools/call") {
       const { name, arguments: args } = rpcReq.params || {};
       try {
-        const activeSvc = svc || (await getServiceForRequest(req, stationService, quasarClient, oauthStorage, options.storage));
+        const fresh = await authenticateRequest(req, stationService, quasarClient, oauthStorage, telemetryStorage, authRequired);
+        if (!fresh.authenticated) return { jsonrpc: "2.0", id, result: { isError: true, content: [{ type: "text", text: fresh.errorMessage }] } };
+        const activeSvc = fresh.service;
+        scope = fresh.scope;
         const result = await handleToolCall(name, args, activeSvc, scope);
         return {
           jsonrpc: "2.0",
@@ -636,7 +599,13 @@ export function createHttpServer(
   }
 
   const server = http.createServer(async (req, res) => {
+    try {
     const url = new URL(req.url || "/", baseUrl);
+    if (authRequired && req.method === "POST" && (url.pathname.startsWith("/account/") || ["/oauth/authorize", "/auth/save-cookie", "/auth/save-token"].includes(url.pathname))) {
+      if (req.headers.origin !== new URL(baseUrl).origin) {
+        res.writeHead(403); res.end("Invalid origin"); return;
+      }
+    }
 
     // CORS headers
     res.setHeader("Access-Control-Allow-Origin", "*");
@@ -650,14 +619,22 @@ export function createHttpServer(
       return;
     }
 
+    if (url.pathname === "/readyz") {
+      try {
+        await oauthStorage.getUser("__readiness_probe__");
+        await telemetryStorage.getStats();
+      } catch {
+        res.writeHead(503); res.end(JSON.stringify({ status: "unavailable" })); return;
+      }
+    }
     // Health check for Kubernetes probes
     if (url.pathname === "/healthz" || url.pathname === "/readyz") {
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ status: "ok", service: "mctl-alice", version: "2.0.0" }));
+      res.end(JSON.stringify({ status: "ok", service: "mctl-alice", version: VERSION }));
       return;
     }
 
-    console.log(`[HTTP] ${req.method} ${url.pathname}${url.search}`);
+    console.log(`[HTTP] ${req.method} ${url.pathname}`);
 
     // Static assets
     if (url.pathname.startsWith("/assets/") && req.method === "GET") {
@@ -735,7 +712,7 @@ export function createHttpServer(
       const actionParam = url.searchParams.get("action");
 
       // Direct approval / denial via GET query params if session_id is present
-      if (sessionIdParam && actionParam) {
+      if (sessionIdParam && actionParam && !authRequired) {
         try {
           if (actionParam === "deny") {
             const result = await oauthController.denyAuthorization(sessionIdParam);
@@ -767,9 +744,13 @@ export function createHttpServer(
       const state = url.searchParams.get("state") || "";
       const autoApprove = url.searchParams.get("auto_approve") === "true";
       const prompt = url.searchParams.get("prompt") || undefined;
-      console.log(`[OAuth] /oauth/authorize client_id=${clientId}, redirect_uri=${redirectUri}, state=${state}`);
 
+      const consentUser = await getSessionUser(req, oauthStorage);
+      if (authRequired && !consentUser) {
+        res.writeHead(302, { Location: "/auth/login?return_to=" + encodeURIComponent(url.pathname + url.search) }); res.end(); return;
+      }
       const result = await oauthController.handleAuthorize({
+        userId: consentUser?.id,
         client_id: clientId,
         redirect_uri: redirectUri,
         response_type: url.searchParams.get("response_type") || undefined,
@@ -782,19 +763,18 @@ export function createHttpServer(
       });
 
       if ("error" in result) {
-        console.warn(`[OAuth] /oauth/authorize rejected: error=${result.error}, desc=${result.description}`);
         res.writeHead(result.status || 400, { "Content-Type": "application/json; charset=utf-8" });
         res.end(JSON.stringify({ error: result.error, error_description: result.description }));
         return;
       }
 
       if (result.type === "redirect") {
-        console.log(`[OAuth] /oauth/authorize auto-approved, redirecting: ${result.redirectUrl}`);
         res.writeHead(302, { Location: result.redirectUrl });
         res.end();
         return;
       }
 
+      if (authRequired) browserTransactions.set(result.sessionId, { browser: browserId(req), expires: Date.now() + 600000 });
       // Render Consent Page
       const clientName = escapeHtml(result.clientName);
       const safeClientId = escapeHtml(result.clientId);
@@ -827,33 +807,14 @@ export function createHttpServer(
 
         <div style="margin-bottom: 24px;">
           <div style="font-weight: 600; font-size: 14px; margin-bottom: 12px;" data-i18n="oauth_scopes_title">Запрашиваемые права доступа:</div>
-          <ul style="list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 10px;">
-            <li style="display: flex; align-items: flex-start; gap: 10px; font-size: 14px;">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="color: #22c55e; flex-shrink: 0; margin-top: 2px;">
-                <polyline points="20 6 9 17 4 12"/>
-              </svg>
-              <div>
-                <strong style="font-family: var(--font-mono); font-size: 13px;">iot:view</strong>
-                <div style="color: var(--surface-fg-muted); font-size: 13px;" data-i18n="oauth_scope_view">Просмотр списка комнат, устройств, датчиков и их состояния</div>
-              </div>
-            </li>
-            <li style="display: flex; align-items: flex-start; gap: 10px; font-size: 14px;">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="color: #22c55e; flex-shrink: 0; margin-top: 2px;">
-                <polyline points="20 6 9 17 4 12"/>
-              </svg>
-              <div>
-                <strong style="font-family: var(--font-mono); font-size: 13px;">iot:control</strong>
-                <div style="color: var(--surface-fg-muted); font-size: 13px;" data-i18n="oauth_scope_control">Управление устройствами, симуляция голосовых команд и воспроизведение речи</div>
-              </div>
-            </li>
-          </ul>
+          <ul>${result.scope.split(/\s+/).map(scope => `<li><label><input form="consent" type="checkbox" name="scope_${scope}" value="yes" checked> ${escapeHtml(scope)}</label></li>`).join("")}</ul>
         </div>
 
         <div class="alert alert-info" style="margin-bottom: 24px; font-size: 13px;">
           <span data-i18n="oauth_status_connected">Подключение к умному дому Яндекс Алисы активно.</span>
         </div>
 
-        <form method="POST" action="/oauth/authorize" style="display: flex; gap: 12px; justify-content: flex-end;">
+        <form id="consent" method="POST" action="/oauth/authorize" style="display: flex; gap: 12px; justify-content: flex-end;">
           <input type="hidden" name="session_id" value="${sessionId}">
           <button type="submit" name="action" value="deny" class="btn btn-secondary" style="flex: 1;" data-i18n="oauth_btn_deny">Отклонить</button>
           <button type="submit" name="action" value="approve" class="btn btn-primary" style="flex: 2;" data-i18n="oauth_btn_approve">Разрешить доступ</button>
@@ -875,7 +836,6 @@ export function createHttpServer(
         const body = await parseRequestBody(req);
         const sessionId = body?.session_id || "";
         const action = body?.action || "approve";
-        console.log(`[OAuth] /oauth/authorize POST action=${action}, session_id=${sessionId}`);
 
         if (!sessionId) {
           res.writeHead(400, { "Content-Type": "application/json; charset=utf-8" });
@@ -883,22 +843,25 @@ export function createHttpServer(
           return;
         }
 
+        if (authRequired) {
+          const transaction = browserTransactions.get(sessionId);
+          const user = await getSessionUser(req, oauthStorage);
+          if (!user || !transaction || transaction.expires <= Date.now() || transaction.browser !== browserId(req)) throw new Error("Invalid browser transaction");
+          browserTransactions.delete(sessionId);
+        }
         if (action === "deny") {
           const result = await oauthController.denyAuthorization(sessionId);
-          console.log(`[OAuth] /oauth/authorize denied, redirecting: ${result.redirectUrl}`);
           res.writeHead(302, { Location: result.redirectUrl });
           res.end();
           return;
         }
 
         const user = await getSessionUser(req, oauthStorage);
-        const result = await oauthController.approveAuthorization(sessionId, user?.id);
-        console.log(`[OAuth] /oauth/authorize approved, redirecting: ${result.redirectUrl}`);
+        const result = await oauthController.approveAuthorization(sessionId, user?.id, authRequired ? ["iot:view", "iot:control", "quasar"].filter(scope => body[`scope_${scope}`] === "yes").join(" ") : undefined);
         res.writeHead(302, { Location: result.redirectUrl });
         res.end();
         return;
       } catch (err: any) {
-        console.error(`[OAuth] /oauth/authorize POST error: ${err.message}`);
         res.writeHead(400, { "Content-Type": "text/html; charset=utf-8" });
         res.end(renderAuthPage({
           title: "mctl-alice — Ошибка сессии",
@@ -914,11 +877,11 @@ export function createHttpServer(
 
     // OAuth: Yandex Callback Endpoint
     if (url.pathname === "/oauth/yandex/callback" && req.method === "GET") {
+      if (authRequired) { res.writeHead(400); res.end("Use the browser-bound /auth/login flow"); return; }
       const code = url.searchParams.get("code");
       const state = url.searchParams.get("state");
       const error = url.searchParams.get("error");
       const errorDescription = url.searchParams.get("error_description");
-      console.log(`[OAuth] /oauth/yandex/callback code=${code ? "present" : "missing"}, state=${state}, error=${error || "none"}`);
 
       try {
         const result = await oauthController.handleYandexCallback({
@@ -927,18 +890,16 @@ export function createHttpServer(
           error: error || undefined,
           error_description: errorDescription || undefined,
         });
-        console.log(`[OAuth] /oauth/yandex/callback success, redirecting to: ${result.redirectUrl}`);
         res.writeHead(302, { Location: result.redirectUrl });
         res.end();
       } catch (err: any) {
-        console.error(`[OAuth] /oauth/yandex/callback failed: ${err.message}`);
-        res.writeHead(500, { "Content-Type": "text/html; charset=utf-8" });
+        res.writeHead(err instanceof StorageUnavailableError ? 503 : 500, { "Content-Type": "text/html; charset=utf-8" });
         res.end(`<!DOCTYPE html>
 <html lang="ru">
 <head><meta charset="utf-8"><title>OAuth Error</title></head>
 <body style="font-family: -apple-system, BlinkMacSystemFont, sans-serif; padding: 40px; max-width: 600px; margin: auto;">
   <h2 style="color: #0f172a;">Ошибка авторизации Яндекс</h2>
-  <p style="color: #dc2626;">${err.message}</p>
+  <p style="color: #dc2626;">${escapeHtml(err.message)}</p>
   <p><a href="${baseUrl}/auth/login" style="color: #2563eb;">Попробовать снова</a></p>
 </body>
 </html>`);
@@ -950,9 +911,7 @@ export function createHttpServer(
     if (url.pathname === "/oauth/token" && req.method === "POST") {
       try {
         const body = await parseRequestBody(req);
-        console.log(`[OAuth] /oauth/token grant_type=${body?.grant_type}, client_id=${body?.client_id}`);
         const tokens = await oauthController.handleToken(body);
-        console.log(`[OAuth] /oauth/token issued tokens successfully`);
         res.writeHead(200, {
           "Content-Type": "application/json; charset=utf-8",
           "Cache-Control": "no-store",
@@ -960,12 +919,11 @@ export function createHttpServer(
         });
         res.end(JSON.stringify(tokens));
       } catch (err: any) {
-        console.error(`[OAuth] /oauth/token error: ${err.message}`);
-        res.writeHead(400, {
+        res.writeHead(err instanceof StorageUnavailableError ? 503 : 400, {
           "Content-Type": "application/json; charset=utf-8",
           "Cache-Control": "no-store",
         });
-        res.end(JSON.stringify({ error: "invalid_grant", error_description: err.message }));
+        res.end(JSON.stringify({ error: err instanceof StorageUnavailableError ? "temporarily_unavailable" : "invalid_grant", error_description: err.message }));
       }
       return;
     }
@@ -975,23 +933,23 @@ export function createHttpServer(
       try {
         const body = await parseRequestBody(req);
         const token = body?.token || url.searchParams.get("token") || "";
-        console.log(`[OAuth] /oauth/revoke token=${token ? "present" : "missing"}`);
+        const record = await oauthStorage.getToken(token) || await oauthStorage.getTokenByRefreshToken(token);
         await oauthController.handleRevoke(token);
+        if (record?.userId) await closeSessions(record.userId, record.clientId);
         res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
         res.end(JSON.stringify({ status: "ok" }));
-      } catch (err: any) {
-        console.error(`[OAuth] /oauth/revoke error: ${err.message}`);
-        res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
-        res.end(JSON.stringify({ status: "ok" }));
+      } catch {
+        res.writeHead(503, { "Content-Type": "application/json; charset=utf-8" });
+        res.end(JSON.stringify({ error: "temporarily_unavailable" }));
       }
       return;
     }
 
     // Helper to send 401 Unauthorized with RFC 9728 WWW-Authenticate
-    const sendUnauthorized = (authError?: "invalid_token" | "invalid_request", message = "authentication required") => {
-      res.writeHead(401, {
+    const sendUnauthorized = (authError?: string, message = "authentication required", status = 401) => {
+      res.writeHead(status, {
         "Content-Type": "application/json; charset=utf-8",
-        "WWW-Authenticate": buildWwwAuthenticate(baseUrl, authError),
+        ...(status === 401 ? { "WWW-Authenticate": buildWwwAuthenticate(baseUrl, authError) } : {}),
         "Cache-Control": "no-store",
       });
       res.end(JSON.stringify({ error: authError || message }));
@@ -1003,15 +961,15 @@ export function createHttpServer(
         url.pathname === "/" ||
         url.pathname === "/sse" ||
         url.pathname === "/mcp/sse") &&
-      req.method === "POST";
+      req.method === "POST" && !url.searchParams.has("sessionId");
 
     if (isMcpPost) {
-      const auth = await authenticateRequest(req, stationService, quasarClient, oauthStorage, options.storage, authRequired);
+      const auth = await authenticateRequest(req, stationService, quasarClient, oauthStorage, telemetryStorage, authRequired);
       if (!auth.authenticated) {
-        sendUnauthorized(auth.error, auth.errorMessage);
+        sendUnauthorized(auth.error, auth.errorMessage, auth.status);
         return;
       }
-      const activeSvc = auth.service || stationService;
+      const activeSvc = auth.service;
 
       let body = "";
       req.on("data", (chunk) => (body += chunk));
@@ -1069,27 +1027,34 @@ export function createHttpServer(
       req.method === "GET";
 
     if (isSseRequest) {
-      const auth = await authenticateRequest(req, stationService, quasarClient, oauthStorage, options.storage, authRequired);
+      const auth = await authenticateRequest(req, stationService, quasarClient, oauthStorage, telemetryStorage, authRequired);
       if (!auth.authenticated) {
-        sendUnauthorized(auth.error, auth.errorMessage);
+        sendUnauthorized(auth.error, auth.errorMessage, auth.status);
         return;
       }
 
       try {
-        const svc = auth.service || stationService;
+        const svc = auth.service;
         const transport = new SSEServerTransport("/messages", res);
         const sessionId = transport.sessionId;
         sseTransports.set(sessionId, transport);
+        sseOwners.set(sessionId, { userId: auth.userId, clientId: auth.clientId, fingerprint: fingerprint(req) });
 
         transport.onclose = () => {
           sseTransports.delete(sessionId);
+          sseOwners.delete(sessionId);
         };
 
-        const mcpServer = createMcpServer(svc, auth.scope);
+        const mcpServer = createMcpServer(async () => {
+          const fresh = await authenticateRequest(req, stationService, quasarClient, oauthStorage, telemetryStorage, authRequired);
+          if (!fresh.authenticated) throw new Error(fresh.errorMessage);
+          if (fresh.scope !== auth.scope) throw new Error("Grant changed; reconnect");
+          return fresh.service;
+        }, auth.scope);
         await mcpServer.connect(transport);
       } catch (err: any) {
         if (!res.headersSent) {
-          res.writeHead(500, { "Content-Type": "application/json" });
+          res.writeHead(err instanceof StorageUnavailableError ? 503 : 500, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ status: "error", message: err.message }));
         }
       }
@@ -1098,9 +1063,9 @@ export function createHttpServer(
 
     // Standard HTTP GET /mcp (not SSE, e.g. RFC 9728 discovery probe, ping, or client info check)
     if (url.pathname === "/mcp" && req.method === "GET") {
-      const auth = await authenticateRequest(req, stationService, quasarClient, oauthStorage, options.storage, authRequired);
+      const auth = await authenticateRequest(req, stationService, quasarClient, oauthStorage, telemetryStorage, authRequired);
       if (!auth.authenticated) {
-        sendUnauthorized(auth.error, auth.errorMessage);
+        sendUnauthorized(auth.error, auth.errorMessage, auth.status);
         return;
       }
       res.writeHead(200, {
@@ -1134,23 +1099,47 @@ export function createHttpServer(
         res.end(JSON.stringify({ error: "Session not found or expired" }));
         return;
       }
+      const auth = await authenticateRequest(req, stationService, quasarClient, oauthStorage, telemetryStorage, authRequired);
+      if (!auth.authenticated) { sendUnauthorized(auth.error, auth.errorMessage, auth.status); return; }
+      const owner = sseOwners.get(sessionId!);
+      if (!owner || owner.userId !== auth.userId || owner.clientId !== auth.clientId || owner.fingerprint !== fingerprint(req)) {
+        sendUnauthorized("invalid_token", "Session owner mismatch"); return;
+      }
       try {
         await transport.handlePostMessage(req, res);
       } catch (err: any) {
         if (!res.headersSent) {
-          res.writeHead(500, { "Content-Type": "application/json" });
+          res.writeHead(err instanceof StorageUnavailableError ? 503 : 500, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ error: err.message }));
         }
       }
       return;
     }
 
-    // REST API auth gate (when authRequired is true)
-    if (url.pathname.startsWith("/api/") && url.pathname !== "/api/info") {
-      const auth = await authenticateRequest(req, stationService, quasarClient, oauthStorage, options.storage, authRequired);
+    const restTools: Record<string, string> = {
+      "/api/devices": "alice_list_devices", "/api/say": "alice_say_phrase", "/api/command": "alice_send_command",
+      "/api/volume": "alice_set_volume", "/api/media": "alice_media_control", "/api/scenarios/trigger": "alice_trigger_scenario",
+    };
+    async function getRestService(): Promise<StationService> {
+      const auth = await authenticateRequest(req, stationService, quasarClient, oauthStorage, telemetryStorage, authRequired);
       if (!auth.authenticated) {
-        sendUnauthorized(auth.error, auth.errorMessage);
-        return;
+        if (auth.status === 401) res.setHeader("WWW-Authenticate", buildWwwAuthenticate(baseUrl, auth.error));
+        throw Object.assign(new Error(auth.errorMessage), { statusCode: auth.status });
+      }
+      const tool = restTools[url.pathname];
+      if (tool && !checkScope(tool, auth.scope)) {
+        res.setHeader("WWW-Authenticate", buildWwwAuthenticate(baseUrl, "insufficient_scope") + `, scope="${TOOL_SCOPES[tool].join(" ")}"`);
+        throw Object.assign(new Error("insufficient_scope"), { statusCode: 403 });
+      }
+      return auth.service;
+    }
+    // Reject unauthorized requests before reading their body. Each operation
+    // revalidates after reading it, using this same hosted access policy.
+    if (url.pathname.startsWith("/api/") && url.pathname !== "/api/info") {
+      try { await getRestService(); } catch (error) {
+        const err = error as Error & { statusCode?: number };
+        res.writeHead(err.statusCode || 503, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: err.message })); return;
       }
     }
 
@@ -1158,7 +1147,7 @@ export function createHttpServer(
     if (url.pathname === "/api/devices" && req.method === "GET") {
       try {
         const onlySpeakers = url.searchParams.get("only_speakers") === "true";
-        const svc = await getServiceForRequest(req, stationService, quasarClient, oauthStorage, options.storage);
+        const svc = await getRestService();
         const result = await svc.listDevices(onlySpeakers);
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ status: "ok", ...result }));
@@ -1180,7 +1169,7 @@ export function createHttpServer(
           res.end(JSON.stringify({ status: "error", message: "Parameter 'phrase' is required" }));
           return;
         }
-        const svc = await getServiceForRequest(req, stationService, quasarClient, oauthStorage, options.storage);
+        const svc = await getRestService();
         const result = await svc.sayPhrase(phrase, body.device);
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ...result }));
@@ -1202,7 +1191,7 @@ export function createHttpServer(
           res.end(JSON.stringify({ status: "error", message: "Parameter 'command' is required" }));
           return;
         }
-        const svc = await getServiceForRequest(req, stationService, quasarClient, oauthStorage, options.storage);
+        const svc = await getRestService();
         const result = await svc.sendCommand(command, body.device);
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ...result }));
@@ -1229,7 +1218,7 @@ export function createHttpServer(
           );
           return;
         }
-        const svc = await getServiceForRequest(req, stationService, quasarClient, oauthStorage, options.storage);
+        const svc = await getRestService();
         const result = await svc.setVolume(level, body.device);
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ...result }));
@@ -1256,7 +1245,7 @@ export function createHttpServer(
           );
           return;
         }
-        const svc = await getServiceForRequest(req, stationService, quasarClient, oauthStorage, options.storage);
+        const svc = await getRestService();
         const result = await svc.mediaControl(action, body.device);
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ...result }));
@@ -1278,7 +1267,7 @@ export function createHttpServer(
           res.end(JSON.stringify({ status: "error", message: "Parameter 'scenario' is required" }));
           return;
         }
-        const svc = await getServiceForRequest(req, stationService, quasarClient, oauthStorage, options.storage);
+        const svc = await getRestService();
         const result = await svc.triggerScenario(scenario);
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ...result }));
@@ -1348,10 +1337,7 @@ export function createHttpServer(
       setSecurityHeaders(res);
       const user = await getSessionUser(req, oauthStorage);
       const creds = user ? await oauthStorage.getUserCredentials(user.id) : null;
-      const grants =
-        user && (oauthStorage as any).listUserGrants
-          ? await (oauthStorage as any).listUserGrants(user.id)
-          : [];
+      const grants = user && oauthStorage.listUserGrants ? await oauthStorage.listUserGrants(user.id) : [];
 
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       res.end(
@@ -1375,6 +1361,7 @@ export function createHttpServer(
       const user = await getSessionUser(req, oauthStorage);
       if (user) {
         await oauthStorage.deleteUser(user.id);
+        await closeSessions(user.id);
       }
       res.writeHead(302, {
         "Set-Cookie": "mctl_session=; Path=/; HttpOnly; Max-Age=0",
@@ -1408,8 +1395,9 @@ export function createHttpServer(
       const user = await getSessionUser(req, oauthStorage);
       const body = await parseRequestBody(req);
       const clientIdParam = body?.client_id;
-      if (user && clientIdParam && (oauthStorage as any).deleteUserClientTokens) {
-        await (oauthStorage as any).deleteUserClientTokens(user.id, clientIdParam);
+      if (user && clientIdParam) {
+        await oauthStorage.revokeUserGrant(user.id, clientIdParam);
+        await closeSessions(user.id, clientIdParam);
       }
       res.writeHead(302, { Location: "/account?grant_revoked=true" });
       res.end();
@@ -1419,7 +1407,17 @@ export function createHttpServer(
     // Auth login redirect
     if (url.pathname === "/auth/login") {
       const responseType = clientSecret ? "code" : "token";
-      const oauthUrl = buildOAuthUrl(clientId, redirectUri, responseType);
+      let oauthUrl = buildOAuthUrl(clientId, redirectUri, responseType);
+      if (authRequired) {
+        if (!clientSecret) { res.writeHead(503); res.end("OAuth application not configured"); return; }
+        const state = randomUUID();
+        const browser = randomUUID();
+        const requestedReturn = url.searchParams.get("return_to") || "/account";
+        const returnTo = requestedReturn.startsWith("/oauth/authorize?") ? requestedReturn : "/account";
+        loginTransactions.set(state, { browser, expires: Date.now() + 600000, returnTo });
+        res.setHeader("Set-Cookie", `mctl_login=${browser}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=600`);
+        const target = new URL(oauthUrl); target.searchParams.set("state", state); oauthUrl = target.toString();
+      }
       res.writeHead(302, { Location: oauthUrl });
       res.end();
       return;
@@ -1430,10 +1428,18 @@ export function createHttpServer(
       const state = url.searchParams.get("state");
       const code = url.searchParams.get("code");
       const error = url.searchParams.get("error");
-      const isPending = Boolean(state && oauthStorage.getPendingAuth(state));
-      console.log(`[OAuth] /auth/callback received: code=${code ? "present" : "missing"}, state=${state}, error=${error || "none"}, isPending=${isPending}`);
+      let loginReturnTo: string | undefined;
+      if (authRequired) {
+        const transaction = state ? loginTransactions.get(state) : undefined;
+        if (!transaction || transaction.expires <= Date.now() || transaction.browser !== parseCookies(req).mctl_login) {
+          res.writeHead(400); res.end("Invalid login transaction; sign in again"); return;
+        }
+        loginTransactions.delete(state!);
+        loginReturnTo = transaction.returnTo;
+      }
+      const isPending = Boolean(state && await oauthStorage.getPendingAuth(state));
 
-      if (state && oauthStorage.getPendingAuth(state)) {
+      if (state && await oauthStorage.getPendingAuth(state)) {
         try {
           const result = await oauthController.handleYandexCallback({
             code: code || undefined,
@@ -1441,13 +1447,11 @@ export function createHttpServer(
             error: error || undefined,
             error_description: url.searchParams.get("error_description") || undefined,
           });
-          console.log(`[OAuth] /auth/callback (pending) redirected to: ${result.redirectUrl}`);
           res.writeHead(302, { Location: result.redirectUrl });
           res.end();
           return;
         } catch (err: any) {
-          console.error(`[OAuth] /auth/callback (pending) failed: ${err.message}`);
-          res.writeHead(500, { "Content-Type": "text/html; charset=utf-8" });
+          res.writeHead(err instanceof StorageUnavailableError ? 503 : 500, { "Content-Type": "text/html; charset=utf-8" });
           const content = `
             <h2 data-i18n="callback_error_title">Ошибка авторизации Яндекс</h2>
             <div class="alert alert-error">❌ ${escapeHtml(err.message)}</div>
@@ -1472,13 +1476,14 @@ export function createHttpServer(
 
           // Verify with Yandex API
           const client = new YandexIoTClient(tokens.access_token, {
+            credentialsMode: authRequired ? "hosted" : "local",
             useKeychain: false,
             persistEnv: false,
             refreshToken: tokens.refresh_token,
             clientId,
             clientSecret,
           });
-          const userService = new StationService(client);
+          const userService = new StationService(client, undefined, undefined, authRequired ? "hosted" : "local");
           const devices = await userService.listDevices(true);
           const speakerNames = devices.speakers.map((s) => `${s.name} (${s.room})`);
 
@@ -1511,6 +1516,7 @@ export function createHttpServer(
               updatedAt: Date.now(),
             });
           } catch {
+            if (authRequired) throw new Error("Yandex profile verification failed; reconnect");
             await oauthStorage.saveUser({
               id: userId,
               yandexUid: "local_uid",
@@ -1527,8 +1533,9 @@ export function createHttpServer(
 
           const webSessionId = randomUUID();
           await oauthStorage.saveWebSession(webSessionId, userId, Date.now() + 30 * 86400 * 1000);
-          res.setHeader("Set-Cookie", `mctl_session=${webSessionId}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000`);
+          res.setHeader("Set-Cookie", `mctl_session=${webSessionId}; Path=/; HttpOnly; SameSite=Lax; ${authRequired ? "Secure; " : ""}Max-Age=2592000`);
 
+          if (loginReturnTo) { res.writeHead(302, { Location: loginReturnTo }); res.end(); return; }
           const speakerHtml =
             speakerNames.length > 0
               ? `<div class="speakers" style="margin-top: 16px; padding: 14px 16px; background: var(--surface-elevated); border: 1px solid var(--surface-line); border-radius: var(--mctl-radius-md);"><strong data-i18n="callback_speakers_found">Найденные колонки:</strong><br>${speakerNames.map((s) => "• " + escapeHtml(s)).join("<br>")}</div>`
@@ -1547,7 +1554,7 @@ export function createHttpServer(
           res.end(renderAuthPage({ title: "mctl-alice — Авторизация успешна", titleKey: "callback_success_page_title", contentHtml: content }));
           return;
         } catch (err: any) {
-          res.writeHead(500, { "Content-Type": "text/html; charset=utf-8" });
+          res.writeHead(err instanceof StorageUnavailableError ? 503 : 500, { "Content-Type": "text/html; charset=utf-8" });
           const content = `
             <h2 data-i18n="callback_error_title">mctl-alice — Ошибка авторизации</h2>
             <div class="alert alert-error">❌ Ошибка обмена кода: ${escapeHtml(err.message)}</div>
@@ -1647,8 +1654,8 @@ export function createHttpServer(
           }
 
           // Verify with Yandex API
-          const client = new YandexIoTClient(token, { useKeychain: false, persistEnv: false });
-          const userService = new StationService(client, quasarClient);
+          const client = new YandexIoTClient(token, { credentialsMode: authRequired ? "hosted" : "local", useKeychain: false, persistEnv: false });
+          const userService = new StationService(client, authRequired ? undefined : quasarClient, undefined, authRequired ? "hosted" : "local");
           const devices = await userService.listDevices(true);
           const speakerNames = devices.speakers.map((s) => `${s.name} (${s.room})`);
 
@@ -1676,6 +1683,7 @@ export function createHttpServer(
               updatedAt: Date.now(),
             });
           } catch {
+            if (authRequired) throw new Error("Yandex profile verification failed; reconnect");
             await oauthStorage.saveUser({
               id: userId,
               yandexUid: "local_uid",
@@ -1692,12 +1700,12 @@ export function createHttpServer(
 
           const webSessionId = randomUUID();
           await oauthStorage.saveWebSession(webSessionId, userId, Date.now() + 30 * 86400 * 1000);
-          res.setHeader("Set-Cookie", `mctl_session=${webSessionId}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000`);
+          res.setHeader("Set-Cookie", `mctl_session=${webSessionId}; Path=/; HttpOnly; SameSite=Lax; ${authRequired ? "Secure; " : ""}Max-Age=2592000`);
 
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ status: "ok", speakers: speakerNames }));
         } catch (err: any) {
-          res.writeHead(500, { "Content-Type": "application/json" });
+          res.writeHead(err instanceof StorageUnavailableError ? 503 : 500, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ status: "error", message: err.message }));
         }
       });
@@ -1918,11 +1926,14 @@ export function createHttpServer(
     // QR Code generation endpoint
     if (url.pathname === "/auth/qr-code" && req.method === "GET") {
       try {
+        const user = await getSessionUser(req, oauthStorage);
+        if (authRequired && !user) { res.writeHead(401); res.end("Sign in required"); return; }
         const qrData = await initQrAuth();
+        if (authRequired && user) qrOwners.set(qrData.sessionId, { userId: user.id, browser: browserId(req), expires: Date.now() + 600000 });
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ status: "ok", ...qrData }));
       } catch (err: any) {
-        res.writeHead(500, { "Content-Type": "application/json" });
+        res.writeHead(err instanceof StorageUnavailableError ? 503 : 500, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ status: "error", message: err.message }));
       }
       return;
@@ -1937,9 +1948,17 @@ export function createHttpServer(
         return;
       }
       try {
+        if (authRequired) {
+          const owner = qrOwners.get(sessionId);
+          const user = await getSessionUser(req, oauthStorage);
+          if (!owner || owner.expires <= Date.now() || !user || user.id !== owner.userId || browserId(req) !== owner.browser) {
+            res.writeHead(401); res.end("Invalid QR owner"); return;
+          }
+        }
         const result = await checkQrAuthStatus(sessionId);
         if (result.status === "ok" && result.cookie) {
           const cookie = result.cookie;
+          qrOwners.delete(sessionId);
 
           const user = await getSessionUser(req, oauthStorage);
           if (user) {
@@ -1963,7 +1982,7 @@ export function createHttpServer(
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify(safeResult));
       } catch (err: any) {
-        res.writeHead(500, { "Content-Type": "application/json" });
+        res.writeHead(err instanceof StorageUnavailableError ? 503 : 500, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ status: "error", message: err.message }));
       }
       return;
@@ -1991,14 +2010,14 @@ export function createHttpServer(
           }
 
           // Test verification with Quasar
-          const testQuasar = new QuasarClient({ cookie, useKeychain: false, persistEnv: false, userId: user?.id, storage: oauthStorage });
+          const testQuasar = new QuasarClient({ credentialsMode: authRequired ? "hosted" : "local", cookie, useKeychain: false, persistEnv: false, userId: user?.id, storage: oauthStorage });
           await testQuasar.getCsrfToken();
 
           if (!authRequired) {
             saveCookieToEnvFile(cookie);
             saveCookieToKeychain(cookie);
 
-            quasarClient = new QuasarClient({ cookie, useKeychain: false, persistEnv: false, userId: user?.id, storage: oauthStorage });
+            quasarClient = new QuasarClient({ credentialsMode: authRequired ? "hosted" : "local", cookie, useKeychain: false, persistEnv: false, userId: user?.id, storage: oauthStorage });
             stationService = new StationService(undefined, quasarClient);
           }
 
@@ -2014,7 +2033,7 @@ export function createHttpServer(
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ status: "ok", message: "Cookie saved and verified successfully" }));
         } catch (err: any) {
-          res.writeHead(500, { "Content-Type": "application/json" });
+          res.writeHead(err instanceof StorageUnavailableError ? 503 : 500, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ status: "error", message: err.message }));
         }
       });
@@ -2038,7 +2057,7 @@ export function createHttpServer(
         JSON.stringify({
           service: "mctl-alice",
           description: "Yandex Alice Smart Speaker MCP & REST Server for ChatGPT",
-          version: "1.8.0",
+          version: VERSION,
           endpoints: {
             openapi: "/openapi.json",
             sse: "/sse",
@@ -2066,10 +2085,17 @@ export function createHttpServer(
     // 404 Not Found for any unmatched route
     res.writeHead(404, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: "not_found", message: "Route not found" }));
+    } catch {
+      if (!res.headersSent) { res.writeHead(503, { "Content-Type": "application/json" }); res.end(JSON.stringify({ error: "temporarily_unavailable" })); }
+      else res.end();
+    }
   });
 
   server.on("close", () => {
+    clearInterval(transactionCleanup);
+    for (const transport of sseTransports.values()) void transport.close();
     if (sampler) sampler.stop();
+    if (!options.storage) void telemetryStorage.close();
   });
 
   return server;

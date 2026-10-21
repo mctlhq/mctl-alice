@@ -105,11 +105,12 @@ export class StationService {
   constructor(
     client?: YandexIoTClient,
     quasarClient?: QuasarClient,
-    storage?: ITelemetryStorage
+    storage?: ITelemetryStorage,
+    private credentialsMode: "local" | "hosted" = "local"
   ) {
     if (client) {
       this.client = client;
-    } else {
+    } else if (credentialsMode === "local") {
       try {
         this.client = new YandexIoTClient();
       } catch {
@@ -118,7 +119,7 @@ export class StationService {
     }
     if (quasarClient) {
       this.quasarClient = quasarClient;
-    } else {
+    } else if (credentialsMode === "local") {
       try {
         this.quasarClient = new QuasarClient();
       } catch {
@@ -132,6 +133,7 @@ export class StationService {
 
   getStorage(): ITelemetryStorage {
     if (!this.storage) {
+      if (this.credentialsMode === "hosted") throw new Error("Personal history collection is not enabled yet.");
       this.storage = createTelemetryStorage();
     }
     return this.storage;
@@ -147,6 +149,7 @@ export class StationService {
 
   private getClient(): YandexIoTClient {
     if (!this.client) {
+      if (this.credentialsMode === "hosted") throw new YandexApiError("Reconnect your Yandex IoT account.");
       try {
         this.client = new YandexIoTClient();
       } catch {
@@ -376,6 +379,7 @@ export class StationService {
    * Send arbitrary voice command to Alice as text (e.g. "включи джаз", "поставь таймер на 10 минут")
    */
   async sendCommand(command: string, targetSpeaker?: string) {
+    if (this.credentialsMode === "hosted" && !this.quasarClient?.hasCookie()) throw new Error("Connect Quasar in /auth/cookie to send commands.");
     const speaker = await this.resolveSpeaker(targetSpeaker);
 
     if (this.quasarClient && this.quasarClient.hasCookie()) {
@@ -428,6 +432,7 @@ export class StationService {
    * Speak arbitrary text via Alice (TTS)
    */
   async sayPhrase(phrase: string, targetSpeaker?: string) {
+    if (this.credentialsMode === "hosted" && !this.quasarClient?.hasCookie()) throw new Error("Connect Quasar in /auth/cookie to speak phrases.");
     const speaker = await this.resolveSpeaker(targetSpeaker);
 
     if (this.quasarClient && this.quasarClient.hasCookie()) {
@@ -1365,6 +1370,7 @@ export class StationService {
     to?: string;
     resolution?: "max" | "1m" | "5m" | "15m" | "1h";
   }): Promise<TelemetryHistoryResult> {
+    if (this.credentialsMode === "hosted") throw new Error("Personal history collection is not enabled yet.");
     const { device, roomName } = await this.resolveDevice(options.device, options.room);
 
     // Parse time range

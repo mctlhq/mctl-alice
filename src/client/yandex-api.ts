@@ -14,6 +14,8 @@ import {
 } from "./types.js";
 
 export interface YandexIoTClientOptions {
+  credentialsMode?: "local" | "hosted";
+  onRefresh?: (accessToken: string, refreshToken: string | null, expiresIn?: number) => Promise<void>;
   useKeychain?: boolean;
   refreshToken?: string;
   clientId?: string;
@@ -45,15 +47,19 @@ export class YandexIoTClient {
   private persistEnv: boolean;
   private envFilePath?: string;
 
+  private onRefresh?: YandexIoTClientOptions["onRefresh"];
+
   constructor(token?: string, options: YandexIoTClientOptions = {}) {
-    this.useKeychain = options.useKeychain ?? true;
+    const hosted = options.credentialsMode === "hosted";
+    this.onRefresh = options.onRefresh;
+    this.useKeychain = !hosted && (options.useKeychain ?? true);
     this.autoRefresh = options.autoRefresh ?? true;
-    this.persistEnv = options.persistEnv ?? true;
+    this.persistEnv = !hosted && (options.persistEnv ?? true);
     this.envFilePath = options.envFilePath;
 
     const resolvedToken =
       token ||
-      process.env.YANDEX_OAUTH_TOKEN ||
+      (!hosted ? process.env.YANDEX_OAUTH_TOKEN : undefined) ||
       (this.useKeychain ? getMacKeychain("mctl-alice") : null);
 
     if (!resolvedToken) {
@@ -66,7 +72,7 @@ export class YandexIoTClient {
 
     this.refreshToken =
       options.refreshToken ||
-      process.env.YANDEX_REFRESH_TOKEN ||
+      (!hosted ? process.env.YANDEX_REFRESH_TOKEN : undefined) ||
       (this.useKeychain ? getMacKeychain("mctl-alice-refresh-token") : null);
 
     this.clientId =
@@ -134,6 +140,8 @@ export class YandexIoTClient {
               if (newTokens.refresh_token) {
                 this.refreshToken = newTokens.refresh_token;
               }
+
+              await this.onRefresh?.(this.token, this.refreshToken, newTokens.expires_in);
 
               if (this.useKeychain) {
                 saveTokenToKeychain(this.token, "mctl-alice");

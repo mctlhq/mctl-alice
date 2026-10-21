@@ -83,9 +83,12 @@ describe("/auth/callback code exchange persistence", () => {
     const port = 8197;
     server = await startServer(port, true);
 
-    const res = await realFetch(`http://localhost:${port}/auth/callback?code=abc`);
+    const login = await realFetch(`http://localhost:${port}/auth/login`, { redirect: "manual" });
+    const state = new URL(login.headers.get("location")!).searchParams.get("state");
+    const cookie = login.headers.get("set-cookie")!.split(";")[0];
+    const res = await realFetch(`http://localhost:${port}/auth/callback?code=abc&state=${state}`, { redirect: "manual", headers: { Cookie: cookie } });
 
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(302);
     expect(tokenStorage.saveTokenToEnvFile).not.toHaveBeenCalled();
     expect(tokenStorage.saveRefreshTokenToEnvFile).not.toHaveBeenCalled();
     expect(tokenStorage.saveTokenToKeychain).not.toHaveBeenCalled();

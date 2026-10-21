@@ -413,7 +413,7 @@ export class OAuthStorage implements IStorage {
       : null;
     const encryptedQuasar = creds.quasarCookie
       ? encryptToken(creds.quasarCookie, userId)
-      : existing?.quasarCookie
+      : !("quasarCookie" in creds) && existing?.quasarCookie
       ? encryptToken(existing.quasarCookie, userId)
       : null;
     const quasarUpdated = creds.quasarCookie ? now : existing?.quasarUpdatedAt || null;
@@ -451,8 +451,7 @@ export class OAuthStorage implements IStorage {
         quasarUpdatedAt: row.quasar_updated_at || undefined,
       };
     } catch (err) {
-      // If decryption fails (e.g. key mismatch), return null
-      return null;
+      throw new Error("Credential decryption failed");
     }
   }
 
@@ -523,8 +522,8 @@ export class OAuthStorage implements IStorage {
     }));
   }
 
-  revokeUserClientGrants(userId: string, clientId: string): void {
-    this.deleteUserClientTokensStmt.run(userId, clientId);
+  revokeUserGrant(userId: string, clientId: string): boolean {
+    return Number(this.deleteUserClientTokensStmt.run(userId, clientId).changes) > 0;
   }
 
   deleteUser(userId: string): void {
@@ -799,8 +798,7 @@ export class OAuthStorage implements IStorage {
   }
 
   revokeToken(token: string): boolean {
-    this.deleteTokenStmt.run(token, token);
-    return true;
+    return Number(this.deleteTokenStmt.run(token, token).changes) > 0;
   }
 
   close(): void {

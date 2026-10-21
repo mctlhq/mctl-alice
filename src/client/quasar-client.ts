@@ -105,6 +105,8 @@ const USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
 export interface QuasarClientOptions {
+  onCookieRefresh?: (cookie: string) => Promise<void>;
+  credentialsMode?: "local" | "hosted";
   cookie?: string;
   useKeychain?: boolean;
   persistEnv?: boolean;
@@ -114,6 +116,7 @@ export interface QuasarClientOptions {
 }
 
 export class QuasarClient {
+  private onCookieRefresh?: QuasarClientOptions["onCookieRefresh"];
   private cookie: string | null = null;
   private cookiesMap: Map<string, string> = new Map();
   private csrfToken: string | null = null;
@@ -127,15 +130,17 @@ export class QuasarClient {
   private storage?: IStorage;
 
   constructor(options: QuasarClientOptions = {}) {
-    this.useKeychain = options.useKeychain ?? true;
-    this.persistEnv = options.persistEnv ?? true;
+    this.onCookieRefresh = options.onCookieRefresh;
+    const hosted = options.credentialsMode === "hosted";
+    this.useKeychain = !hosted && (options.useKeychain ?? true);
+    this.persistEnv = !hosted && (options.persistEnv ?? true);
     this.envFilePath = options.envFilePath;
     this.userId = options.userId;
     this.storage = options.storage;
 
     const cookie =
       options.cookie ||
-      process.env.YANDEX_COOKIE ||
+      (!hosted ? process.env.YANDEX_COOKIE : undefined) ||
       (this.useKeychain ? getTokenFromKeychain("mctl-alice-quasar-cookie") : null);
 
     if (cookie) {
@@ -250,6 +255,7 @@ export class QuasarClient {
     }
     this.cookie = this.serializeCookies();
 
+    if (setCookies.length) await this.onCookieRefresh?.(this.cookie);
     const html = await res.text();
     const match = html.match(/"csrfToken2"\s*:\s*"([^"]+)"/);
     if (!match || !match[1]) {

@@ -120,9 +120,27 @@ export interface IStorage {
     yandexExpiresAt?: number
   ): Promise<void> | void;
   listUserGrants?(userId: string): Promise<UserGrant[]> | UserGrant[];
-  revokeUserGrant?(userId: string, clientId: string): Promise<boolean> | boolean;
+  revokeUserGrant(userId: string, clientId: string): Promise<boolean> | boolean;
   pruneExpired?(): Promise<void> | void;
 
   close?(): Promise<void> | void;
 }
 
+
+/** Distinguish storage failure from a successfully observed missing record. */
+export class StorageUnavailableError extends Error {
+  constructor() { super("Credential storage unavailable"); this.name = "StorageUnavailableError"; }
+}
+
+export function guardedStorage(storage: IStorage): IStorage {
+  return new Proxy(storage, {
+    get(target, property) {
+      const value = Reflect.get(target, property);
+      if (typeof value !== "function") return value;
+      return async (...args: unknown[]) => {
+        try { return await value.apply(target, args); }
+        catch { throw new StorageUnavailableError(); }
+      };
+    },
+  });
+}

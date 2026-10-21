@@ -1,3 +1,4 @@
+import { VERSION } from "../version.js";
 export function getOpenApiSpec(baseUrl: string) {
   return {
     openapi: "3.1.0",
@@ -5,7 +6,7 @@ export function getOpenApiSpec(baseUrl: string) {
       title: "Yandex Alice Smart Speaker Control API",
       description:
         "REST API for ChatGPT Actions and external clients to control Yandex Alice smart speakers (Яндекс Станция) and Smart Home scenarios.",
-      version: "2.0.0",
+      version: VERSION,
     },
     servers: [
       {

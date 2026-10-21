@@ -223,7 +223,9 @@ export class PostgresStorage implements IStorage {
     const now = Date.now();
     const encAccess = encryptToken(creds.yandexAccessToken, userId);
     const encRefresh = creds.yandexRefreshToken ? encryptToken(creds.yandexRefreshToken, userId) : null;
-    const encCookie = creds.quasarCookie ? encryptToken(creds.quasarCookie, userId) : null;
+    const existing = await this.getUserCredentials(userId);
+    const cookie = "quasarCookie" in creds ? creds.quasarCookie : existing?.quasarCookie;
+    const encCookie = cookie ? encryptToken(cookie, userId) : null;
 
     const query = `
       INSERT INTO user_credentials (
@@ -235,8 +237,8 @@ export class PostgresStorage implements IStorage {
         encrypted_yandex_access_token = EXCLUDED.encrypted_yandex_access_token,
         encrypted_yandex_refresh_token = COALESCE(EXCLUDED.encrypted_yandex_refresh_token, user_credentials.encrypted_yandex_refresh_token),
         yandex_expires_at = COALESCE(EXCLUDED.yandex_expires_at, user_credentials.yandex_expires_at),
-        encrypted_quasar_cookie = COALESCE(EXCLUDED.encrypted_quasar_cookie, user_credentials.encrypted_quasar_cookie),
-        quasar_updated_at = COALESCE(EXCLUDED.quasar_updated_at, user_credentials.quasar_updated_at),
+        encrypted_quasar_cookie = EXCLUDED.encrypted_quasar_cookie,
+        quasar_updated_at = EXCLUDED.quasar_updated_at,
         updated_at = EXCLUDED.updated_at
     `;
 
@@ -263,27 +265,15 @@ export class PostgresStorage implements IStorage {
     let quasarCookie: string | undefined = undefined;
 
     if (row.encrypted_yandex_access_token) {
-      try {
-        yandexAccessToken = decryptToken(row.encrypted_yandex_access_token, userId);
-      } catch {
-        yandexAccessToken = row.encrypted_yandex_access_token;
-      }
+      yandexAccessToken = decryptToken(row.encrypted_yandex_access_token, userId);
     }
 
     if (row.encrypted_yandex_refresh_token) {
-      try {
-        yandexRefreshToken = decryptToken(row.encrypted_yandex_refresh_token, userId);
-      } catch {
-        yandexRefreshToken = row.encrypted_yandex_refresh_token;
-      }
+      yandexRefreshToken = decryptToken(row.encrypted_yandex_refresh_token, userId);
     }
 
     if (row.encrypted_quasar_cookie) {
-      try {
-        quasarCookie = decryptToken(row.encrypted_quasar_cookie, userId);
-      } catch {
-        quasarCookie = row.encrypted_quasar_cookie;
-      }
+      quasarCookie = decryptToken(row.encrypted_quasar_cookie, userId);
     }
 
     return {
@@ -664,11 +654,11 @@ export class PostgresStorage implements IStorage {
 
   async revokeToken(token: string): Promise<boolean> {
     await this.ready();
-    await this.pool.query(
+    const result = await this.pool.query(
       "DELETE FROM oauth_tokens WHERE access_token = $1 OR refresh_token = $2",
       [token, token]
     );
-    return true;
+    return (result.rowCount ?? 0) > 0;
   }
 
   async listUserGrants(userId: string): Promise<UserGrant[]> {
@@ -713,6 +703,12 @@ export class PostgresStorage implements IStorage {
 }
 
 export class PostgresTelemetryStorage implements ITelemetryStorage {
+  private userId: string | null = null;
+  forUser(userId: string): ITelemetryStorage {
+    const view = Object.create(this) as PostgresTelemetryStorage;
+    view.userId = userId;
+    return view;
+  }
   private pool: pg.Pool;
   private initPromise: Promise<void> | null = null;
 
@@ -754,6 +750,8 @@ export class PostgresTelemetryStorage implements ITelemetryStorage {
         timestamp BIGINT NOT NULL,
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
+      ALTER TABLE telemetry_samples ADD COLUMN IF NOT EXISTS user_id TEXT;
+      CREATE INDEX IF NOT EXISTS idx_telemetry_owner ON telemetry_samples(user_id, device_id, metric, timestamp);
       CREATE INDEX IF NOT EXISTS idx_telemetry_device_metric_ts ON telemetry_samples(device_id, metric, timestamp ASC);
       CREATE INDEX IF NOT EXISTS idx_telemetry_ts ON telemetry_samples(timestamp);
     `);
@@ -762,8 +760,8 @@ export class PostgresTelemetryStorage implements ITelemetryStorage {
   async insertSample(sample: TelemetrySample): Promise<void> {
     await this.ready();
     await this.pool.query(
-      `INSERT INTO telemetry_samples (device_id, device_name, room_name, metric, value, unit, timestamp)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      `INSERT INTO telemetry_samples (device_id, device_name, room_name, metric, value, unit, timestamp, user_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
       [
         sample.deviceId,
         sample.deviceName,
@@ -772,6 +770,7 @@ export class PostgresTelemetryStorage implements ITelemetryStorage {
         sample.value,
         sample.unit ?? null,
         sample.timestamp,
+        this.userId,
       ]
     );
   }
@@ -783,8 +782,8 @@ export class PostgresTelemetryStorage implements ITelemetryStorage {
     try {
       await client.query("BEGIN");
       const text = `
-        INSERT INTO telemetry_samples (device_id, device_name, room_name, metric, value, unit, timestamp)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        INSERT INTO telemetry_samples (device_id, device_name, room_name, metric, value, unit, timestamp, user_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
       `;
       for (const s of samples) {
         await client.query(text, [
@@ -795,6 +794,7 @@ export class PostgresTelemetryStorage implements ITelemetryStorage {
           s.value,
           s.unit ?? null,
           s.timestamp,
+          this.userId,
         ]);
       }
       await client.query("COMMIT");
@@ -835,18 +835,18 @@ export class PostgresTelemetryStorage implements ITelemetryStorage {
         const res = await this.pool.query(
           `SELECT device_id, device_name, room_name, metric, value, unit, timestamp
            FROM telemetry_samples
-           WHERE device_id = $1 AND timestamp >= $2 AND timestamp <= $3
+           WHERE device_id = $1 AND timestamp >= $2 AND timestamp <= $3 AND user_id IS NOT DISTINCT FROM $4::text
            ORDER BY timestamp ASC`,
-          [deviceId, from, to]
+          [deviceId, from, to, this.userId]
         );
         rows = res.rows;
       } else {
         const res = await this.pool.query(
           `SELECT device_id, device_name, room_name, metric, value, unit, timestamp
            FROM telemetry_samples
-           WHERE device_id = $1 AND metric = $2 AND timestamp >= $3 AND timestamp <= $4
+           WHERE device_id = $1 AND metric = $2 AND timestamp >= $3 AND timestamp <= $4 AND user_id IS NOT DISTINCT FROM $5::text
            ORDER BY timestamp ASC`,
-          [deviceId, metric, from, to]
+          [deviceId, metric, from, to, this.userId]
         );
         rows = res.rows;
       }
@@ -857,10 +857,10 @@ export class PostgresTelemetryStorage implements ITelemetryStorage {
                   AVG(value) as value, MIN(value) as min_value, MAX(value) as max_value, COUNT(*)::int as sample_count,
                   (CAST(timestamp / $1 AS BIGINT) * $1) as timestamp
            FROM telemetry_samples
-           WHERE device_id = $2 AND timestamp >= $3 AND timestamp <= $4
+           WHERE device_id = $2 AND timestamp >= $3 AND timestamp <= $4 AND user_id IS NOT DISTINCT FROM $5::text
            GROUP BY (CAST(timestamp / $1 AS BIGINT)), device_id, device_name, room_name, metric, unit
            ORDER BY timestamp ASC`,
-          [bucketMs, deviceId, from, to]
+          [bucketMs, deviceId, from, to, this.userId]
         );
         rows = res.rows;
       } else {
@@ -869,10 +869,10 @@ export class PostgresTelemetryStorage implements ITelemetryStorage {
                   AVG(value) as value, MIN(value) as min_value, MAX(value) as max_value, COUNT(*)::int as sample_count,
                   (CAST(timestamp / $1 AS BIGINT) * $1) as timestamp
            FROM telemetry_samples
-           WHERE device_id = $2 AND metric = $3 AND timestamp >= $4 AND timestamp <= $5
+           WHERE device_id = $2 AND metric = $3 AND timestamp >= $4 AND timestamp <= $5 AND user_id IS NOT DISTINCT FROM $6::text
            GROUP BY (CAST(timestamp / $1 AS BIGINT)), device_id, device_name, room_name, metric, unit
            ORDER BY timestamp ASC`,
-          [bucketMs, deviceId, metric, from, to]
+          [bucketMs, deviceId, metric, from, to, this.userId]
         );
         rows = res.rows;
       }
@@ -956,7 +956,7 @@ export class PostgresTelemetryStorage implements ITelemetryStorage {
   async cleanupOldSamples(retentionDays = 30): Promise<number> {
     await this.ready();
     const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
-    const res = await this.pool.query("DELETE FROM telemetry_samples WHERE timestamp < $1", [cutoff]);
+    const res = await this.pool.query("DELETE FROM telemetry_samples WHERE timestamp < $1 AND user_id IS NOT DISTINCT FROM $2::text", [cutoff, this.userId]);
     return res.rowCount ?? 0;
   }
 
@@ -964,8 +964,8 @@ export class PostgresTelemetryStorage implements ITelemetryStorage {
     await this.ready();
     const res = await this.pool.query(`
       SELECT COUNT(*)::int as total, MIN(timestamp) as oldest, MAX(timestamp) as newest
-      FROM telemetry_samples
-    `);
+      FROM telemetry_samples WHERE user_id IS NOT DISTINCT FROM $1::text
+    `, [this.userId]);
     const r = res.rows[0];
     return {
       totalSamples: r?.total ? Number(r.total) : 0,

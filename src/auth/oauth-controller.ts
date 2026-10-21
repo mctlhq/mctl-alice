@@ -1,8 +1,10 @@
+import { validScope } from "../tools/handlers.js";
 import crypto from "node:crypto";
 import { IStorage } from "../storage/storage-interface.js";
 import { exchangeCodeForToken, refreshAccessToken } from "./token-storage.js";
 
 export interface OAuthControllerOptions {
+  authRequired?: boolean;
   baseUrl: string;
   yandexClientId: string;
   yandexClientSecret?: string;
@@ -60,6 +62,7 @@ function isSafePublicHttpsUrl(urlString: string): boolean {
 }
 
 export class OAuthController {
+  private authRequired: boolean;
   private baseUrl: string;
   private yandexClientId: string;
   private yandexClientSecret?: string;
@@ -67,6 +70,7 @@ export class OAuthController {
   private yandexCallbackUri: string;
 
   constructor(options: OAuthControllerOptions) {
+    this.authRequired = options.authRequired ?? false;
     this.baseUrl = options.baseUrl.replace(/\/+$/, "");
     this.yandexClientId = options.yandexClientId;
     this.yandexClientSecret = options.yandexClientSecret;
@@ -129,7 +133,7 @@ export class OAuthController {
     const requestedId = body.client_id;
     let clientId: string;
 
-    if (requestedId && !(await this.storage.getClient(requestedId) as any)) {
+    if (!this.authRequired && requestedId && !(await this.storage.getClient(requestedId))) {
       clientId = requestedId;
     } else {
       clientId = `chatgpt_${crypto.randomUUID().replace(/-/g, "")}`;
@@ -196,7 +200,7 @@ export class OAuthController {
     }
 
     if (clientId) {
-      const client = (await this.storage.getClient(clientId)) as any;
+      const client = (await this.storage.getClient(clientId));
       if (client && client.redirectUris && client.redirectUris.includes(redirectUri)) {
         return true;
       }
@@ -254,7 +258,7 @@ export class OAuthController {
       clearTimeout(timeoutId);
 
       if (!res.ok) return false;
-      const data = (await res.json()) as any;
+      const data = (await res.json()) as { redirect_uris?: string[]; client_name?: string };
       if (data && typeof data === "object") {
         const redirectUris = Array.isArray(data.redirect_uris) ? data.redirect_uris : [];
         const clientName = data.client_name || "Remote MCP Client";
@@ -274,7 +278,7 @@ export class OAuthController {
   }
 
   async getClientDisplayName(clientId: string): Promise<string> {
-    const client = (await this.storage.getClient(clientId)) as any;
+    const client = (await this.storage.getClient(clientId));
     if (client?.clientName) return client.clientName;
     if (clientId.includes("codex")) return "Codex";
     if (clientId.includes("claude")) return "Claude";
@@ -318,6 +322,10 @@ export class OAuthController {
       return { error: "unsupported_response_type", description: "Only response_type=code is supported", status: 400 };
     }
 
+    if (this.authRequired && (!params.userId || ["legacy_user", "usr_local"].includes(params.userId) || !await this.storage.getUser(params.userId))) {
+      return { error: "login_required", description: "Sign in before approving access", status: 401 };
+    }
+    if (params.scope !== undefined && !validScope(params.scope)) return { error: "invalid_scope", description: "Invalid scopes", status: 400 };
     const sessionId = crypto.randomUUID();
     const clientState = params.state || "";
     const scope = params.scope || "iot:view iot:control";
@@ -337,7 +345,7 @@ export class OAuthController {
     });
 
     // Auto-approve is only honored when explicitly requested or enabled in non-production
-    if (params.auto_approve || (process.env.AUTH_REQUIRED !== "true" && (params.prompt === "none" || process.env.OAUTH_AUTO_APPROVE === "true"))) {
+    if (!this.authRequired && (params.auto_approve || params.prompt === "none" || process.env.OAUTH_AUTO_APPROVE === "true")) {
       const approval = await this.approveAuthorization(sessionId, params.userId);
       return { type: "redirect", redirectUrl: approval.redirectUrl };
     }
@@ -359,17 +367,21 @@ export class OAuthController {
    * User approves authorization on the consent screen
    */
   async approveAuthorization(sessionId: string, userId?: string, approvedScope?: string): Promise<{ redirectUrl: string }> {
-    const pending = (await this.storage.getPendingAuth(sessionId)) as any;
+    const pending = (await this.storage.getPendingAuth(sessionId));
     if (!pending) {
       throw new Error("Authorization session expired or was already used. Please try again.");
     }
-    await this.storage.deletePendingAuth(sessionId);
+    if (pending.expiresAt <= Date.now()) throw new Error("Authorization expired");
+    if (this.authRequired && (!userId || userId !== pending.userId || ["legacy_user", "usr_local"].includes(userId) || !await this.storage.getUser(userId))) throw new Error("Invalid authorization owner");
 
     const targetUserId = userId || pending.userId || "legacy_user";
-    const scope = approvedScope || pending.scope;
+    const scope = approvedScope ?? pending.scope;
+    if (!validScope(scope) || !validScope(pending.scope) || scope.split(/\s+/).some(s => !pending.scope.split(/\s+/).includes(s))) throw new Error("Invalid scope selection");
+    await this.storage.deletePendingAuth(sessionId);
 
     // Retrieve user credentials if available
-    const userCreds = (await this.storage.getUserCredentials(targetUserId)) as any;
+    const userCreds = await this.storage.getUserCredentials(targetUserId);
+    if (this.authRequired && (!userCreds || (!userCreds.yandexAccessToken && !userCreds.quasarCookie))) throw new Error("Reconnect your Yandex account");
 
     const code = `code_${crypto.randomUUID().replace(/-/g, "")}`;
     const expiresAt = Date.now() + 5 * 60 * 1000; // 5 minutes TTL
@@ -403,7 +415,7 @@ export class OAuthController {
    * User denies authorization on the consent screen
    */
   async denyAuthorization(sessionId: string): Promise<{ redirectUrl: string }> {
-    const pending = (await this.storage.getPendingAuth(sessionId)) as any;
+    const pending = (await this.storage.getPendingAuth(sessionId));
     if (!pending) {
       throw new Error("Authorization session expired or was already used. Please try again.");
     }
@@ -433,6 +445,7 @@ export class OAuthController {
       throw new Error("Missing state parameter in Yandex callback");
     }
 
+    if (this.authRequired) throw new Error("Use browser-bound login before granting access");
     const pending = await this.storage.getPendingAuth(query.state);
     if (!pending) {
       throw new Error("Authorization session expired or was already used. Please try again.");
@@ -464,6 +477,7 @@ export class OAuthController {
       redirectUri: callbackUri,
     });
 
+    if (this.authRequired && (!pending.userId || !await this.storage.getUser(pending.userId) || !validScope(pending.scope))) throw new Error("Invalid authorization owner");
     const targetUserId = pending.userId || `usr_${crypto.randomUUID().slice(0, 12)}`;
 
     // Save encrypted credentials
@@ -519,6 +533,7 @@ export class OAuthController {
     client_id?: string;
     code_verifier?: string;
     refresh_token?: string;
+    scope?: string;
   }): Promise<{
     access_token: string;
     token_type: string;
@@ -538,6 +553,10 @@ export class OAuthController {
         throw new Error("Invalid or expired authorization code");
       }
 
+      if (this.authRequired) {
+        if (!authCode.userId || ["legacy_user", "usr_local"].includes(authCode.userId) || !await this.storage.getUser(authCode.userId) || !validScope(authCode.scope)) throw new Error("Invalid grant");
+        if (body.client_id !== authCode.clientId || body.redirect_uri !== authCode.redirectUri) throw new Error("Client or redirect mismatch");
+      }
       // PKCE verification
       if (authCode.codeChallenge) {
         if (!body.code_verifier) {
@@ -590,9 +609,13 @@ export class OAuthController {
         throw new Error("Invalid refresh_token");
       }
 
-      let yandexAccessToken = existing.yandexAccessToken;
-      let yandexRefreshToken = existing.yandexRefreshToken;
-      let yandexExpiresAt = existing.yandexExpiresAt;
+      if (this.authRequired && (!existing.userId || ["legacy_user", "usr_local"].includes(existing.userId) || !await this.storage.getUser(existing.userId) || !validScope(existing.scope) || (body.client_id !== undefined && body.client_id !== existing.clientId))) throw new Error("Invalid grant");
+      if (body.scope !== undefined && (!validScope(body.scope) || body.scope.split(/\s+/).some(s => !existing.scope.split(/\s+/).includes(s)))) throw new Error("Invalid scope");
+      const current = this.authRequired ? await this.storage.getUserCredentials(existing.userId!) : null;
+      if (this.authRequired && (!current || (!current.yandexAccessToken && !current.quasarCookie))) throw new Error("Reconnect your Yandex account");
+      let yandexAccessToken = this.authRequired ? current!.yandexAccessToken : existing.yandexAccessToken;
+      let yandexRefreshToken = this.authRequired ? current!.yandexRefreshToken : existing.yandexRefreshToken;
+      let yandexExpiresAt = this.authRequired ? current!.yandexExpiresAt : existing.yandexExpiresAt;
 
       // Refresh Yandex access token if needed and refresh token is present
       if (yandexRefreshToken && this.yandexClientSecret) {
@@ -606,12 +629,18 @@ export class OAuthController {
           if (refreshed.refresh_token) yandexRefreshToken = refreshed.refresh_token;
           if (refreshed.expires_in) yandexExpiresAt = Date.now() + refreshed.expires_in * 1000;
         } catch (err: any) {
-          console.warn(`⚠️ Failed to refresh Yandex access token: ${err.message}`);
+          throw new Error("Yandex refresh failed; reconnect your account");
         }
       }
 
+      if (this.authRequired && current) {
+        const latest = await this.storage.getUserCredentials(existing.userId!);
+        if (!latest || latest.yandexAccessToken !== current.yandexAccessToken || !await this.storage.getUser(existing.userId!)) throw new Error("Connection changed; retry");
+        if (!await this.storage.getTokenByRefreshToken(body.refresh_token)) throw new Error("Grant revoked");
+        await this.storage.saveUserCredentials(existing.userId!, { ...latest, yandexAccessToken, yandexRefreshToken, yandexExpiresAt });
+      }
       // Rotate tokens
-      await this.storage.revokeToken(existing.accessToken);
+      if (!await this.storage.revokeToken(existing.accessToken)) throw new Error("Grant already revoked or rotated");
       const newAccessToken = `mctl_at_${crypto.randomUUID().replace(/-/g, "")}`;
       const newRefreshToken = `mctl_rt_${crypto.randomUUID().replace(/-/g, "")}`;
       const expiresIn = 2592000;
@@ -624,7 +653,7 @@ export class OAuthController {
         yandexAccessToken,
         yandexRefreshToken,
         yandexExpiresAt,
-        scope: existing.scope,
+        scope: body.scope ?? existing.scope,
         createdAt: Date.now(),
         expiresAt: Date.now() + expiresIn * 1000,
       });
@@ -634,7 +663,7 @@ export class OAuthController {
         token_type: "Bearer",
         expires_in: expiresIn,
         refresh_token: newRefreshToken,
-        scope: existing.scope,
+        scope: body.scope ?? existing.scope,
       };
     }
 

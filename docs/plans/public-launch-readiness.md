@@ -1,10 +1,72 @@
 # Public launch readiness: audit and implementation plan
 
-Status: audit complete; implementation pending; **not ready for public promotion**.
+Status: hosted isolation implementation and local verification in progress; production remediation pending; **not ready for public promotion**.
 
 Reviewed on 2026-09-20 against repository commit `5496ece` and the deployed
 `ghcr.io/mctlhq/mctl-alice:1.9.4` image. This is the canonical plan. The findings
 below describe the reviewed version, not claims about a future fixed release.
+
+## October 2026 isolation release (supersedes conflicting audit steps)
+
+The owner approved implementation on 2026-10-20, without disabling the service
+before rollout. Work starts from `main` at `74d6eba` on the private local branch
+`fix/hosted-user-isolation`; target release is `2.2.2`. The September audit below
+remains historical evidence, not current deployment instructions.
+
+- Keep valid existing user grants; reject unowned/reserved-owner grants without
+  assigning an owner. No bulk token or credential rewrite.
+- Use `AUTH_REQUIRED=true` as the explicit hosted mode. Hosted clients never
+  resolve home credentials from environment variables or Keychain.
+- Require current user credentials and valid scopes on MCP, REST and SSE;
+  `quasar` is separate from ordinary control. Fail closed on storage errors.
+- Preserve local/self-hosted credentials convenience. Local history sees only
+  `user_id IS NULL`; hosted storage is bound to the authenticated user.
+- Add nullable history ownership with idempotent migrations. Do not expose or
+  reassign old shared rows. Disable the shared hosted sampler; personal opt-in
+  collection is a separate task and is not yet available.
+- PostgreSQL is the deployed persistence backend. Use RollingUpdate with
+  `maxUnavailable: 0`, `maxSurge: 1`; do not use the old SQLite/Recreate proposal.
+- Keep implementation sources and verification details private until production
+  behavior is remediated. Build a private candidate, roll forward through GitOps,
+  verify random-token rejection and a designated test connection, then publish
+  the PR, complete review, and release `2.2.2`. Never roll back to unsafe auth.
+
+### Implementation evidence (2026-10-21, local; not a production verdict)
+
+Implemented awaited storage reads and discriminated hosted/local auth results;
+explicit credential modes and owner-only refresh persistence; one tool scope
+matrix for listing, dispatch and REST; SSE owner/client/token binding and grant
+revalidation; browser-bound consent and login; QR browser ownership; revocation
+for SQLite, PostgreSQL and MinIO; additive history isolation and storage readiness.
+
+Validation so far:
+
+- Node 22 typecheck and production TypeScript build pass.
+- 210 tests pass, including a disposable PostgreSQL 17 instance. The integration
+  database is selected only by `TEST_POSTGRES_URL`, never `DATABASE_URL`.
+- Two-user tests cover async storage, invalid/expired/revoked tokens, reserved
+  owners, invalid scopes, database errors, corrupt PostgreSQL credentials,
+  missing credentials, upstream refresh, REST/MCP/batch/SSE, browser consent,
+  QR ownership, live SSE grant revocation and history resolutions/aggregates.
+- Mutation check: restoring the auth function from `74d6eba` makes the random
+  token regression fail (incorrect authenticated success); fixed code passes.
+- Existing valid-token fixtures now have real user records and current
+  credentials. Local callback persistence remains covered.
+- Linux/amd64 Node 22 candidate container builds and runs as a non-root user
+  with a read-only filesystem against separate PostgreSQL. Readiness returns
+  200/version 2.2.2; random, reserved-owner and shared-environment Bearers return
+  401; an owned synthetic grant lists four read tools; forbidden REST returns
+  403. These smoke tests make no calls to real homes.
+
+Outstanding release gates:
+
+- Publish the verified candidate. GitHub Packages API confirms
+  `mctlhq/mctl-alice` visibility is private (2026-10-21).
+- Identify the dedicated test connection for the production read-only smoke test.
+- Deploy through GitOps, check readiness, random-token denial, the test account,
+  and old-pod termination. Observe sanitized auth/upstream outcomes.
+- Publish sources only after remediation; complete public CI/review and release.
+- Personal opt-in history sampling remains explicitly out of scope.
 
 ## Agreed product decisions
 

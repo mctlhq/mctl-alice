@@ -2,7 +2,7 @@ import { CredentialDecryptionError } from "./storage-interface.js";
 import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync, StatementSync } from "node:sqlite";
-import { encryptToken, decryptToken, hashToken } from "./crypto.js";
+import { encryptToken, decryptToken, hashToken, secretDigest, secretLookupKeys, storedSecret, SECRET_DIGEST_PREFIX } from "./crypto.js";
 
 import {
   IStorage,
@@ -205,6 +205,17 @@ export class OAuthStorage implements IStorage {
     } catch {
       // Ignore if cannot index
     }
+
+    // Replace bearer secrets stored before hashing with their digests.
+    const migrate = (table: string, column: string) => {
+      const rows = this.db.prepare(`SELECT ${column} AS v FROM ${table} WHERE ${column} IS NOT NULL AND ${column} NOT LIKE '${SECRET_DIGEST_PREFIX}%'`).all() as Array<{ v: string }>;
+      const update = this.db.prepare(`UPDATE ${table} SET ${column} = ? WHERE ${column} = ?`);
+      for (const { v } of rows) update.run(secretDigest(v), v);
+    };
+    migrate("oauth_tokens", "access_token");
+    migrate("oauth_tokens", "refresh_token");
+    migrate("oauth_codes", "code");
+    migrate("browser_transactions", "key");
   }
 
   private prepareStatements() {
@@ -239,11 +250,11 @@ export class OAuthStorage implements IStorage {
 
     this.getCodeStmt = this.db.prepare(`
       SELECT code, client_id, redirect_uri, code_challenge, code_challenge_method, user_id, yandex_access_token, yandex_refresh_token, yandex_expires_at, scope, created_at, expires_at
-      FROM oauth_codes WHERE code = ?
+      FROM oauth_codes WHERE code IN (?, ?)
     `);
 
     this.deleteCodeStmt = this.db.prepare(`
-      DELETE FROM oauth_codes WHERE code = ?
+      DELETE FROM oauth_codes WHERE code IN (?, ?)
     `);
 
     this.insertTokenStmt = this.db.prepare(`
@@ -253,22 +264,22 @@ export class OAuthStorage implements IStorage {
 
     this.getTokenStmt = this.db.prepare(`
       SELECT access_token, refresh_token, client_id, user_id, yandex_access_token, yandex_refresh_token, yandex_expires_at, scope, created_at, expires_at
-      FROM oauth_tokens WHERE access_token = ?
+      FROM oauth_tokens WHERE access_token IN (?, ?)
     `);
 
     this.getTokenByRefreshStmt = this.db.prepare(`
       SELECT access_token, refresh_token, client_id, user_id, yandex_access_token, yandex_refresh_token, yandex_expires_at, scope, created_at, expires_at
-      FROM oauth_tokens WHERE refresh_token = ?
+      FROM oauth_tokens WHERE refresh_token IN (?, ?)
     `);
 
     this.deleteTokenStmt = this.db.prepare(`
-      DELETE FROM oauth_tokens WHERE access_token = ? OR refresh_token = ?
+      DELETE FROM oauth_tokens WHERE access_token IN (?, ?) OR refresh_token IN (?, ?)
     `);
 
     this.updateYandexTokenStmt = this.db.prepare(`
       UPDATE oauth_tokens
       SET yandex_access_token = ?, yandex_refresh_token = ?, yandex_expires_at = ?
-      WHERE access_token = ?
+      WHERE access_token IN (?, ?)
     `);
 
     // Users & credentials
@@ -467,14 +478,14 @@ export class OAuthStorage implements IStorage {
 
   saveBrowserTransaction(key: string, payload: string, expiresAt: number): void {
     this.db.prepare("DELETE FROM browser_transactions WHERE expires_at <= ?").run(Date.now());
-    this.db.prepare("INSERT OR REPLACE INTO browser_transactions VALUES (?,?,?)").run(key, encryptToken(payload, key), expiresAt);
+    this.db.prepare("INSERT OR REPLACE INTO browser_transactions VALUES (?,?,?)").run(secretDigest(key), encryptToken(payload, key), expiresAt);
   }
   getBrowserTransaction(key: string): string | null {
-    const row = this.db.prepare("SELECT payload FROM browser_transactions WHERE key=? AND expires_at>?").get(key, Date.now());
+    const row = this.db.prepare("SELECT payload FROM browser_transactions WHERE key IN (?,?) AND expires_at>?").get(...secretLookupKeys(key), Date.now());
     return row ? decryptToken(String(row.payload), key) : null;
   }
   deleteBrowserTransaction(key: string): void {
-    this.db.prepare("DELETE FROM browser_transactions WHERE key=?").run(key);
+    this.db.prepare("DELETE FROM browser_transactions WHERE key IN (?,?)").run(...secretLookupKeys(key));
   }
 
   saveWebSession(sessionId: string, userId: string, expiresAt: number): void {
@@ -634,7 +645,7 @@ export class OAuthStorage implements IStorage {
     const encryptedRefresh = code.yandexRefreshToken ? encryptToken(code.yandexRefreshToken, userId) : null;
 
     this.insertCodeStmt.run(
-      code.code,
+      secretDigest(code.code),
       code.clientId,
       code.redirectUri,
       code.codeChallenge || null,
@@ -650,9 +661,12 @@ export class OAuthStorage implements IStorage {
   }
 
   consumeAuthCode(code: string): AuthCode | null {
-    const row = this.getCodeStmt.get(code) as any;
+    const keys = secretLookupKeys(code);
+    const row = this.getCodeStmt.get(...keys) as any;
     if (!row) return null;
-    this.deleteCodeStmt.run(code);
+    // A concurrent consumer may have taken the same code: only the one whose
+    // delete removed the row may use it.
+    if (Number(this.deleteCodeStmt.run(...keys).changes) === 0) return null;
     if (row.expires_at < Date.now()) {
       return null;
     }
@@ -678,7 +692,7 @@ export class OAuthStorage implements IStorage {
     }
 
     return {
-      code: row.code,
+      code,
       clientId: row.client_id,
       redirectUri: row.redirect_uri,
       codeChallenge: row.code_challenge || undefined,
@@ -701,8 +715,8 @@ export class OAuthStorage implements IStorage {
     const encryptedRefresh = token.yandexRefreshToken ? encryptToken(token.yandexRefreshToken, userId) : null;
 
     this.insertTokenStmt.run(
-      token.accessToken,
-      token.refreshToken || null,
+      storedSecret(token.accessToken),
+      token.refreshToken ? storedSecret(token.refreshToken) : null,
       token.clientId,
       userId,
       encryptedAccess,
@@ -715,7 +729,7 @@ export class OAuthStorage implements IStorage {
   }
 
   getToken(accessToken: string): OAuthTokenRecord | null {
-    const row = this.getTokenStmt.get(accessToken) as any;
+    const row = this.getTokenStmt.get(...secretLookupKeys(accessToken)) as any;
     if (!row) return null;
     if (row.expires_at < Date.now()) {
       return null;
@@ -742,7 +756,7 @@ export class OAuthStorage implements IStorage {
     }
 
     return {
-      accessToken: row.access_token,
+      accessToken,
       refreshToken: row.refresh_token || undefined,
       clientId: row.client_id,
       userId: row.user_id || undefined,
@@ -756,7 +770,7 @@ export class OAuthStorage implements IStorage {
   }
 
   getTokenByRefreshToken(refreshToken: string): OAuthTokenRecord | null {
-    const row = this.getTokenByRefreshStmt.get(refreshToken) as any;
+    const row = this.getTokenByRefreshStmt.get(...secretLookupKeys(refreshToken)) as any;
     if (!row) return null;
 
     const userId = row.user_id || "legacy_user";
@@ -781,7 +795,7 @@ export class OAuthStorage implements IStorage {
 
     return {
       accessToken: row.access_token,
-      refreshToken: row.refresh_token || undefined,
+      refreshToken,
       clientId: row.client_id,
       userId: row.user_id || undefined,
       yandexAccessToken,
@@ -809,12 +823,13 @@ export class OAuthStorage implements IStorage {
       encAccess,
       encRefresh,
       yandexExpiresAt || null,
-      accessToken
+      ...secretLookupKeys(accessToken)
     );
   }
 
   revokeToken(token: string): boolean {
-    return Number(this.deleteTokenStmt.run(token, token).changes) > 0;
+    const keys = secretLookupKeys(token);
+    return Number(this.deleteTokenStmt.run(...keys, ...keys).changes) > 0;
   }
 
   close(): void {

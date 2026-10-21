@@ -17,7 +17,7 @@ import {
   QueryHistoryOptions,
   HistoryDataPoint,
 } from "./telemetry-storage.js";
-import { encryptToken, decryptToken } from "./crypto.js";
+import { encryptToken, decryptToken, secretDigest, secretLookupKeys, storedSecret, SECRET_DIGEST_PREFIX } from "./crypto.js";
 
 export interface PostgresStorageOptions {
   connectionString?: string;
@@ -158,6 +158,16 @@ export class PostgresStorage implements IStorage {
         CREATE INDEX IF NOT EXISTS idx_tokens_expires ON oauth_tokens(expires_at);
         CREATE INDEX IF NOT EXISTS idx_tokens_user ON oauth_tokens(user_id);
       `);
+
+      // Replace bearer secrets stored before hashing with their digests
+      // (idempotent: digests carry the sha256: prefix).
+      const digest = (column: string) => `'${SECRET_DIGEST_PREFIX}' || encode(sha256(convert_to(${column}, 'UTF8')), 'hex')`;
+      const raw = (column: string) => `${column} NOT LIKE '${SECRET_DIGEST_PREFIX}%'`;
+      await client.query(`UPDATE oauth_tokens SET access_token = ${digest("access_token")} WHERE ${raw("access_token")}`);
+      await client.query(`UPDATE oauth_tokens SET refresh_token = ${digest("refresh_token")} WHERE refresh_token IS NOT NULL AND ${raw("refresh_token")}`);
+      await client.query(`UPDATE oauth_codes SET code = ${digest("code")} WHERE ${raw("code")}`);
+      await client.query(`UPDATE web_sessions SET session_hash = ${digest("session_hash")} WHERE ${raw("session_hash")}`);
+      await client.query(`UPDATE browser_transactions SET key = ${digest("key")} WHERE ${raw("key")}`);
 
       await client.query("COMMIT");
     } catch (err) {
@@ -303,16 +313,16 @@ export class PostgresStorage implements IStorage {
   async saveBrowserTransaction(key: string, payload: string, expiresAt: number): Promise<void> {
     await this.ready();
     await this.pool.query("DELETE FROM browser_transactions WHERE expires_at <= $1", [Date.now()]);
-    await this.pool.query("INSERT INTO browser_transactions VALUES ($1,$2,$3) ON CONFLICT (key) DO UPDATE SET payload=EXCLUDED.payload, expires_at=EXCLUDED.expires_at", [key, encryptToken(payload, key), expiresAt]);
+    await this.pool.query("INSERT INTO browser_transactions VALUES ($1,$2,$3) ON CONFLICT (key) DO UPDATE SET payload=EXCLUDED.payload, expires_at=EXCLUDED.expires_at", [secretDigest(key), encryptToken(payload, key), expiresAt]);
   }
   async getBrowserTransaction(key: string): Promise<string | null> {
     await this.ready();
-    const result = await this.pool.query("SELECT payload FROM browser_transactions WHERE key=$1 AND expires_at>$2", [key, Date.now()]);
+    const result = await this.pool.query("SELECT payload FROM browser_transactions WHERE key IN ($1,$2) AND expires_at>$3", [...secretLookupKeys(key), Date.now()]);
     return result.rows[0] ? decryptToken(result.rows[0].payload, key) : null;
   }
   async deleteBrowserTransaction(key: string): Promise<void> {
     await this.ready();
-    await this.pool.query("DELETE FROM browser_transactions WHERE key=$1", [key]);
+    await this.pool.query("DELETE FROM browser_transactions WHERE key IN ($1,$2)", secretLookupKeys(key));
   }
 
   async saveWebSession(sessionId: string, userId: string, expiresAt: number): Promise<void> {
@@ -321,15 +331,15 @@ export class PostgresStorage implements IStorage {
       `INSERT INTO web_sessions (session_hash, user_id, created_at, expires_at)
        VALUES ($1, $2, $3, $4)
        ON CONFLICT (session_hash) DO UPDATE SET expires_at = EXCLUDED.expires_at`,
-      [sessionId, userId, Date.now(), expiresAt]
+      [secretDigest(sessionId), userId, Date.now(), expiresAt]
     );
   }
 
   async getWebSession(sessionId: string): Promise<{ userId: string } | null> {
     await this.ready();
     const res = await this.pool.query(
-      "SELECT user_id, expires_at FROM web_sessions WHERE session_hash = $1",
-      [sessionId]
+      "SELECT user_id, expires_at FROM web_sessions WHERE session_hash IN ($1, $2)",
+      secretLookupKeys(sessionId)
     );
     const row = res.rows[0];
     if (!row) return null;
@@ -342,7 +352,7 @@ export class PostgresStorage implements IStorage {
 
   async deleteWebSession(sessionId: string): Promise<void> {
     await this.ready();
-    await this.pool.query("DELETE FROM web_sessions WHERE session_hash = $1", [sessionId]);
+    await this.pool.query("DELETE FROM web_sessions WHERE session_hash IN ($1, $2)", secretLookupKeys(sessionId));
   }
 
   // --- Quasar Scenarios ---
@@ -496,7 +506,7 @@ export class PostgresStorage implements IStorage {
          scope, created_at, expires_at
        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
       [
-        code.code,
+        secretDigest(code.code),
         code.clientId,
         code.redirectUri,
         code.codeChallenge ?? null,
@@ -514,7 +524,7 @@ export class PostgresStorage implements IStorage {
 
   async consumeAuthCode(code: string): Promise<AuthCode | null> {
     await this.ready();
-    const res = await this.pool.query("DELETE FROM oauth_codes WHERE code = $1 RETURNING *", [code]);
+    const res = await this.pool.query("DELETE FROM oauth_codes WHERE code IN ($1, $2) RETURNING *", secretLookupKeys(code));
     const row = res.rows[0];
     if (!row) return null;
     if (Number(row.expires_at) < Date.now()) {
@@ -542,7 +552,7 @@ export class PostgresStorage implements IStorage {
     }
 
     return {
-      code: row.code,
+      code,
       clientId: row.client_id,
       redirectUri: row.redirect_uri,
       codeChallenge: row.code_challenge ?? undefined,
@@ -581,8 +591,8 @@ export class PostgresStorage implements IStorage {
          scope = EXCLUDED.scope,
          expires_at = EXCLUDED.expires_at`,
       [
-        token.accessToken,
-        token.refreshToken ?? null,
+        storedSecret(token.accessToken),
+        token.refreshToken ? storedSecret(token.refreshToken) : null,
         token.clientId,
         userId,
         encAccess,
@@ -597,17 +607,19 @@ export class PostgresStorage implements IStorage {
 
   async getToken(accessToken: string): Promise<OAuthTokenRecord | null> {
     await this.ready();
-    const res = await this.pool.query("SELECT * FROM oauth_tokens WHERE access_token = $1", [accessToken]);
-    return this.mapTokenRow(res.rows[0]);
+    const res = await this.pool.query("SELECT * FROM oauth_tokens WHERE access_token IN ($1, $2)", secretLookupKeys(accessToken));
+    return this.mapTokenRow(res.rows[0], { accessToken });
   }
 
   async getTokenByRefreshToken(refreshToken: string): Promise<OAuthTokenRecord | null> {
     await this.ready();
-    const res = await this.pool.query("SELECT * FROM oauth_tokens WHERE refresh_token = $1", [refreshToken]);
-    return this.mapTokenRow(res.rows[0]);
+    const res = await this.pool.query("SELECT * FROM oauth_tokens WHERE refresh_token IN ($1, $2)", secretLookupKeys(refreshToken));
+    return this.mapTokenRow(res.rows[0], { refreshToken });
   }
 
-  private mapTokenRow(row: any): OAuthTokenRecord | null {
+  // Only the presented secret is known in clear text; the other one is
+  // returned as its stored digest, an opaque handle that grants nothing.
+  private mapTokenRow(row: any, presented: { accessToken?: string; refreshToken?: string }): OAuthTokenRecord | null {
     if (!row) return null;
     if (Number(row.expires_at) < Date.now()) {
       return null;
@@ -634,8 +646,8 @@ export class PostgresStorage implements IStorage {
     }
 
     return {
-      accessToken: row.access_token,
-      refreshToken: row.refresh_token ?? undefined,
+      accessToken: presented.accessToken ?? row.access_token,
+      refreshToken: presented.refreshToken ?? row.refresh_token ?? undefined,
       clientId: row.client_id,
       userId: row.user_id ?? undefined,
       yandexAccessToken,
@@ -665,16 +677,16 @@ export class PostgresStorage implements IStorage {
        SET yandex_access_token = $1,
            yandex_refresh_token = $2,
            yandex_expires_at = $3
-       WHERE access_token = $4`,
-      [encAccess, encRefresh, yandexExpiresAt ?? null, accessToken]
+       WHERE access_token IN ($4, $5)`,
+      [encAccess, encRefresh, yandexExpiresAt ?? null, ...secretLookupKeys(accessToken)]
     );
   }
 
   async revokeToken(token: string): Promise<boolean> {
     await this.ready();
     const result = await this.pool.query(
-      "DELETE FROM oauth_tokens WHERE access_token = $1 OR refresh_token = $2",
-      [token, token]
+      "DELETE FROM oauth_tokens WHERE access_token IN ($1, $2) OR refresh_token IN ($1, $2)",
+      secretLookupKeys(token)
     );
     return (result.rowCount ?? 0) > 0;
   }

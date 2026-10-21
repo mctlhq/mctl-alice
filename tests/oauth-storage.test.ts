@@ -131,7 +131,10 @@ describe("OAuthStorage", () => {
 
       const byRefresh = storage.getTokenByRefreshToken(refreshToken);
       expect(byRefresh).toBeDefined();
-      expect(byRefresh?.accessToken).toBe(accessToken);
+      expect(byRefresh?.refreshToken).toBe(refreshToken);
+      // Only the presented secret comes back in clear text.
+      expect(byRefresh?.accessToken).not.toBe(accessToken);
+      expect(byRefresh?.accessToken.startsWith("sha256:")).toBe(true);
     });
 
     it("should revoke token and prevent further access", () => {

@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import pg from "pg";
 import { randomUUID } from "node:crypto";
 import { PostgresStorage, PostgresTelemetryStorage } from "../src/storage/postgres-storage.js";
+import { secretDigest } from "../src/storage/crypto.js";
 import { TelemetryStorage, ITelemetryStorage } from "../src/storage/telemetry-storage.js";
 import { authenticateRequest } from "../src/server/http-server.js";
 import http from "node:http";
@@ -69,7 +70,7 @@ describe.skipIf(!connectionString)("hosted isolation with real PostgreSQL", () =
     try {
       await storage.saveBrowserTransaction("login:pending", "browser-secret", Date.now() + 60000);
       expect(await second.getBrowserTransaction("login:pending")).toBe("browser-secret");
-      const row = await pool.query("SELECT payload FROM browser_transactions WHERE key='login:pending'");
+      const row = await pool.query("SELECT payload FROM browser_transactions WHERE key=$1", [secretDigest("login:pending")]);
       expect(row.rows[0].payload).not.toContain("browser-secret");
       await second.deleteBrowserTransaction("login:pending");
       expect(await storage.getBrowserTransaction("login:pending")).toBeNull();

@@ -17,7 +17,7 @@ import {
   QueryHistoryOptions,
   HistoryDataPoint,
 } from "./telemetry-storage.js";
-import { ENCRYPTED_COLUMNS, RotationCounts, RotationHooks, activeKeyId, logRotation, reencryptRequested, rotateRow, staleRowsParams, staleRowsQuery } from "./credential-rotation.js";
+import { ENCRYPTED_COLUMNS, ROTATION_PAGE_SIZE, RotationCounts, RotationHooks, activeKeyId, logRotation, reencryptRequested, rotateRow, staleRowsParams, staleRowsQuery } from "./credential-rotation.js";
 import { encryptToken, decryptToken, decryptStoredToken, secretDigest, secretLookupKeys, storedSecret, SECRET_DIGEST_PREFIX } from "./crypto.js";
 
 export interface PostgresStorageOptions {
@@ -64,9 +64,12 @@ export class PostgresStorage implements IStorage {
     });
     // Off the ready() path: serving does not wait for the scan, and a failed
     // pass is logged and retried on the next start instead of failing storage.
-    this.initPromise.then(() => this.rotateCredentials()).catch((err) => {
-      if (err) console.error("❌ [PostgresStorage] Credential re-encryption pass failed:", err);
-    });
+    this.initPromise.then(
+      () => this.rotateCredentials().catch((err) => {
+        console.error("❌ [PostgresStorage] Credential re-encryption pass failed:", err);
+      }),
+      () => { /* reported above; ready() keeps the rejection */ },
+    );
   }
 
   public async ready(): Promise<void> {
@@ -229,13 +232,17 @@ export class PostgresStorage implements IStorage {
     await this.ready();
     const counts: RotationCounts = { stale: 0, rewritten: 0, failed: 0 };
     for (const spec of ENCRYPTED_COLUMNS) {
-      const { rows } = await this.pool.query(staleRowsQuery(spec, n => `$${n}`), staleRowsParams(activeId));
-      await hooks.afterScan?.(spec.table);
-      for (const row of rows) {
-        for (const [column, { from, to }] of rotateRow(row, spec.columns, activeId, rewrite, counts)) {
-          const result = await this.pool.query(`UPDATE ${spec.table} SET ${column} = $1 WHERE ${spec.key} = $2 AND ${column} = $3`, [to, row[spec.key], from]);
-          counts.rewritten += result.rowCount ?? 0;
+      for (let after = "", more = true; more;) {
+        const { rows } = await this.pool.query(staleRowsQuery(spec, n => `$${n}`), staleRowsParams(activeId, after));
+        await hooks.afterScan?.(spec.table);
+        for (const row of rows) {
+          for (const [column, { from, to }] of rotateRow(row, spec.columns, activeId, rewrite, counts)) {
+            const result = await this.pool.query(`UPDATE ${spec.table} SET ${column} = $1 WHERE ${spec.key} = $2 AND ${column} = $3`, [to, row[spec.key], from]);
+            counts.rewritten += result.rowCount ?? 0;
+          }
         }
+        more = rows.length === ROTATION_PAGE_SIZE;
+        if (more) after = String(rows[rows.length - 1][spec.key]);
       }
     }
     logRotation("PostgresStorage", counts, rewrite);

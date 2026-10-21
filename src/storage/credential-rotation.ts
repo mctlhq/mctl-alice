@@ -34,24 +34,26 @@ export function activeKeyId(): string | undefined {
 
 export type EncryptedTable = typeof ENCRYPTED_COLUMNS[number];
 
+/** Rows read per page by the rotation pass. */
+export const ROTATION_PAGE_SIZE = 200;
+
 /**
- * SELECT for the rows of one table holding at least one envelope not under
- * the active key. Takes two parameters, the active prefix and its length,
- * written by `param(1)` and `param(2)`; the prefix is compared with substr,
- * not LIKE, because key ids may contain `_`. Once rotation is done the scan
- * returns nothing, so a start with an active key id costs one indexed-free
- * but empty pass rather than a read of every credential.
+ * SELECT for one page of the rows of a table holding at least one envelope
+ * not under the active key, ordered by row key after `param(3)`. Parameters:
+ * the active prefix, its length and the last key of the previous page. The
+ * prefix is compared with substr, not LIKE, because key ids may contain `_`.
+ * Once rotation is done the scan returns nothing.
  */
-export function staleRowsQuery({ table, key, columns }: EncryptedTable, param: (n: 1 | 2) => string): string {
+export function staleRowsQuery({ table, key, columns }: EncryptedTable, param: (n: 1 | 2 | 3) => string): string {
   const selected = key === "user_id" ? [key, ...columns] : [key, "user_id", ...columns];
   const stale = columns.map(c => `(${c} LIKE 'v1:%' OR (${c} LIKE 'v2:%' AND substr(${c}, 1, ${param(2)}) <> ${param(1)}))`);
-  return `SELECT ${selected.join(", ")} FROM ${table} WHERE ${stale.join(" OR ")}`;
+  return `SELECT ${selected.join(", ")} FROM ${table} WHERE ${key} > ${param(3)} AND (${stale.join(" OR ")}) ORDER BY ${key} LIMIT ${ROTATION_PAGE_SIZE}`;
 }
 
-/** Parameters for staleRowsQuery: the active envelope prefix and its length. */
-export function staleRowsParams(activeId: string): [string, number] {
+/** Parameters for staleRowsQuery: the active envelope prefix, its length and the key to page after. */
+export function staleRowsParams(activeId: string, after: string): [string, number, string] {
   const prefix = `v2:${activeId}:`;
-  return [prefix, prefix.length];
+  return [prefix, prefix.length, after];
 }
 
 /**
@@ -84,7 +86,7 @@ export function rotateRow(row: Record<string, unknown>, columns: readonly string
   return changes;
 }
 
-/** Test seam: runs after a table was scanned and before its rows are rewritten. */
+/** Test seam: runs after a page of a table was scanned and before its rows are rewritten. */
 export interface RotationHooks {
   afterScan?: (table: string) => void | Promise<void>;
 }

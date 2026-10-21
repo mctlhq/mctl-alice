@@ -2,7 +2,7 @@ import { CredentialDecryptionError } from "./storage-interface.js";
 import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync, StatementSync } from "node:sqlite";
-import { ENCRYPTED_COLUMNS, RotationCounts, RotationHooks, activeKeyId, logRotation, reencryptRequested, rotateRow, staleRowsParams, staleRowsQuery } from "./credential-rotation.js";
+import { ENCRYPTED_COLUMNS, ROTATION_PAGE_SIZE, RotationCounts, RotationHooks, activeKeyId, logRotation, reencryptRequested, rotateRow, staleRowsParams, staleRowsQuery } from "./credential-rotation.js";
 import { encryptToken, decryptToken, decryptStoredToken, hashToken, secretDigest, secretLookupKeys, storedSecret, SECRET_DIGEST_PREFIX } from "./crypto.js";
 
 import {
@@ -79,7 +79,12 @@ export class OAuthStorage implements IStorage {
     this.db = new DatabaseSync(resolvedPath);
     this.initTables();
     this.prepareStatements();
-    this.rotateCredentials();
+    // A failure in this opt-in maintenance pass must not keep the server down.
+    try {
+      this.rotateCredentials();
+    } catch (err) {
+      console.error("❌ [OAuthStorage] Credential re-encryption pass failed:", err);
+    }
   }
 
   /** SQLite counterpart of PostgresStorage.rotateCredentials. */
@@ -88,14 +93,19 @@ export class OAuthStorage implements IStorage {
     if (!activeId) return null;
     const counts: RotationCounts = { stale: 0, rewritten: 0, failed: 0 };
     for (const spec of ENCRYPTED_COLUMNS) {
-      const rows = this.db.prepare(staleRowsQuery(spec, n => `?${n}`)).all(...staleRowsParams(activeId)) as Record<string, unknown>[];
-      void hooks.afterScan?.(spec.table);
+      const select = this.db.prepare(staleRowsQuery(spec, n => `?${n}`));
       const updates = new Map<string, StatementSync>(spec.columns.map(column =>
         [column, this.db.prepare(`UPDATE ${spec.table} SET ${column} = ? WHERE ${spec.key} = ? AND ${column} = ?`)] as const));
-      for (const row of rows) {
-        for (const [column, { from, to }] of rotateRow(row, spec.columns, activeId, rewrite, counts)) {
-          counts.rewritten += Number(updates.get(column)!.run(to, row[spec.key] as string, from).changes);
+      for (let after = "", more = true; more;) {
+        const rows = select.all(...staleRowsParams(activeId, after)) as Record<string, unknown>[];
+        void hooks.afterScan?.(spec.table);
+        for (const row of rows) {
+          for (const [column, { from, to }] of rotateRow(row, spec.columns, activeId, rewrite, counts)) {
+            counts.rewritten += Number(updates.get(column)!.run(to, row[spec.key] as string, from).changes);
+          }
         }
+        more = rows.length === ROTATION_PAGE_SIZE;
+        if (more) after = String(rows[rows.length - 1][spec.key]);
       }
     }
     logRotation("OAuthStorage", counts, rewrite);

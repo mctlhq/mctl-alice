@@ -6,7 +6,7 @@ import { encryptToken, decryptToken, decryptStoredToken, getKeyring } from "../s
 import { CredentialDecryptionError, IStorage } from "../src/storage/storage-interface.js";
 import { OAuthStorage } from "../src/storage/oauth-storage.js";
 import { PostgresStorage } from "../src/storage/postgres-storage.js";
-import type { RotationHooks } from "../src/storage/credential-rotation.js";
+import { ROTATION_PAGE_SIZE, type RotationHooks } from "../src/storage/credential-rotation.js";
 import { createHttpServer } from "../src/server/http-server.js";
 
 const KEY_A = "a".repeat(64);
@@ -60,6 +60,12 @@ describe("encryption keyring", () => {
       useKeys(keys, active);
       expect(() => getKeyring(), `${keys.slice(0, 12)} / ${active}`).toThrow();
     }
+  });
+
+  it("refuses to open a v2 envelope with a custom key", () => {
+    useKeys(`a:${KEY_A}`, "a");
+    const underA = encryptToken("secret", "alice");
+    expect(() => decryptToken(underA, "alice", KEY_A)).toThrow();
   });
 
   it("refuses to start the HTTP server with an inconsistent keyring", () => {
@@ -118,6 +124,31 @@ async function rotation(
   expect(await rotate(false)).toEqual({ stale: 1, rewritten: 0, failed: 1 });
   expect(await rotate(true)).toEqual({ stale: 1, rewritten: 0, failed: 1 });
   expect(await read("SELECT yandex_access_token AS v FROM oauth_tokens")).toEqual([orphan]);
+
+  // Ids may contain `_`, a LIKE wildcard: a value under kX1 is stale once k_1 is active.
+  useKeys(`c:${KEY_C},kX1:${KEY_B},k_1:${KEY_A}`, "kX1");
+  await run("UPDATE oauth_tokens SET yandex_access_token = $1", [encryptToken("underscore", "alice")]);
+  expect(await rotate(true)).toEqual({ stale: 4, rewritten: 4, failed: 0 });
+  useKeys(`kX1:${KEY_B},k_1:${KEY_A}`, "k_1");
+  expect(await rotate(true)).toEqual({ stale: 5, rewritten: 5, failed: 0 });
+  expect((await read(all)).every(v => v.startsWith("v2:k_1:"))).toBe(true);
+  expect((await storage.getToken("at"))?.yandexAccessToken).toBe("underscore");
+}
+
+// More rows than one page holds: a report-only pass must still end, and
+// count every row once, since none of them leaves the stale set.
+async function paging(storage: IStorage, rotate: Rotate) {
+  const now = Date.now();
+  const total = ROTATION_PAGE_SIZE * 2 + 3;
+  await storage.saveUser({ id: "alice", yandexUid: "alice", createdAt: now, updatedAt: now });
+  for (let i = 0; i < total; i++) {
+    await storage.saveToken({ accessToken: `at-${i}`, refreshToken: `rt-${i}`, userId: "alice", clientId: "client",
+      yandexAccessToken: "upstream", scope: "iot:view", createdAt: now, expiresAt: now + 3600000 });
+  }
+  useKeys(`b:${KEY_B}`, "b");
+  expect(await rotate(false)).toEqual({ stale: total, rewritten: 0, failed: 0 });
+  expect(await rotate(true)).toEqual({ stale: total, rewritten: total, failed: 0 });
+  expect(await rotate(false)).toEqual({ stale: 0, rewritten: 0, failed: 0 });
 }
 
 describe("credential re-encryption", () => {
@@ -132,27 +163,52 @@ describe("credential re-encryption", () => {
     } finally { storage.close(); }
   });
 
+  it("SQLite keeps starting when the pass fails", () => {
+    const failing = vi.spyOn(OAuthStorage.prototype, "rotateCredentials").mockImplementation(() => { throw new Error("disk"); });
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      new OAuthStorage(":memory:").close();
+      expect(logged).toHaveBeenCalledWith(expect.stringContaining("re-encryption pass failed"), expect.any(Error));
+    } finally { failing.mockRestore(); logged.mockRestore(); }
+  });
+
+  it("SQLite, more rows than a page", async () => {
+    const storage = new OAuthStorage(":memory:");
+    try {
+      await paging(storage, async rewrite => storage.rotateCredentials(rewrite));
+    } finally { storage.close(); }
+  });
+
   const connectionString = process.env.TEST_POSTGRES_URL;
   describe.skipIf(!connectionString)("PostgreSQL", () => {
-    const schema = "alice_test_" + randomUUID().replaceAll("-", "");
-    const options = { connectionString, options: `-c search_path=${schema}` };
-    let admin: pg.Pool, pool: pg.Pool, storage: PostgresStorage;
-    beforeAll(async () => {
-      admin = new pg.Pool({ connectionString });
-      await admin.query(`CREATE SCHEMA ${schema}`);
-      pool = new pg.Pool(options);
-    });
+    let admin: pg.Pool;
+    const cleanup: (() => Promise<void>)[] = [];
+    beforeAll(() => { admin = new pg.Pool({ connectionString }); });
     afterAll(async () => {
-      await storage.close();
-      await pool.end(); await admin.query(`DROP SCHEMA ${schema} CASCADE`); await admin.end();
+      for (const step of cleanup.reverse()) await step();
+      await admin.end();
     });
-    it("PostgreSQL", async () => {
-      storage = new PostgresStorage({ pool: new pg.Pool(options) });
+    // Each test gets its own schema, so row counts start from zero.
+    async function freshStorage() {
+      const schema = "alice_test_" + randomUUID().replaceAll("-", "");
+      const options = { connectionString, options: `-c search_path=${schema}` };
+      await admin.query(`CREATE SCHEMA ${schema}`);
+      const pool = new pg.Pool(options);
+      const storage = new PostgresStorage({ pool: new pg.Pool(options) });
+      cleanup.push(async () => { await storage.close(); await pool.end(); await admin.query(`DROP SCHEMA ${schema} CASCADE`); });
       await storage.ready();
+      return { pool, storage };
+    }
+    it("PostgreSQL", async () => {
+      const { pool, storage } = await freshStorage();
       await rotation(storage,
         (rewrite, hooks) => storage.rotateCredentials(rewrite, hooks),
         (query, params) => pool.query(query, params),
         async query => (await pool.query(query)).rows.map(r => r.v));
+    });
+    it("PostgreSQL, more rows than a page", async () => {
+      const { storage } = await freshStorage();
+      await paging(storage, rewrite => storage.rotateCredentials(rewrite));
     });
   });
 });

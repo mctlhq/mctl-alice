@@ -73,7 +73,7 @@ export function getKeyring(): Keyring {
     if (keys.has(id)) throw new Error(`ENCRYPTION_KEYS: key id ${id} is listed twice`);
     const isHex = /^[0-9a-fA-F]{64}$/.test(rawKey);
     const isBase64 = /^[A-Za-z0-9+/]{43}=$/.test(rawKey);
-    if (!isHex && !isBase64) throw new Error(`ENCRYPTION_KEYS: key ${id} must be 32 bytes as 64 hex or 44 base64 characters`);
+    if (!isHex && !isBase64) throw new Error(`ENCRYPTION_KEYS: key ${id} must be 32 bytes as 64 hex or 44 standard base64 characters (no passphrases here, unlike ENCRYPTION_KEY)`);
     keys.set(id, Buffer.from(rawKey, isHex ? "hex" : "base64"));
   }
   if (activeId && !keys.has(activeId)) throw new Error(`ENCRYPTION_KEY_ID ${activeId} is not in ENCRYPTION_KEYS`);
@@ -136,6 +136,8 @@ export function decryptToken(envelope: string, userId: string, customKey?: Buffe
       return open(parts[1], parts[2], parts[3], userId, customKey || getEncryptionKey());
     }
     if (parts.length === 5 && parts[0] === "v2") {
+      // customKey seals only v1; a v2 value always names its key in the keyring.
+      if (customKey) throw new Error("customKey cannot open a v2 envelope");
       const key = getKeyring().keys.get(parts[1]);
       if (!key) throw new Error("Unknown encryption key id");
       return open(parts[2], parts[3], parts[4], userId, key);

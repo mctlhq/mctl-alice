@@ -93,6 +93,22 @@ export interface DeviceListResult {
   scenarios: Array<{ id: string; name: string; isActive: boolean }>;
 }
 
+/**
+ * Picks the match from the first non-empty tier. Several matches in that tier
+ * are an error: acting on the first one would control a device or run a
+ * scenario the caller did not mean.
+ */
+function uniqueMatch<T extends { id: string }>(tiers: T[][], subject: string, label: (item: T) => string): T | undefined {
+  for (const tier of tiers) {
+    const distinct = tier.filter((item, i) => tier.findIndex((other) => other.id === item.id) === i);
+    if (distinct.length === 1) return distinct[0];
+    if (distinct.length > 1) {
+      throw new YandexApiError(`${subject} is ambiguous: ${distinct.map(label).join(", ")}. Use the id or a more specific name.`);
+    }
+  }
+  return undefined;
+}
+
 export class StationService {
   private client: YandexIoTClient | null = null;
   private quasarClient: QuasarClient | null = null;
@@ -339,32 +355,23 @@ export class StationService {
       return speakers[0];
     }
 
-    // 1. Direct ID match
-    const byId = speakers.find((s) => s.id === query);
-    if (byId) return byId;
-
-    // 2. Exact name match
-    const byExactName = speakers.find((s) => s.name.toLowerCase() === searchQuery);
-    if (byExactName) return byExactName;
-
-    // 3. Substring name match
-    const bySubName = speakers.find((s) => s.name.toLowerCase().includes(searchQuery));
-    if (bySubName) return bySubName;
-
-    // 4. Room match (prefer smart speakers over other devices)
-    const byRoom =
-      speakers.find((s) => {
-        const rName = (s.room && roomMap.get(s.room))?.toLowerCase() || "";
-        return (
-          (rName === searchQuery || rName.includes(searchQuery)) &&
-          s.type.startsWith("devices.types.smart_speaker")
-        );
-      }) ||
-      speakers.find((s) => {
-        const rName = (s.room && roomMap.get(s.room))?.toLowerCase() || "";
-        return rName === searchQuery || rName.includes(searchQuery);
-      });
-    if (byRoom) return byRoom;
+    const inRoom = (s: (typeof speakers)[number]) => {
+      const rName = (s.room && roomMap.get(s.room))?.toLowerCase() || "";
+      return rName === searchQuery || rName.includes(searchQuery);
+    };
+    // ID, exact name, substring name, then room (smart speakers first).
+    const match = uniqueMatch(
+      [
+        speakers.filter((s) => s.id === query),
+        speakers.filter((s) => s.name.toLowerCase() === searchQuery),
+        speakers.filter((s) => s.name.toLowerCase().includes(searchQuery)),
+        speakers.filter((s) => inRoom(s) && s.type.startsWith("devices.types.smart_speaker")),
+        speakers.filter(inRoom),
+      ],
+      `Speaker "${query}"`,
+      (s) => `"${s.name}" (room: ${s.room ? roomMap.get(s.room) : "none"}, id: ${s.id})`,
+    );
+    if (match) return match;
 
     // If query was specified but not found
     const available = speakers
@@ -606,10 +613,15 @@ export class StationService {
     const scenarios = info.scenarios || [];
 
     const query = nameOrId.trim().toLowerCase();
-    const target =
-      scenarios.find((s) => s.id === nameOrId) ||
-      scenarios.find((s) => s.name.toLowerCase() === query) ||
-      scenarios.find((s) => s.name.toLowerCase().includes(query));
+    const target = uniqueMatch(
+      [
+        scenarios.filter((s) => s.id === nameOrId),
+        scenarios.filter((s) => s.name.toLowerCase() === query),
+        scenarios.filter((s) => s.name.toLowerCase().includes(query)),
+      ],
+      `Scenario "${nameOrId}"`,
+      (s) => `"${s.name}" (id: ${s.id})`,
+    );
 
     if (!target) {
       const names = scenarios.map((s) => `"${s.name}" (id: ${s.id})`).join(", ");
@@ -665,18 +677,21 @@ export class StationService {
         })
       : devices;
 
-    const searchPool = candidates.length > 0 ? candidates : devices;
-
-    // 1. Direct ID match
-    let match = searchPool.find((d) => d.id === deviceQuery);
-    // 2. Exact name match
-    if (!match) match = searchPool.find((d) => d.name.toLowerCase() === dQuery);
-    // 3. Substring name match
-    if (!match) match = searchPool.find((d) => d.name.toLowerCase().includes(dQuery));
-    // 4. Fallback search across all devices if room filter had no match
-    if (!match && rQuery && candidates.length === 0) {
-      match = devices.find((d) => d.name.toLowerCase().includes(dQuery));
+    if (rQuery && candidates.length === 0) {
+      const rooms = (info.rooms || []).map((r) => `"${r.name}"`).join(", ");
+      throw new YandexApiError(`Room "${roomQuery}" was not found. Available rooms: ${rooms || "none"}`);
     }
+
+    // ID, exact name, then substring name, within the room when one is given.
+    const match = uniqueMatch(
+      [
+        candidates.filter((d) => d.id === deviceQuery),
+        candidates.filter((d) => d.name.toLowerCase() === dQuery),
+        candidates.filter((d) => d.name.toLowerCase().includes(dQuery)),
+      ],
+      `Device "${deviceQuery}"${roomQuery ? ` in room "${roomQuery}"` : ""}`,
+      (d) => `"${d.name}" (${d.room ? roomMap.get(d.room) : "no room"}, id: ${d.id})`,
+    );
 
     if (!match) {
       const available = devices

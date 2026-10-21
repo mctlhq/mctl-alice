@@ -16,6 +16,20 @@ import { checkScope, TOOL_SCOPES } from "../src/tools/handlers.js";
 const verifier = "a".repeat(43);
 const challenge = createHash("sha256").update(verifier).digest("base64url");
 const realFetch = globalThis.fetch;
+// Stubs Quasar: lists the given scenarios and records which ones get deleted.
+function stubQuasar(scenarios: Array<{ id: string; name: string }>): string[] {
+  const deleted: string[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input instanceof Request ? input.url : input);
+    if (url === "https://yandex.ru/quasar") return new Response('{"csrfToken2":"csrf"}');
+    if (url === "https://iot.quasar.yandex.ru/m/user/scenarios") return Response.json({ status: "ok", scenarios });
+    const del = url.match(/^https:\/\/iot\.quasar\.yandex\.ru\/m\/v4\/user\/scenarios\/([^/]+)$/);
+    if (del && init?.method === "DELETE") { deleted.push(decodeURIComponent(del[1])); return Response.json({ status: "ok" }); }
+    if (url.startsWith("https://")) throw new Error(`unexpected upstream call ${url}`);
+    return realFetch(input, init);
+  });
+  return deleted;
+}
 const request = (token?: string) => ({ headers: token ? { authorization: `Bearer ${token}` } : {} }) as http.IncomingMessage;
 const now = Date.now();
 function seed(storage: IStorage, id: string, scope = "iot:view iot:control quasar") {
@@ -229,8 +243,10 @@ describe("hosted access boundary", () => {
     await storage.saveQuasarScenario("alice", "speaker", "scn-a");
     await storage.saveAuthCode({ code: "code-a", clientId: "client", redirectUri: "http://localhost/cb", userId: "alice", yandexAccessToken: "x", scope: "iot:view", createdAt: now, expiresAt: now + 60000 });
     for (const id of ["alice", "bob"]) await telemetry.forUser(id).saveSamples([{ deviceId: "d", deviceName: "d", metric: "power", value: 1, timestamp: now }]);
+    const deleted = stubQuasar([{ id: "scn-a", name: "renamed by user" }, { id: "user-own", name: "Morning" }]);
     const response = await realFetch(base + path, { method: "POST", headers: { Cookie: "mctl_session=browser-a", Origin: "http://localhost" }, redirect: "manual" });
     expect(response.status).toBe(302); expect(response.headers.get("location")).toBe("/?deleted=true");
+    expect(deleted).toEqual(["scn-a"]);
     expect(response.headers.get("set-cookie")).toMatch(/^mctl_session=;.*Max-Age=0/);
     expect(await storage.getUser("alice")).toBeNull();
     expect(await storage.getUserCredentials("alice")).toBeNull();
@@ -241,6 +257,30 @@ describe("hosted access boundary", () => {
     expect((await telemetry.forUser("alice").getStats()).totalSamples).toBe(0);
     expect((await telemetry.forUser("bob").getStats()).totalSamples).toBe(1);
     expect(await storage.getToken("mcp-bob")).not.toBeNull();
+  });
+  it("account deletion still completes when Yandex scenarios cannot be removed, and says so", async () => {
+    await start();
+    await storage.saveWebSession("browser-a", "alice", Date.now() + 60000);
+    await storage.saveQuasarScenario("alice", "speaker", "scn-a");
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input instanceof Request ? input.url : input);
+      if (url.startsWith("https://")) return new Response("unavailable", { status: 503 });
+      return realFetch(input, init);
+    });
+    const response = await realFetch(base + "/account/delete", { method: "POST", headers: { Cookie: "mctl_session=browser-a", Origin: "http://localhost" }, redirect: "manual" });
+    expect(response.headers.get("location")).toBe("/?deleted=true&scenarios_left=true");
+    expect(await storage.getUser("alice")).toBeNull();
+  });
+  it("disconnecting Quasar removes this user's proxy scenarios in Yandex and the cookie", async () => {
+    await start();
+    await storage.saveWebSession("browser-a", "alice", Date.now() + 60000);
+    await storage.saveQuasarScenario("alice", "speaker", "scn-a");
+    const deleted = stubQuasar([{ id: "scn-a", name: "x" }, { id: "user-own", name: "Morning" }]);
+    const response = await realFetch(base + "/account/disconnect-quasar", { method: "POST", headers: { Cookie: "mctl_session=browser-a", Origin: "http://localhost" }, redirect: "manual" });
+    expect(response.headers.get("location")).toBe("/account?quasar_disconnected=true");
+    expect(deleted).toEqual(["scn-a"]);
+    expect((await storage.getUserCredentials("alice"))?.quasarCookie).toBeUndefined();
+    expect(await storage.listQuasarScenarios("alice")).toEqual([]);
   });
   it("account deletion without a session deletes nothing", async () => {
     await start();

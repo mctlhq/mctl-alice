@@ -180,12 +180,12 @@ function renderAuthPage({
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<script src="/assets/theme-init.js?v=2.0.0"></script>
+<script src="/assets/theme-init.js?v=2.2.4"></script>
 <title>${escapeHtml(title)}</title>
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-<link rel="stylesheet" href="/assets/tokens.css?v=2.0.0">
-<link rel="stylesheet" href="/assets/components.css?v=2.0.0">
-<link rel="stylesheet" href="/assets/pages.css?v=2.0.0">
+<link rel="stylesheet" href="/assets/tokens.css?v=2.2.4">
+<link rel="stylesheet" href="/assets/components.css?v=2.2.4">
+<link rel="stylesheet" href="/assets/pages.css?v=2.2.4">
 </head>
 <body>
 <header class="wrap topbar">
@@ -237,7 +237,7 @@ function renderAuthPage({
     </span>
   </div>
 </footer>
-<script src="/assets/site.js?v=2.0.0"></script>
+<script src="/assets/site.js?v=2.2.4"></script>
 ${scriptHtml}
 </body>
 </html>`;
@@ -680,7 +680,7 @@ export function createHttpServer(
     }
 
     if (req.method === "OPTIONS") {
-      res.writeHead(corsPath ? 204 : 405);
+      res.writeHead(corsPath ? 204 : 405, corsPath ? {} : { Allow: "GET, POST, HEAD" });
       res.end();
       return;
     }
@@ -964,7 +964,7 @@ export function createHttpServer(
         res.writeHead(err instanceof StorageUnavailableError ? 503 : 500, { "Content-Type": "text/html; charset=utf-8" });
         res.end(`<!DOCTYPE html>
 <html lang="ru">
-<head><meta charset="utf-8"><title>OAuth Error</title><link rel="stylesheet" href="/assets/pages.css?v=2.0.0"></head>
+<head><meta charset="utf-8"><title>OAuth Error</title><link rel="stylesheet" href="/assets/pages.css?v=2.2.4"></head>
 <body class="s-b84785">
   <h2 class="s-f892ee">Ошибка авторизации Яндекс</h2>
   <p class="s-128036">${escapeHtml(err.message)}</p>
@@ -987,11 +987,16 @@ export function createHttpServer(
         });
         res.end(JSON.stringify(tokens));
       } catch (err: any) {
-        res.writeHead(err instanceof StorageUnavailableError ? 503 : 400, {
+        // An unreadable stored grant is a server fault: answering invalid_grant would make
+        // clients drop it and re-authorize over ciphertext a corrected key could still read.
+        const unavailable = err instanceof StorageUnavailableError || err instanceof CredentialDecryptionError;
+        res.writeHead(unavailable ? 503 : 400, {
           "Content-Type": "application/json; charset=utf-8",
           "Cache-Control": "no-store",
         });
-        res.end(JSON.stringify({ error: err instanceof StorageUnavailableError ? "temporarily_unavailable" : err instanceof OAuthError ? err.code : "invalid_grant", error_description: err.message }));
+        res.end(JSON.stringify(unavailable
+          ? { error: "temporarily_unavailable", error_description: "Authorization storage is temporarily unavailable" }
+          : { error: err instanceof OAuthError ? err.code : "invalid_grant", error_description: err.message }));
       }
       return;
     }
@@ -1683,7 +1688,7 @@ export function createHttpServer(
           <a href="/auth/cookie" class="btn btn-secondary" data-i18n="callback_btn_cookie">Настроить Quasar Cookie</a>
         </div>
       `;
-      const script = `<script src="/assets/auth-callback.js?v=2.0.0"></script>`;
+      const script = `<script src="/assets/auth-callback.js?v=2.2.4"></script>`;
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       res.end(renderAuthPage({ title: "mctl-alice — Авторизация", titleKey: "callback_success_page_title", contentHtml: content, scriptHtml: script }));
       return;
@@ -1836,7 +1841,7 @@ export function createHttpServer(
         </details>
       `;
 
-      const script = `<script src="/assets/auth-cookie.js?v=2.0.0"></script>`;
+      const script = `<script src="/assets/auth-cookie.js?v=2.2.4"></script>`;
 
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       res.end(renderAuthPage({ title: "mctl-alice — Настройка Quasar Cookie", titleKey: "cookie_page_title", contentHtml: content, scriptHtml: script }));

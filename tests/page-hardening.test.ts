@@ -95,6 +95,20 @@ describe("CSP, CORS and HTML hardening", () => {
     expect(readAsset("site.js")).not.toMatch(/style=\\?"/);
   });
 
+  it("serves every stylesheet and script the pages reference", async () => {
+    const referenced = new Set<string>();
+    for (const [page, { body }] of htmlPages) {
+      expect(body, page).toMatch(/<link rel="stylesheet" href="\/assets\/pages\.css\?v=[^"]+">/);
+      for (const [, src] of body.matchAll(/(?:href|src)="(\/assets\/[^"]+\.(?:css|js)(?:\?[^"]*)?)"/g)) referenced.add(src);
+    }
+    expect(referenced.size).toBeGreaterThan(3);
+    for (const asset of referenced) {
+      const res = await fetch(base + asset);
+      expect(res.status, asset).toBe(200);
+      expect(res.headers.get("content-type"), asset).toMatch(asset.includes(".css") ? /text\/css/ : /javascript/);
+    }
+  });
+
   it("keeps server and user data out of innerHTML in page scripts", () => {
     for (const name of ["auth-callback.js", "auth-cookie.js", "theme-init.js"]) {
       expect(readAsset(name), name).not.toContain("innerHTML");
@@ -118,6 +132,7 @@ describe("CSP, CORS and HTML hardening", () => {
     }
     const accountPreflight = await fetch(base + "/account/delete", { method: "OPTIONS", headers: { Origin: "https://example.com" } });
     expect(accountPreflight.status).toBe(405);
+    expect(accountPreflight.headers.get("allow")).toBe("GET, POST, HEAD");
     expect(accountPreflight.headers.get("access-control-allow-origin")).toBeNull();
   });
 

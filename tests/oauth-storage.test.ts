@@ -177,6 +177,22 @@ describe("OAuthStorage", () => {
     });
   });
 
+  describe("Per-owner grant revocation", () => {
+    it("revokes both access and refresh tokens only for the selected user/client", () => {
+      for (const [userId, clientId] of [["alice", "one"], ["alice", "two"], ["bob", "one"]]) {
+        const key = `${userId}-${clientId}`;
+        storage.saveToken({ accessToken: key, refreshToken: `rt-${key}`, userId, clientId, scope: "iot:view", yandexAccessToken: "user-token", createdAt: Date.now(), expiresAt: Date.now() + 60000 });
+      }
+      expect(storage.listUserGrants("alice")).toHaveLength(2);
+      expect(storage.revokeUserGrant("alice", "one")).toBe(true);
+      expect(storage.getToken("alice-one")).toBeNull();
+      expect(storage.getTokenByRefreshToken("rt-alice-one")).toBeNull();
+      expect(storage.getToken("alice-two")).not.toBeNull();
+      expect(storage.getToken("bob-one")).not.toBeNull();
+      expect(storage.revokeUserGrant("alice", "one")).toBe(false);
+    });
+  });
+
   describe("Multi-Tenant User and Encrypted Credentials Management", () => {
     it("should save and retrieve user profile by ID and Yandex UID", () => {
       const user = {

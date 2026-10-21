@@ -100,6 +100,17 @@ export function decryptToken(envelope: string, userId: string, customKey?: Buffe
 }
 
 /**
+ * Reads an upstream token copied onto an auth code or access token row. A
+ * value in the v1 envelope must decrypt; if it does not (wrong key, wrong
+ * user, corruption) this throws CredentialDecryptionError instead of handing
+ * the ciphertext on as if it were a token. Only a value that was never
+ * encrypted (rows written before encryption existed) is returned as is.
+ */
+export function decryptStoredToken(value: string, userId: string): string {
+  return value.startsWith("v1:") ? decryptToken(value, userId) : value;
+}
+
+/**
  * Computes a constant SHA-256 hex hash for indexing opaque tokens and session IDs.
  */
 export function hashToken(token: string): string {

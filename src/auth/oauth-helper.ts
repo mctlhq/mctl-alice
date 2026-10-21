@@ -31,6 +31,15 @@ export async function validateTokenAndGetSpeakers(token: string): Promise<string
   return devices.speakers.map((s) => `${s.name} (${s.room})`);
 }
 
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
 function renderHtmlPage(title: string, content: string): string {
   return `<!DOCTYPE html>
 <html lang="ru">
@@ -104,7 +113,7 @@ export function startAuthServer(options: AuthServerOptions): Promise<{
 
             const speakerHtml =
               speakerNames.length > 0
-                ? `<div class="speakers"><strong>Найденные колонки:</strong><br>${speakerNames.map((s) => "• " + s).join("<br>")}</div>`
+                ? `<div class="speakers"><strong>Найденные колонки:</strong><br>${speakerNames.map((s) => "• " + escapeHtml(s)).join("<br>")}</div>`
                 : `<div class="speakers"><em>Колонки не найдены в умном доме, но токен успешно получен и сохранен.</em></div>`;
 
             res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
@@ -138,7 +147,7 @@ export function startAuthServer(options: AuthServerOptions): Promise<{
             res.end(
               renderHtmlPage(
                 "mctl-alice — Ошибка",
-                `<div class="status error">❌ Ошибка обмена кода авторизации: ${err.message}</div>`
+                `<div class="status error">❌ Ошибка обмена кода авторизации: ${escapeHtml(String(err.message))}</div>`
               )
             );
             return;
@@ -189,9 +198,17 @@ export function startAuthServer(options: AuthServerOptions): Promise<{
           statusEl.innerText = '✅ Авторизация успешна! Токен сохранен.';
           speakersEl.style.display = 'block';
           if (data.speakers && data.speakers.length > 0) {
-            speakersEl.innerHTML = '<strong>Найденные колонки:</strong><br>' + data.speakers.map(s => '• ' + s).join('<br>');
+            const title = document.createElement('strong');
+            title.textContent = 'Найденные колонки:';
+            speakersEl.replaceChildren(title);
+            data.speakers.forEach(s => {
+              speakersEl.appendChild(document.createElement('br'));
+              speakersEl.appendChild(document.createTextNode('• ' + String(s)));
+            });
           } else {
-            speakersEl.innerHTML = '<em>Колонки не найдены в умном доме, но токен успешно сохранен.</em>';
+            const note = document.createElement('em');
+            note.textContent = 'Колонки не найдены в умном доме, но токен успешно сохранен.';
+            speakersEl.replaceChildren(note);
           }
         } else {
           statusEl.className = 'status error';

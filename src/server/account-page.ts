@@ -18,7 +18,7 @@ export function renderAccountPage({
       <div class="account-unauth">
         <h2 data-i18n="account_login_title">Личный кабинет mctl-alice</h2>
         <p data-i18n="account_login_desc">Войдите через Яндекс ID, чтобы управлять подключениями AI-ассистентов, интеграцией с колонками и сохранёнными данными.</p>
-        <div style="margin-top: 24px;">
+        <div class="s-784e59">
           <a href="${baseUrl}/auth/login" class="btn btn-primary" data-i18n="btn_login_yandex">Войти через Яндекс ID</a>
         </div>
       </div>
@@ -30,30 +30,30 @@ export function renderAccountPage({
 
   let grantsTable = "";
   if (grants.length === 0) {
-    grantsTable = `<p class="muted" style="color: var(--surface-fg-muted); margin-top: 8px;" data-i18n="account_mcp_no_clients">Нет активных подключений ассистентов (Claude, ChatGPT, Codex).</p>`;
+    grantsTable = `<p class="muted s-6f220e" data-i18n="account_mcp_no_clients">Нет активных подключений ассистентов (Claude, ChatGPT, Codex).</p>`;
   } else {
     grantsTable = `
-      <table class="table" style="width: 100%; margin-top: 12px; border-collapse: collapse;">
+      <table class="table s-c72ddd">
         <thead>
-          <tr style="text-align: left; border-bottom: 1px solid var(--surface-line);">
-            <th style="padding: 8px 0;" data-i18n="account_th_client">Клиент</th>
-            <th style="padding: 8px 0;" data-i18n="account_th_scope">Разрешения</th>
-            <th style="padding: 8px 0;" data-i18n="account_th_connected">Подключен</th>
-            <th style="padding: 8px 0; text-align: right;" data-i18n="account_th_action">Действие</th>
+          <tr class="s-2f8e9d">
+            <th class="s-c079ee" data-i18n="account_th_client">Клиент</th>
+            <th class="s-c079ee" data-i18n="account_th_scope">Разрешения</th>
+            <th class="s-c079ee" data-i18n="account_th_connected">Подключен</th>
+            <th class="s-776427" data-i18n="account_th_action">Действие</th>
           </tr>
         </thead>
         <tbody>
           ${grants
             .map(
               (g) => `
-            <tr style="border-bottom: 1px solid var(--surface-line);">
-              <td style="padding: 10px 0;"><strong>${escapeHtml(g.clientName || g.clientId)}</strong></td>
-              <td style="padding: 10px 0;"><code>${escapeHtml(g.scope)}</code></td>
-              <td style="padding: 10px 0;">${new Date(g.createdAt).toLocaleDateString()}</td>
-              <td style="padding: 10px 0; text-align: right;">
-                <form method="POST" action="/account/revoke-grant" style="display: inline;">
+            <tr class="s-b6be4b">
+              <td class="s-8160b0"><strong>${escapeHtml(g.clientName || g.clientId)}</strong></td>
+              <td class="s-8160b0"><code>${escapeHtml(g.scope)}</code></td>
+              <td class="s-8160b0">${new Date(g.createdAt).toLocaleDateString()}</td>
+              <td class="s-4f7a36">
+                <form class="s-2f8710" method="POST" action="/account/revoke-grant">
                   <input type="hidden" name="client_id" value="${escapeHtml(g.clientId)}">
-                  <button type="submit" class="btn btn-sm btn-outline-danger" style="padding: 4px 10px; font-size: 13px;" data-i18n="account_btn_revoke">Отозвать</button>
+                  <button type="submit" class="btn btn-sm btn-outline-danger s-0da61a" data-i18n="account_btn_revoke">Отозвать</button>
                 </form>
               </td>
             </tr>
@@ -67,10 +67,10 @@ export function renderAccountPage({
 
   return `
     <div class="account-dashboard">
-      <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--surface-line); padding-bottom: 16px;">
+      <div class="s-6c8f3b">
         <div>
-          <h2 style="margin: 0;" data-i18n="account_title">Личный кабинет</h2>
-          <div style="color: var(--surface-fg-muted); font-size: 14px; margin-top: 4px;">
+          <h2 class="s-2a0ca8" data-i18n="account_title">Личный кабинет</h2>
+          <div class="s-8f25ff">
             <span data-i18n="account_user_label">Пользователь</span>: <strong>${escapeHtml(user.displayName || user.login || user.yandexUid)}</strong> 
             (ID: <code>${escapeHtml(user.yandexUid)}</code>)
           </div>
@@ -80,21 +80,21 @@ export function renderAccountPage({
         </form>
       </div>
 
-      <div style="margin-top: 24px; padding: 16px; background: var(--surface-elevated); border: 1px solid var(--surface-line); border-radius: var(--mctl-radius-md);">
-        <h3 style="margin-top: 0; font-size: 16px;" data-i18n="account_quasar_title">Голосовое управление колонками (Quasar)</h3>
-        <p style="font-size: 14px; margin: 8px 0; color: var(--surface-fg-muted);">
+      <div class="s-5b419e">
+        <h3 class="s-b6884e" data-i18n="account_quasar_title">Голосовое управление колонками (Quasar)</h3>
+        <p class="s-563961">
           <span data-i18n="account_status_label">Статус</span>: <strong>${
             hasQuasar
               ? '<span data-i18n="account_quasar_status_connected">🟢 Подключено (доступны произвольные фразы и команды)</span>'
               : '<span data-i18n="account_quasar_status_not_configured">⚪ Не настроено</span>'
           }</strong>
         </p>
-        <div style="margin-top: 12px; display: flex; gap: 12px; align-items: center;">
+        <div class="s-04e22a">
           ${
             hasQuasar
               ? `
-            <form method="POST" action="/account/disconnect-quasar">
-              <button type="submit" class="btn btn-secondary btn-sm" data-i18n="account_quasar_disconnect_btn" onclick="return confirm('Отключить Quasar и удалить прокси-сценарии с серверов Яндекса?')">Отключить Quasar</button>
+            <form method="POST" action="/account/disconnect-quasar" data-confirm="Отключить Quasar и удалить прокси-сценарии с серверов Яндекса?">
+              <button type="submit" class="btn btn-secondary btn-sm" data-i18n="account_quasar_disconnect_btn">Отключить Quasar</button>
             </form>
           `
               : `
@@ -104,23 +104,23 @@ export function renderAccountPage({
         </div>
       </div>
 
-      <div style="margin-top: 24px; padding: 16px; background: var(--surface-elevated); border: 1px solid var(--surface-line); border-radius: var(--mctl-radius-md);">
-        <h3 style="margin-top: 0; font-size: 16px;" data-i18n="account_mcp_title">Подключённые AI-клиенты (MCP)</h3>
+      <div class="s-5b419e">
+        <h3 class="s-b6884e" data-i18n="account_mcp_title">Подключённые AI-клиенты (MCP)</h3>
         ${grantsTable}
       </div>
 
-      <div style="margin-top: 32px; padding: 16px; border: 1px solid rgba(220, 38, 38, 0.3); background: rgba(220, 38, 38, 0.05); border-radius: var(--mctl-radius-md);">
-        <h3 style="margin-top: 0; font-size: 16px; color: #dc2626;" data-i18n="account_danger_title">Опасная зона: удаление аккаунта</h3>
-        <p style="font-size: 14px; color: var(--surface-fg-muted); margin: 8px 0;" data-i18n="account_danger_desc">
+      <div class="s-b504ec">
+        <h3 class="s-788ad3" data-i18n="account_danger_title">Опасная зона: удаление аккаунта</h3>
+        <p class="s-bdde6e" data-i18n="account_danger_desc">
           Вы можете полностью удалить все данные своей учётной записи из mctl-alice. Будут немедленно отозваны все MCP-токены, 
           удалены сохранённые зашифрованные токены Яндекса, сессии и прокси-сценарии.
         </p>
-        <form method="POST" action="/account/delete" style="margin-top: 12px;" onsubmit="return confirm('Вы уверены? Это действие необратимо удалит все ваши токены и данные из сервиса.')">
-          <button type="submit" class="btn btn-danger btn-sm" data-i18n="account_delete_all_btn" style="background: #dc2626; color: #fff; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer;">Удалить все мои данные</button>
+        <form class="s-4bb900" method="POST" action="/account/delete" data-confirm="Вы уверены? Это действие необратимо удалит все ваши токены и данные из сервиса.">
+          <button type="submit" class="btn btn-danger btn-sm s-877506" data-i18n="account_delete_all_btn">Удалить все мои данные</button>
         </form>
       </div>
 
-      <div style="margin-top: 24px;">
+      <div class="s-784e59">
         <a href="/" class="btn btn-secondary btn-sm" data-i18n="account_btn_home">&larr; На главную</a>
       </div>
     </div>

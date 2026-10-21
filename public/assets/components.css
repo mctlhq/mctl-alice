@@ -610,10 +610,16 @@ footer a {
   overflow: hidden;
 }
 
-.qr-frame svg {
+.qr-frame svg,
+.qr-frame img {
   display: block;
   width: 100%;
   height: 100%;
+}
+
+.qr-failed {
+  color: var(--surface-fg-muted);
+  padding: 20px;
 }
 
 .qr-spinner {

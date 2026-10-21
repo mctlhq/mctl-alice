@@ -283,6 +283,22 @@ async function getSessionUser(req: http.IncomingMessage, storage: IStorage): Pro
 }
 
 
+export class CookieAccountMismatchError extends Error {
+  constructor() {
+    super("This Yandex cookie belongs to a different account than the one you signed in with. Sign in to Yandex with the same account and try again.");
+  }
+}
+
+/**
+ * Hosted mode: a Quasar cookie may only be attached to the user whose Yandex
+ * UID was verified through OAuth; anything else would let one account drive
+ * another account's home.
+ */
+export async function assertCookieOwnedBy(cookie: string, user: UserRecord | null): Promise<void> {
+  const uid = await new QuasarClient({ credentialsMode: "hosted", cookie, useKeychain: false, persistEnv: false }).getAccountUid();
+  if (!uid || !user?.yandexUid || uid !== user.yandexUid) throw new CookieAccountMismatchError();
+}
+
 export type AuthResult =
   | { authenticated: true; mode: "hosted"; service: StationService; scope: string; userId: string; clientId: string }
   | { authenticated: true; mode: "local"; service: StationService; scope: "*"; userId?: never; clientId?: never }
@@ -1979,6 +1995,7 @@ export function createHttpServer(
           await qrOwners.delete(sessionId);
 
           const user = await getSessionUser(req, oauthStorage);
+          if (authRequired) await assertCookieOwnedBy(cookie, user);
           if (user) {
             const existingCreds = (await oauthStorage.getUserCredentials(user.id)) || { yandexAccessToken: "" };
             await oauthStorage.saveUserCredentials(user.id, {
@@ -2000,7 +2017,7 @@ export function createHttpServer(
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify(safeResult));
       } catch (err: any) {
-        res.writeHead(err instanceof StorageUnavailableError ? 503 : 500, { "Content-Type": "application/json" });
+        res.writeHead(err instanceof StorageUnavailableError ? 503 : err instanceof CookieAccountMismatchError ? 403 : 500, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ status: "error", message: err.message }));
       }
       return;
@@ -2030,6 +2047,7 @@ export function createHttpServer(
           // Test verification with Quasar
           const testQuasar = new QuasarClient({ credentialsMode: authRequired ? "hosted" : "local", cookie, useKeychain: false, persistEnv: false, userId: user?.id, storage: oauthStorage });
           await testQuasar.getCsrfToken();
+          if (authRequired) await assertCookieOwnedBy(cookie, user);
 
           if (!authRequired) {
             saveCookieToEnvFile(cookie);
@@ -2051,7 +2069,7 @@ export function createHttpServer(
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ status: "ok", message: "Cookie saved and verified successfully" }));
         } catch (err: any) {
-          res.writeHead(err instanceof StorageUnavailableError ? 503 : 500, { "Content-Type": "application/json" });
+          res.writeHead(err instanceof StorageUnavailableError ? 503 : err instanceof CookieAccountMismatchError ? 403 : 500, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ status: "error", message: err.message }));
         }
       });

@@ -223,6 +223,24 @@ export class QuasarClient {
     return Boolean(this.cookie);
   }
 
+  /**
+   * Yandex account UID that the configured cookie is signed in as, or null for
+   * an anonymous or rejected cookie. Same endpoint AlexxIT/YandexStation uses
+   * to validate cookies.
+   */
+  async getAccountUid(): Promise<string | null> {
+    if (!this.cookie) return null;
+    const res = await fetch("https://yandex.ru/iot?storage=1", {
+      headers: { Cookie: this.cookie, "User-Agent": USER_AGENT, Accept: "application/json" },
+      redirect: "manual",
+      signal: AbortSignal.timeout(10000),
+    });
+    if (res.status !== 200) return null;
+    const data = (await res.json().catch(() => null)) as { storage?: { user?: { uid?: unknown } } } | null;
+    const uid = data?.storage?.user?.uid;
+    return (typeof uid === "string" || typeof uid === "number") && /^\d+$/.test(String(uid)) ? String(uid) : null;
+  }
+
   async getCsrfToken(): Promise<string> {
     if (this.csrfToken) {
       return this.csrfToken;

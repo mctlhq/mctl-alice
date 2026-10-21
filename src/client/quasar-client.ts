@@ -117,7 +117,7 @@ export interface QuasarClientOptions {
 
 // Hosted mode builds a QuasarClient per request, so per-device serialization
 // must outlive the instance. Keyed by owner and device; single process only.
-const sharedLocks = new Map<string, Promise<void>>();
+const sharedLocks = new Map<string, { chain: Promise<void> }>();
 
 export class QuasarClient {
   private onCookieRefresh?: QuasarClientOptions["onCookieRefresh"];
@@ -156,25 +156,20 @@ export class QuasarClient {
    */
   private async runWithLock<T>(deviceId: string, task: () => Promise<T>): Promise<T> {
     const key = `${this.userId ?? ""}:${deviceId}`;
-    const prev = sharedLocks.get(key) || Promise.resolve();
+    const prev = sharedLocks.get(key)?.chain || Promise.resolve();
     let release: () => void;
     const next = new Promise<void>((resolve) => {
       release = resolve;
     });
-    sharedLocks.set(
-      key,
-      prev.then(
-        () => next,
-        () => next
-      )
-    );
+    const holder = { chain: prev.then(() => next, () => next) };
+    sharedLocks.set(key, holder);
 
     await prev.catch(() => {});
     try {
       return await task();
     } finally {
       release!();
-      if (sharedLocks.get(key) === next) {
+      if (sharedLocks.get(key) === holder) {
         sharedLocks.delete(key);
       }
     }
@@ -331,7 +326,12 @@ export class QuasarClient {
     const data = await this.request("https://iot.quasar.yandex.ru/m/user/scenarios", {
       method: "GET",
     });
-    return data.scenarios || [];
+    // An unexpected body is a failed read, never "no scenarios": callers act
+    // on absence by creating duplicates or forgetting ownership.
+    if (!data || !Array.isArray(data.scenarios)) {
+      throw new Error("Unexpected response from Quasar scenario list");
+    }
+    return data.scenarios;
   }
 
   async triggerScenario(scenarioId: string): Promise<any> {
@@ -357,7 +357,7 @@ export class QuasarClient {
     const owned = this.storage && this.userId ? await this.storage.getQuasarScenario(this.userId, deviceId) : null;
     // 2. Proxies created before ownership was recorded carry this owner's exact
     //    generated name. Never adopt by trigger or by any other name.
-    const existing = scenarios.find((sc: any) => (owned && sc.id === owned)) || scenarios.find((sc: any) => sc.name === name);
+    const existing = (owned ? scenarios.find((sc: any) => sc.id === owned) : undefined) || scenarios.find((sc: any) => sc.name === name);
     if (existing) {
       await this.recordOwnership(deviceId, existing.id, name);
       return existing.id;

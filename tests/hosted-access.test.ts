@@ -282,6 +282,20 @@ describe("hosted access boundary", () => {
     expect((await storage.getUserCredentials("alice"))?.quasarCookie).toBeUndefined();
     expect(await storage.listQuasarScenarios("alice")).toEqual([]);
   });
+  it("a failed Yandex cleanup on disconnect keeps the recorded ids for a later retry", async () => {
+    await start();
+    await storage.saveWebSession("browser-a", "alice", Date.now() + 60000);
+    await storage.saveQuasarScenario("alice", "speaker", "scn-a");
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input instanceof Request ? input.url : input);
+      if (url.startsWith("https://")) return new Response("unavailable", { status: 503 });
+      return realFetch(input, init);
+    });
+    const response = await realFetch(base + "/account/disconnect-quasar", { method: "POST", headers: { Cookie: "mctl_session=browser-a", Origin: "http://localhost" }, redirect: "manual" });
+    expect(response.headers.get("location")).toBe("/account?quasar_disconnected=true&scenarios_left=true");
+    expect((await storage.getUserCredentials("alice"))?.quasarCookie).toBeUndefined();
+    expect(await storage.listQuasarScenarios("alice")).toHaveLength(1);
+  });
   it("account deletion without a session deletes nothing", async () => {
     await start();
     const response = await realFetch(base + "/account/delete", { method: "POST", headers: { Origin: "http://localhost" }, redirect: "manual" });

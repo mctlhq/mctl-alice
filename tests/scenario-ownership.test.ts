@@ -9,7 +9,7 @@ const userId = "usr_1001";
 const legacyName = "mctl-usr_1001-speaker";
 
 // A fake Quasar account: scenarios live here, requests are logged.
-function fakeQuasar(client: QuasarClient, initial: Array<{ id: string; name: string; triggers?: Array<{ value: string }> }>, options: { failDelete?: boolean; failList?: boolean } = {}) {
+function fakeQuasar(client: QuasarClient, initial: Array<{ id: string; name: string; triggers?: Array<{ value: string }> }>, options: { failDelete?: boolean; failList?: boolean; malformedList?: boolean } = {}) {
   const scenarios = [...initial];
   const log: string[] = [];
   vi.spyOn(client as any, "request").mockImplementation(async (url: unknown, init: unknown) => {
@@ -18,6 +18,7 @@ function fakeQuasar(client: QuasarClient, initial: Array<{ id: string; name: str
     log.push(`${method} ${path}`);
     if (path === "/m/user/scenarios" && method === "GET") {
       if (options.failList) throw new Error("Quasar unavailable");
+      if (options.malformedList) return { status: "error", message: "something changed" };
       return { status: "ok", scenarios: [...scenarios] };
     }
     if (path === "/m/user/scenarios" && method === "POST") {
@@ -76,6 +77,16 @@ describe("proxy scenario ownership", () => {
     expect(log.filter((l) => l.startsWith("POST"))).toEqual([]);
   });
 
+  it("treats an unexpected scenario list as a failed read, not an empty one", async () => {
+    storage.saveQuasarScenario(userId, "speaker", "recorded");
+    const c = client();
+    const { log } = fakeQuasar(c, [{ id: "recorded", name: "x" }], { malformedList: true });
+    await expect(c.cleanupAllProxyScenarios()).rejects.toThrow("Unexpected response");
+    expect(storage.listQuasarScenarios(userId)).toHaveLength(1);
+    await expect(c.getOrCreateSpeakerScenario("other")).rejects.toThrow("Unexpected response");
+    expect(log.filter((l) => l.startsWith("POST") || l.startsWith("DELETE"))).toEqual([]);
+  });
+
   it("serializes the same speaker across client instances", async () => {
     const events: string[] = [];
     const run = (text: string) => {
@@ -123,7 +134,7 @@ describe("ambiguous targets", () => {
   const info: YandexUserInfo = {
     status: "ok",
     request_id: "r",
-    rooms: [{ id: "r1", name: "Кухня" }, { id: "r2", name: "Спальня" }],
+    rooms: [{ id: "r1", name: "Кухня" }, { id: "r2", name: "Спальня" }, { id: "r3", name: "Спальня гостевая" }],
     devices: [
       { id: "lamp-k", name: "Лампа", room: "r1", type: "devices.types.light", capabilities: [{ type: "devices.capabilities.on_off", state: { instance: "on", value: false } }] },
       { id: "lamp-s", name: "Лампа", room: "r2", type: "devices.types.light", capabilities: [{ type: "devices.capabilities.on_off", state: { instance: "on", value: false } }] },
@@ -155,6 +166,15 @@ describe("ambiguous targets", () => {
     await service.controlDevice({ device: "лампа", room: "спальня", state: "on" });
     expect(vi.mocked(api.sendDeviceActions).mock.calls[0][0][0].id).toBe("lamp-s");
     expect((await service.resolveSpeaker("макс")).id).toBe("spk-2");
+  });
+
+  it("room control acts on a unique room only, and an exact name beats a substring", async () => {
+    await expect(service.controlRoom({ room: "спал", action: "turn_off" })).rejects.toThrow(/Room "спал" is ambiguous/);
+    expect(api.sendDeviceActions).not.toHaveBeenCalled();
+    await service.controlRoom({ room: "спальня", action: "turn_on" });
+    const ids = vi.mocked(api.sendDeviceActions).mock.calls.flatMap((call) => call[0].map((a: any) => a.id));
+    expect(ids).toEqual(["lamp-s"]);
+    await expect(service.controlRoom({ room: "гараж", action: "turn_on" })).rejects.toThrow(/Room "гараж" was not found/);
   });
 
   it("an unknown room is an error, not a search across the whole home", async () => {

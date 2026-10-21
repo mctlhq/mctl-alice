@@ -1408,7 +1408,9 @@ export function createHttpServer(
       let scenariosLeft = false;
       if (user) {
         scenariosLeft = !(await removeProxyScenarios(user.id));
-        const creds = await oauthStorage.getUserCredentials(user.id);
+        let creds = null;
+        try { creds = await oauthStorage.getUserCredentials(user.id); }
+        catch (error) { if (!(error instanceof CredentialDecryptionError)) throw error; }
         if (creds) {
           await oauthStorage.saveUserCredentials(user.id, {
             ...creds,
@@ -1416,7 +1418,9 @@ export function createHttpServer(
             quasarUpdatedAt: undefined,
           });
         }
-        await oauthStorage.deleteQuasarScenarios(user.id);
+        // On failure keep the recorded ids, so a later reconnect can still
+        // find and remove the scenarios that were left behind.
+        if (!scenariosLeft) await oauthStorage.deleteQuasarScenarios(user.id);
       }
       res.writeHead(302, { Location: scenariosLeft ? "/account?quasar_disconnected=true&scenarios_left=true" : "/account?quasar_disconnected=true" });
       res.end();

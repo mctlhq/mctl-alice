@@ -109,6 +109,28 @@ function uniqueMatch<T extends { id: string }>(tiers: T[][], subject: string, la
   return undefined;
 }
 
+/**
+ * Resolves a room by id, exact name, then substring, with the same ambiguity
+ * rule as devices. Throws when nothing matches.
+ */
+function resolveRoom(rooms: Array<{ id: string; name: string }>, query: string): { id: string; name: string } {
+  const norm = query.trim().toLowerCase();
+  const room = uniqueMatch(
+    [
+      rooms.filter((r) => r.id === query),
+      rooms.filter((r) => r.name.toLowerCase() === norm),
+      rooms.filter((r) => r.name.toLowerCase().includes(norm)),
+    ],
+    `Room "${query}"`,
+    (r) => `"${r.name}" (id: ${r.id})`,
+  );
+  if (!room) {
+    const available = rooms.map((r) => `"${r.name}"`).join(", ");
+    throw new YandexApiError(`Room "${query}" was not found. Available rooms: ${available || "none"}`);
+  }
+  return room;
+}
+
 export class StationService {
   private client: YandexIoTClient | null = null;
   private quasarClient: QuasarClient | null = null;
@@ -667,20 +689,9 @@ export class StationService {
     }
 
     const dQuery = deviceQuery.trim().toLowerCase();
-    const rQuery = roomQuery ? roomQuery.trim().toLowerCase() : undefined;
-
     // Filter by room if specified
-    const candidates = rQuery
-      ? devices.filter((d) => {
-          const rName = (d.room && roomMap.get(d.room))?.toLowerCase() || "";
-          return rName === rQuery || rName.includes(rQuery);
-        })
-      : devices;
-
-    if (rQuery && candidates.length === 0) {
-      const rooms = (info.rooms || []).map((r) => `"${r.name}"`).join(", ");
-      throw new YandexApiError(`Room "${roomQuery}" was not found. Available rooms: ${rooms || "none"}`);
-    }
+    const room = roomQuery && roomQuery.trim() ? resolveRoom(info.rooms || [], roomQuery) : undefined;
+    const candidates = room ? devices.filter((d) => d.room === room.id) : devices;
 
     // ID, exact name, then substring name, within the room when one is given.
     const match = uniqueMatch(
@@ -950,18 +961,7 @@ export class StationService {
     let targetRoomId: string | undefined;
 
     if (!isAllRooms) {
-      const matchedRoom = (info.rooms || []).find(
-        (r) =>
-          r.id === options.room ||
-          r.name.toLowerCase() === roomNorm ||
-          r.name.toLowerCase().includes(roomNorm)
-      );
-      if (!matchedRoom) {
-        const available = (info.rooms || []).map((r) => r.name).join(", ");
-        throw new YandexApiError(
-          `Room "${options.room}" not found. Available rooms: ${available || "none"}`
-        );
-      }
+      const matchedRoom = resolveRoom(info.rooms || [], options.room);
       targetRoomName = matchedRoom.name;
       targetRoomId = matchedRoom.id;
     }

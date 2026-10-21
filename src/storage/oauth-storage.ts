@@ -210,7 +210,8 @@ export class OAuthStorage implements IStorage {
     // is a single local process, so there is no older reader to protect.
     const migrate = (table: string, column: string) => {
       const rows = this.db.prepare(`SELECT ${column} AS v FROM ${table} WHERE ${column} IS NOT NULL AND ${column} NOT LIKE '${SECRET_DIGEST_PREFIX}%'`).all() as Array<{ v: string }>;
-      const update = this.db.prepare(`UPDATE ${table} SET ${column} = ? WHERE ${column} = ?`);
+      // OR REPLACE: a secret stored both raw and hashed collapses into one row.
+      const update = this.db.prepare(`UPDATE OR REPLACE ${table} SET ${column} = ? WHERE ${column} = ?`);
       for (const { v } of rows) update.run(secretDigest(v), v);
     };
     this.db.exec("BEGIN");

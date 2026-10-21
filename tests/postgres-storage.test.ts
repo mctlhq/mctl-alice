@@ -10,7 +10,7 @@ describe("PostgresStorage", () => {
   beforeEach(() => {
     mockQuery = vi.fn().mockResolvedValue({ rows: [], rowCount: 1 });
     mockConnect = vi.fn().mockResolvedValue({
-      query: vi.fn().mockResolvedValue({ rows: [] }),
+      query: vi.fn().mockResolvedValue({ rows: [{ n: "0" }] }), // init: count(*) always returns a row
       release: vi.fn(),
     });
     mockPool = {

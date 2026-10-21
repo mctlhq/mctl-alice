@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { DatabaseSync } from "node:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -131,6 +131,7 @@ describe("bearer secrets at rest", () => {
       };
     });
     it("leaves rows an older pod can read untouched until rehashing is enabled", async () => {
+      vi.stubEnv("REHASH_STORED_SECRETS", "");
       const schema = "alice_secrets_" + randomUUID().replaceAll("-", ""); schemas.push(schema);
       await admin.query(`CREATE SCHEMA ${schema}`);
       const options = { connectionString, options: `-c search_path=${schema}` };
@@ -142,6 +143,18 @@ describe("bearer secrets at rest", () => {
       expect((await pool.query("SELECT user_id FROM web_sessions WHERE session_hash = 'old_session'")).rowCount).toBe(1);
       await new PostgresStorage({ pool, rehashStoredSecrets: true }).ready();
       expect((await pool.query("SELECT user_id FROM web_sessions WHERE session_hash = 'old_session'")).rowCount).toBe(0);
+      vi.unstubAllEnvs();
+    });
+
+    it("rehashing survives a secret stored both raw and hashed", async () => {
+      const schema = "alice_secrets_" + randomUUID().replaceAll("-", ""); schemas.push(schema);
+      await admin.query(`CREATE SCHEMA ${schema}`);
+      const pool = new pg.Pool({ connectionString, options: `-c search_path=${schema}` }); pools.push(pool);
+      const storage = new PostgresStorage({ pool, rehashStoredSecrets: false });
+      await storage.saveWebSession("dup_session", "alice", now + 60000);
+      await pool.query(`INSERT INTO web_sessions (session_hash, user_id, created_at, expires_at) VALUES ('dup_session', 'alice', ${now}, ${now + 60000})`);
+      await new PostgresStorage({ pool, rehashStoredSecrets: true }).ready();
+      expect((await pool.query("SELECT session_hash FROM web_sessions")).rows).toEqual([{ session_hash: expect.stringMatching(/^sha256:/) }]);
     });
   });
 });

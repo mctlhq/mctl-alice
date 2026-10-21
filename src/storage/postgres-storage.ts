@@ -170,14 +170,30 @@ export class PostgresStorage implements IStorage {
       // Replace bearer secrets stored before hashing with their digests
       // (idempotent: digests carry the sha256: prefix). Until this runs,
       // lookups fall back to the raw value, see secretLookupKeys.
+      const digest = (column: string) => `'${SECRET_DIGEST_PREFIX}' || encode(sha256(convert_to(${column}, 'UTF8')), 'hex')`;
+      const raw = (column: string) => `${column} IS NOT NULL AND ${column} NOT LIKE '${SECRET_DIGEST_PREFIX}%'`;
+      const secretColumns: Array<[string, string]> = [
+        ["oauth_tokens", "access_token"],
+        ["oauth_tokens", "refresh_token"],
+        ["oauth_codes", "code"],
+        ["web_sessions", "session_hash"],
+        ["browser_transactions", "key"],
+      ];
+      let rawRows = 0;
+      for (const [table, column] of secretColumns) {
+        if (this.rehashStoredSecrets) {
+          // A raw row whose digest is already stored is the same secret twice;
+          // drop it so the rewrite cannot hit a unique constraint and block boot.
+          await client.query(`DELETE FROM ${table} WHERE ${raw(column)} AND ${digest(column)} IN (SELECT ${column} FROM ${table} WHERE ${column} IS NOT NULL)`);
+          rawRows += (await client.query(`UPDATE ${table} SET ${column} = ${digest(column)} WHERE ${raw(column)}`)).rowCount ?? 0;
+        } else {
+          rawRows += Number((await client.query(`SELECT count(*) AS n FROM ${table} WHERE ${raw(column)}`)).rows[0].n);
+        }
+      }
       if (this.rehashStoredSecrets) {
-        const digest = (column: string) => `'${SECRET_DIGEST_PREFIX}' || encode(sha256(convert_to(${column}, 'UTF8')), 'hex')`;
-        const raw = (column: string) => `${column} NOT LIKE '${SECRET_DIGEST_PREFIX}%'`;
-        await client.query(`UPDATE oauth_tokens SET access_token = ${digest("access_token")} WHERE ${raw("access_token")}`);
-        await client.query(`UPDATE oauth_tokens SET refresh_token = ${digest("refresh_token")} WHERE refresh_token IS NOT NULL AND ${raw("refresh_token")}`);
-        await client.query(`UPDATE oauth_codes SET code = ${digest("code")} WHERE ${raw("code")}`);
-        await client.query(`UPDATE web_sessions SET session_hash = ${digest("session_hash")} WHERE ${raw("session_hash")}`);
-        await client.query(`UPDATE browser_transactions SET key = ${digest("key")} WHERE ${raw("key")}`);
+        if (rawRows > 0) console.log(`[PostgresStorage] Rehashed ${rawRows} stored secrets; unset REHASH_STORED_SECRETS once every pod runs this version.`);
+      } else if (rawRows > 0) {
+        console.warn(`[PostgresStorage] ${rawRows} stored secrets are still in clear text; set REHASH_STORED_SECRETS=true once no pre-hashing pod serves traffic.`);
       }
 
       await client.query("COMMIT");

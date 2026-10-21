@@ -53,6 +53,28 @@ describe.skipIf(!connectionString)("hosted isolation with real PostgreSQL", () =
     expect(await storage.getToken("erin-two")).not.toBeNull();
     expect(await storage.getToken("frank-one")).not.toBeNull();
   });
+  it("deleteUser removes every owner-keyed row and leaves other users intact", async () => {
+    const t = Date.now();
+    for (const id of ["carol", "dave"]) {
+      await storage.saveUser({ id, yandexUid: id, createdAt: t, updatedAt: t });
+      await storage.saveUserCredentials(id, { yandexAccessToken: id });
+      await storage.saveToken({ accessToken: `at-${id}`, refreshToken: `rt2-${id}`, userId: id, clientId: "client", yandexAccessToken: "x", scope: "iot:view", createdAt: t, expiresAt: t + 3600000 });
+      await storage.saveAuthCode({ code: `code-${id}`, clientId: "client", redirectUri: "http://localhost/cb", userId: id, yandexAccessToken: "x", scope: "iot:view", createdAt: t, expiresAt: t + 60000 });
+      await storage.savePendingAuth({ state: `state-${id}`, clientId: "client", redirectUri: "http://localhost/cb", clientState: "s", scope: "iot:view", userId: id, createdAt: t, expiresAt: t + 60000 });
+      await storage.saveWebSession(`session-${id}`, id, t + 60000);
+      await storage.saveQuasarScenario(id, "speaker", `scn-${id}`);
+      await history.forUser(id).saveSamples([{ deviceId: "d", deviceName: "d", metric: "power", value: 1, timestamp: t }]);
+    }
+    await history.forUser("carol").deleteOwnerSamples();
+    await storage.deleteUser("carol");
+    const tables = ["users", "user_credentials", "oauth_tokens", "oauth_codes", "oauth_pending", "web_sessions", "quasar_proxy_scenarios", "telemetry_samples"];
+    for (const table of tables) {
+      const column = table === "users" ? "id" : "user_id";
+      const count = async (id: string) => Number((await pool.query(`SELECT COUNT(*) AS n FROM ${table} WHERE ${column} = $1`, [id])).rows[0].n);
+      expect(await count("carol"), table).toBe(0);
+      expect(await count("dave"), table).toBeGreaterThan(0);
+    }
+  });
   it("rejects expired, unowned, missing-owner and empty-scope grants without upstream calls", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch");
     try {

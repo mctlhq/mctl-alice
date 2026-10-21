@@ -115,7 +115,7 @@ export function renderAccountPage({
           Вы можете полностью удалить все данные своей учётной записи из mctl-alice. Будут немедленно отозваны все MCP-токены, 
           удалены сохранённые зашифрованные токены Яндекса, сессии и прокси-сценарии.
         </p>
-        <form method="POST" action="/account/delete-all" style="margin-top: 12px;" onsubmit="return confirm('Вы уверены? Это действие необратимо удалит все ваши токены и данные из сервиса.')">
+        <form method="POST" action="/account/delete" style="margin-top: 12px;" onsubmit="return confirm('Вы уверены? Это действие необратимо удалит все ваши токены и данные из сервиса.')">
           <button type="submit" class="btn btn-danger btn-sm" data-i18n="account_delete_all_btn" style="background: #dc2626; color: #fff; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer;">Удалить все мои данные</button>
         </form>
       </div>

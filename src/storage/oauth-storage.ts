@@ -550,6 +550,7 @@ export class OAuthStorage implements IStorage {
       this.db.prepare("DELETE FROM web_sessions WHERE user_id = ?").run(userId);
       this.db.prepare("DELETE FROM oauth_tokens WHERE user_id = ?").run(userId);
       this.db.prepare("DELETE FROM oauth_codes WHERE user_id = ?").run(userId);
+      this.db.prepare("DELETE FROM oauth_pending WHERE user_id = ?").run(userId);
       this.deleteUserStmt.run(userId);
       this.db.exec("COMMIT;");
     } catch (err) {

@@ -6,15 +6,23 @@ describe("CLI auth helper", () => {
   afterEach(() => { vi.restoreAllMocks(); });
 
   it("accepts a token only from its own page", async () => {
+    // A port the OS just handed out, so the helper (which needs an explicit
+    // port for its redirect URI) does not collide with another worker.
+    const probe = http.createServer();
+    await new Promise<void>(resolve => probe.listen(0, "127.0.0.1", resolve));
+    const port = (probe.address() as import("node:net").AddressInfo).port;
+    await new Promise<void>(resolve => probe.close(() => resolve()));
     const created: http.Server[] = [];
     const create = http.createServer;
     vi.spyOn(http, "createServer").mockImplementation(((...args: Parameters<typeof create>) => {
       const server = create(...args); created.push(server); return server;
     }) as typeof create);
-    const port = 20000 + Math.floor(Math.random() * 20000);
-    void startAuthServer({ port, clientId: "client" }).catch(() => {});
+    const started = startAuthServer({ port, clientId: "client" });
     try {
-      await new Promise<void>(resolve => created[0].listening ? resolve() : created[0].once("listening", () => resolve()));
+      await Promise.race([
+        new Promise<void>(resolve => created[0].listening ? resolve() : created[0].once("listening", () => resolve())),
+        started.then(() => { throw new Error("helper finished before listening"); }),
+      ]);
       const send = (origin: string) => fetch(`http://127.0.0.1:${port}/save-token`, {
         method: "POST", headers: { Origin: origin, "Content-Type": "text/plain" }, body: '{"token":""}',
       });

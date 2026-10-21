@@ -34,6 +34,8 @@ docker run -d \
   ghcr.io/mctlhq/mctl-alice:2.0.0
 ```
 
+Set `PUBLIC_BASE_URL` to the URL the server is actually reached at. Without auth (`AUTH_REQUIRED` unset), browser requests to `/mcp`, `/api/*` and the credential forms are accepted only from that origin or from a loopback host (`localhost`, `127.0.0.1`, `[::1]`), so a server reached as `http://nas.local:3000` without it answers its own pages with 403.
+
 ---
 
 ## Available MCP Tools

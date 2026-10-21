@@ -72,6 +72,13 @@ Candidate state:
   fail push with insufficient scopes; the normal local Docker login is
   unauthorized. No candidate manifest has been published. A registry login
   with push rights is required; do not publish application source to obtain it.
+- Follow-up inspection of the standard build workflow confirms that this
+  package uses a job-scoped `GITHUB_TOKEN` with package write access. That
+  credential is available only inside CI; the workflow checks out a remote
+  source ref and cannot build the local-only remediation commit as configured.
+  No reusable registry writer was identified in the documented platform
+  secret mappings. The former broad operator token was explicitly replaced
+  with a repository-read-only credential and is not a publication path.
 - The designated real test connection is awaiting owner identification.
   Production remains on `2.2.1`; no production configuration or data was changed.
 

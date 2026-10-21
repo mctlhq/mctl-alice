@@ -1,3 +1,4 @@
+import { CredentialDecryptionError } from "./storage-interface.js";
 import crypto from "node:crypto";
 
 const ALGORITHM = "aes-256-gcm";
@@ -69,31 +70,33 @@ export function decryptToken(envelope: string, userId: string, customKey?: Buffe
     return "";
   }
   
-  const parts = envelope.split(":");
-  if (parts.length !== 4 || parts[0] !== "v1") {
-    throw new Error("Invalid encryption envelope format");
-  }
+  try {
+    const parts = envelope.split(":");
+    if (parts.length !== 4 || parts[0] !== "v1") {
+      throw new Error("Invalid encryption envelope format");
+    }
 
-  const [, ivHex, tagHex, cipherHex] = parts;
-  const iv = Buffer.from(ivHex, "hex");
-  const tag = Buffer.from(tagHex, "hex");
-  const ciphertext = Buffer.from(cipherHex, "hex");
+    const [, ivHex, tagHex, cipherHex] = parts;
+    const iv = Buffer.from(ivHex, "hex");
+    const tag = Buffer.from(tagHex, "hex");
+    const ciphertext = Buffer.from(cipherHex, "hex");
 
-  if (iv.length !== IV_LENGTH || tag.length !== TAG_LENGTH) {
-    throw new Error("Corrupted encryption envelope parameters");
-  }
+    if (iv.length !== IV_LENGTH || tag.length !== TAG_LENGTH) {
+      throw new Error("Corrupted encryption envelope parameters");
+    }
 
-  const key = customKey || getEncryptionKey();
-  const decipher = crypto.createDecipheriv(ALGORITHM, key, iv);
-  decipher.setAAD(Buffer.from(userId, "utf8"));
-  decipher.setAuthTag(tag);
+    const key = customKey || getEncryptionKey();
+    const decipher = crypto.createDecipheriv(ALGORITHM, key, iv);
+    decipher.setAAD(Buffer.from(userId, "utf8"));
+    decipher.setAuthTag(tag);
 
-  const decrypted = Buffer.concat([
-    decipher.update(ciphertext),
-    decipher.final(),
-  ]);
+    const decrypted = Buffer.concat([
+      decipher.update(ciphertext),
+      decipher.final(),
+    ]);
 
-  return decrypted.toString("utf8");
+    return decrypted.toString("utf8");
+  } catch { throw new CredentialDecryptionError(); }
 }
 
 /**

@@ -1,3 +1,4 @@
+import { CredentialDecryptionError } from "./storage-interface.js";
 import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync, StatementSync } from "node:sqlite";
@@ -81,7 +82,10 @@ export class OAuthStorage implements IStorage {
 
   private initTables() {
     this.db.exec(`
-      CREATE TABLE IF NOT EXISTS users (
+      CREATE TABLE IF NOT EXISTS browser_transactions (
+          key TEXT PRIMARY KEY, payload TEXT NOT NULL, expires_at BIGINT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS users (
         id TEXT PRIMARY KEY,
         yandex_uid TEXT UNIQUE NOT NULL,
         login TEXT,
@@ -413,7 +417,7 @@ export class OAuthStorage implements IStorage {
       : null;
     const encryptedQuasar = creds.quasarCookie
       ? encryptToken(creds.quasarCookie, userId)
-      : existing?.quasarCookie
+      : !("quasarCookie" in creds) && existing?.quasarCookie
       ? encryptToken(existing.quasarCookie, userId)
       : null;
     const quasarUpdated = creds.quasarCookie ? now : existing?.quasarUpdatedAt || null;
@@ -451,8 +455,7 @@ export class OAuthStorage implements IStorage {
         quasarUpdatedAt: row.quasar_updated_at || undefined,
       };
     } catch (err) {
-      // If decryption fails (e.g. key mismatch), return null
-      return null;
+      throw new CredentialDecryptionError();
     }
   }
 
@@ -461,6 +464,18 @@ export class OAuthStorage implements IStorage {
   }
 
   // --- Web Sessions ---
+
+  saveBrowserTransaction(key: string, payload: string, expiresAt: number): void {
+    this.db.prepare("DELETE FROM browser_transactions WHERE expires_at <= ?").run(Date.now());
+    this.db.prepare("INSERT OR REPLACE INTO browser_transactions VALUES (?,?,?)").run(key, encryptToken(payload, key), expiresAt);
+  }
+  getBrowserTransaction(key: string): string | null {
+    const row = this.db.prepare("SELECT payload FROM browser_transactions WHERE key=? AND expires_at>?").get(key, Date.now());
+    return row ? decryptToken(String(row.payload), key) : null;
+  }
+  deleteBrowserTransaction(key: string): void {
+    this.db.prepare("DELETE FROM browser_transactions WHERE key=?").run(key);
+  }
 
   saveWebSession(sessionId: string, userId: string, expiresAt: number): void {
     const hash = hashToken(sessionId);
@@ -523,8 +538,8 @@ export class OAuthStorage implements IStorage {
     }));
   }
 
-  revokeUserClientGrants(userId: string, clientId: string): void {
-    this.deleteUserClientTokensStmt.run(userId, clientId);
+  revokeUserGrant(userId: string, clientId: string): boolean {
+    return Number(this.deleteUserClientTokensStmt.run(userId, clientId).changes) > 0;
   }
 
   deleteUser(userId: string): void {
@@ -799,8 +814,7 @@ export class OAuthStorage implements IStorage {
   }
 
   revokeToken(token: string): boolean {
-    this.deleteTokenStmt.run(token, token);
-    return true;
+    return Number(this.deleteTokenStmt.run(token, token).changes) > 0;
   }
 
   close(): void {

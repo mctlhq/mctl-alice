@@ -1,10 +1,91 @@
 # Public launch readiness: audit and implementation plan
 
-Status: audit complete; implementation pending; **not ready for public promotion**.
+Status: production isolation candidate deployed and verified; public PR review and final `2.2.2` release in progress; **not ready for public promotion**.
 
 Reviewed on 2026-09-20 against repository commit `5496ece` and the deployed
 `ghcr.io/mctlhq/mctl-alice:1.9.4` image. This is the canonical plan. The findings
 below describe the reviewed version, not claims about a future fixed release.
+
+## October 2026 isolation release (supersedes conflicting audit steps)
+
+The owner approved implementation on 2026-10-20, without disabling the service
+before rollout. Work starts from `main` at `74d6eba` on the private local branch
+`fix/hosted-user-isolation`; target release is `2.2.2`. The September audit below
+remains historical evidence, not current deployment instructions.
+
+- Keep valid existing user grants; reject unowned/reserved-owner grants without
+  assigning an owner. No bulk token or credential rewrite.
+- Use `AUTH_REQUIRED=true` as the explicit hosted mode. Hosted clients never
+  resolve home credentials from environment variables or Keychain.
+- Require current user credentials and valid scopes on MCP, REST and SSE;
+  `quasar` is separate from ordinary control. Fail closed on storage errors.
+- Preserve local/self-hosted credentials convenience. Local history sees only
+  `user_id IS NULL`; hosted storage is bound to the authenticated user.
+- Add nullable history ownership with idempotent migrations. Do not expose or
+  reassign old shared rows. Disable the shared hosted sampler; personal opt-in
+  collection is a separate task and is not yet available.
+- PostgreSQL is the deployed persistence backend. Use RollingUpdate with
+  `maxUnavailable: 0`, `maxSurge: 1`; do not use the old SQLite/Recreate proposal.
+- Keep implementation sources and verification details private until production
+  behavior is remediated. Build a private candidate, roll forward through GitOps,
+  verify random-token rejection and a designated test connection, then publish
+  the PR, complete review, and release `2.2.2`. Never roll back to unsafe auth.
+
+### Implementation evidence (2026-10-21, local; not a production verdict)
+
+Implemented awaited storage reads and discriminated hosted/local auth results;
+explicit credential modes and owner-only refresh persistence; one tool scope
+matrix for listing, dispatch and REST; SSE owner/client/token binding and grant
+revalidation; browser-bound consent and login; QR browser ownership; revocation
+for SQLite, PostgreSQL and MinIO; additive history isolation and storage readiness.
+
+Validation so far:
+
+- Node 22 typecheck and production TypeScript build pass.
+- 212 tests pass, including a disposable PostgreSQL 17 instance. The integration
+  database is selected only by `TEST_POSTGRES_URL`, never `DATABASE_URL`.
+- Two-user tests cover async storage, invalid/expired/revoked tokens, reserved
+  owners, invalid scopes, database errors, corrupt PostgreSQL credentials,
+  missing credentials, upstream refresh, REST/MCP/batch/SSE, browser consent,
+  QR ownership, live SSE grant revocation and history resolutions/aggregates.
+- Mutation check: restoring the auth function from `74d6eba` makes the random
+  token regression fail (incorrect authenticated success); fixed code passes.
+- Existing valid-token fixtures now have real user records and current
+  credentials. Local callback persistence remains covered.
+- Linux/amd64 Node 22 candidate container builds and runs as a non-root user
+  with a read-only filesystem against separate PostgreSQL. Readiness returns
+  200/version 2.2.2; random, reserved-owner and shared-environment Bearers return
+  401; an owned synthetic grant lists four read tools; forbidden REST returns
+  403. These smoke tests make no calls to real homes.
+
+Candidate state:
+
+- Application source commit: `1a8e158` (local only). Candidate image:
+  `ghcr.io/mctlhq/mctl-alice:2.2.2-candidate-1a8e158`, Linux/amd64.
+- Local image manifest digest:
+  `sha256:7ff6767dca379adf02f8daaa1c182cef44869af19c08ed011a1fc15a629d8f26`.
+  An exported Docker archive is retained in the sibling local
+  `mctl-alice-release-artifacts/` directory.
+- Candidate published to the verified private GHCR package on 2026-10-21.
+  Registry digest matches the local manifest above. The operator authorized
+  `write:packages` for the active `mashkovd` GitHub CLI account.
+- GitOps PR https://github.com/mctlhq/mctl-gitops/pull/2055 adds the candidate,
+  `maxUnavailable=0`, `maxSurge=1`, and readiness `/readyz`. Helm rendering
+  passed; CI and review passed with no P1/P2 findings; merged as `54c4b0d`.
+- The operator authorized the `mashkoffdmitry` account for read-only production
+  verification. No device-control commands are authorized for this smoke test.
+- Production rollout completed on 2026-10-21. ArgoCD is Synced/Healthy;
+  the candidate pod is Ready and the old `2.2.1` pod has terminated.
+- Public `/readyz` returns 200/version 2.2.2. Random Bearer returns 401 with
+  RFC 6750 challenge. The existing authorized test grant returns 12 tools
+  and successfully reads devices without issuing control commands.
+- Initial sanitized log inspection: no error lines. Post-remediation source
+  publication/review may now proceed.
+
+Outstanding release gates:
+
+- Publish sources only after remediation; complete public CI/review and release.
+- Personal opt-in history sampling remains explicitly out of scope.
 
 ## Agreed product decisions
 
@@ -376,8 +457,24 @@ site, actual tools and documented permissions agree; all public links work.
 - [x] Review site, repository, authorization/storage code and deployment metadata.
 - [x] Reproduce the authorization boundary failure locally with fake data.
 - [x] Record owner decisions and baseline verification.
-- [ ] Contain unsafe public onboarding and investigate potential existing impact.
-- [ ] Implement and verify isolated hosted identity, storage and permissions.
+- [ ] Complete the production isolation rollout without a preliminary shutdown.
+- [x] Implement and locally verify isolated hosted identity, storage and permissions.
 - [ ] Deliver consent, account controls and optional Quasar/history flows.
 - [ ] Complete public documentation, README, GitHub metadata and CI protections.
 - [ ] Pass staging and invited-user acceptance checks before promotion.
+
+### Public review follow-up — 21 October 2026
+
+PR [#51](https://github.com/mctlhq/mctl-alice/pull/51) identified three P2 follow-ups after the production isolation candidate was verified:
+
+- Preserve fail-closed MCP behavior for corrupt credentials (503), but show a recovery link in the account page. Only a freshly verified Yandex login can replace that owner's unreadable credentials. Hosted profile lookup now rejects failed identity verification without synthesizing an owner from a token hash.
+- Store browser-bound login, consent, QR owner and upstream QR state in shared encrypted, expiring storage (SQLite, PostgreSQL and MinIO). Login, consent and QR tests replace the HTTP server during the flow; PostgreSQL tests read state through a separate storage instance. Existing grants remain unchanged.
+- Require S256 PKCE for new hosted authorization requests and code exchanges. Existing access/refresh grants continue to work; local mode retains optional PKCE.
+
+Additional review dispositions: consent attribute values are escaped and dangling MinIO refresh pointers no longer report a successful revocation. Invalid MinIO listing entries remain a storage error rather than an incomplete successful listing, per the workspace fail-closed rule. Owner-scoped telemetry pruning remains intentional; personal sampling is disabled and future opt-in collection must include owner-aware retention. All observed production grants already include `quasar`; the separate Quasar permission follows the approved access model.
+
+Verification: all 218 tests passed on Node 22, including the disposable PostgreSQL 17 suite; typecheck and production build passed.
+
+The candidate deployment remains healthy while these follow-ups go through tests and a review of the new PR head; final `2.2.2` tagging is still pending.
+
+Second review confirmed all three P2 fixes and found one QR persistence regression: cookies accumulated during a waiting poll must be written back to shared storage. Fixed with a two-poll test checking the rotated cookie on the next request and unchanged session creation time. Storage failures during QR persistence remain 503. The remaining P3 recovery surfaces still fail closed; the documented recovery path is a fresh `/auth/login`, and additional recovery UI and empty-consent UX can be improved separately.

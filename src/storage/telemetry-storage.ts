@@ -52,6 +52,7 @@ export interface QueryHistoryOptions {
 }
 
 export interface ITelemetryStorage {
+  forUser(userId: string): ITelemetryStorage;
   saveSamples(samples: TelemetrySample[]): Promise<void> | void;
   queryHistory(options: QueryHistoryOptions): Promise<TelemetryHistoryResult> | TelemetryHistoryResult;
   pruneOld(retentionDays?: number): Promise<number> | number;
@@ -63,6 +64,13 @@ export class TelemetryStorage implements ITelemetryStorage {
   private db: DatabaseSync;
   private insertStmt: StatementSync;
 
+  forUser(userId: string): ITelemetryStorage {
+    const view = Object.create(this) as TelemetryStorage;
+    view.userId = userId;
+    return view;
+  }
+
+  private userId: string | null = null;
   constructor(dbPath?: string) {
     const resolvedPath = dbPath || process.env.TELEMETRY_DB_PATH || "./data/telemetry.db";
 
@@ -76,8 +84,8 @@ export class TelemetryStorage implements ITelemetryStorage {
     this.db = new DatabaseSync(resolvedPath);
     this.initTables();
     this.insertStmt = this.db.prepare(
-      `INSERT INTO telemetry_samples (device_id, device_name, room_name, metric, value, unit, timestamp)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO telemetry_samples (device_id, device_name, room_name, metric, value, unit, timestamp, user_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     );
   }
 
@@ -96,6 +104,9 @@ export class TelemetryStorage implements ITelemetryStorage {
       CREATE INDEX IF NOT EXISTS idx_telemetry_query ON telemetry_samples(device_id, metric, timestamp);
       CREATE INDEX IF NOT EXISTS idx_telemetry_ts ON telemetry_samples(timestamp);
     `);
+    const columns = this.db.prepare("PRAGMA table_info(telemetry_samples)").all() as Array<{ name: string }>;
+    if (!columns.some(column => column.name === "user_id")) this.db.exec("ALTER TABLE telemetry_samples ADD COLUMN user_id TEXT");
+    this.db.exec("CREATE INDEX IF NOT EXISTS idx_telemetry_owner ON telemetry_samples(user_id, device_id, metric, timestamp)");
   }
 
   /**
@@ -114,7 +125,8 @@ export class TelemetryStorage implements ITelemetryStorage {
           s.metric,
           s.value,
           s.unit ?? null,
-          s.timestamp
+          s.timestamp,
+          this.userId
         );
       }
       this.db.exec("COMMIT");
@@ -141,18 +153,18 @@ export class TelemetryStorage implements ITelemetryStorage {
         const stmt = this.db.prepare(
           `SELECT device_id, device_name, room_name, metric, value, unit, timestamp
            FROM telemetry_samples
-           WHERE device_id = ? AND timestamp >= ? AND timestamp <= ?
+           WHERE user_id IS ? AND device_id = ? AND timestamp >= ? AND timestamp <= ?
            ORDER BY timestamp ASC`
         );
-        rows = stmt.all(deviceId, from, to);
+        rows = stmt.all(this.userId, deviceId, from, to);
       } else {
         const stmt = this.db.prepare(
           `SELECT device_id, device_name, room_name, metric, value, unit, timestamp
            FROM telemetry_samples
-           WHERE device_id = ? AND metric = ? AND timestamp >= ? AND timestamp <= ?
+           WHERE user_id IS ? AND device_id = ? AND metric = ? AND timestamp >= ? AND timestamp <= ?
            ORDER BY timestamp ASC`
         );
-        rows = stmt.all(deviceId, metric, from, to);
+        rows = stmt.all(this.userId, deviceId, metric, from, to);
       }
     } else {
       // Bucketed aggregation
@@ -162,22 +174,22 @@ export class TelemetryStorage implements ITelemetryStorage {
                   AVG(value) as value, MIN(value) as min_value, MAX(value) as max_value, COUNT(*) as sample_count,
                   CAST(timestamp / ? AS INTEGER) * ? as timestamp
            FROM telemetry_samples
-           WHERE device_id = ? AND timestamp >= ? AND timestamp <= ?
+           WHERE user_id IS ? AND device_id = ? AND timestamp >= ? AND timestamp <= ?
            GROUP BY CAST(timestamp / ? AS INTEGER), metric
            ORDER BY timestamp ASC`
         );
-        rows = stmt.all(bucketMs, bucketMs, deviceId, from, to, bucketMs);
+        rows = stmt.all(bucketMs, bucketMs, this.userId, deviceId, from, to, bucketMs);
       } else {
         const stmt = this.db.prepare(
           `SELECT device_id, device_name, room_name, metric, unit,
                   AVG(value) as value, MIN(value) as min_value, MAX(value) as max_value, COUNT(*) as sample_count,
                   CAST(timestamp / ? AS INTEGER) * ? as timestamp
            FROM telemetry_samples
-           WHERE device_id = ? AND metric = ? AND timestamp >= ? AND timestamp <= ?
+           WHERE user_id IS ? AND device_id = ? AND metric = ? AND timestamp >= ? AND timestamp <= ?
            GROUP BY CAST(timestamp / ? AS INTEGER)
            ORDER BY timestamp ASC`
         );
-        rows = stmt.all(bucketMs, bucketMs, deviceId, metric, from, to, bucketMs);
+        rows = stmt.all(bucketMs, bucketMs, this.userId, deviceId, metric, from, to, bucketMs);
       }
     }
 
@@ -305,13 +317,13 @@ export class TelemetryStorage implements ITelemetryStorage {
    */
   pruneOld(retentionDays = 30): number {
     const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
-    const stmt = this.db.prepare("DELETE FROM telemetry_samples WHERE timestamp < ?");
-    const info = stmt.run(cutoff);
+    const stmt = this.db.prepare("DELETE FROM telemetry_samples WHERE user_id IS ? AND timestamp < ?");
+    const info = stmt.run(this.userId, cutoff);
     return Number(info.changes);
   }
 
   getStats(): { totalSamples: number; oldestTimestamp: number | null; newestTimestamp: number | null } {
-    const row = this.db.prepare("SELECT COUNT(*) as total, MIN(timestamp) as oldest, MAX(timestamp) as newest FROM telemetry_samples").get() as any;
+    const row = this.db.prepare("SELECT COUNT(*) as total, MIN(timestamp) as oldest, MAX(timestamp) as newest FROM telemetry_samples WHERE user_id IS ?").get(this.userId) as any;
     return {
       totalSamples: row?.total ? Number(row.total) : 0,
       oldestTimestamp: row?.oldest ? Number(row.oldest) : null,

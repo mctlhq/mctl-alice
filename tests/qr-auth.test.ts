@@ -1,3 +1,4 @@
+import { OAuthStorage } from "../src/storage/oauth-storage.js";
 import { describe, it, expect, vi } from "vitest";
 import { initQrAuth, checkQrAuthStatus } from "../src/auth/yandex-qr-auth.js";
 
@@ -111,6 +112,45 @@ describe("Yandex QR Auth", () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+
+  it("persists hosted QR state outside the process-local map", async () => {
+    const storage = new OAuthStorage(":memory:");
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = createMockFetch("otp_auth_finished");
+    try {
+      const qr = await initQrAuth(storage);
+      expect(storage.getBrowserTransaction(`qr-state:${qr.sessionId}`)).toContain("mock_csrf_token_123");
+      const result = await checkQrAuthStatus(qr.sessionId, storage);
+      expect(result.status).toBe("ok");
+      expect(storage.getBrowserTransaction(`qr-state:${qr.sessionId}`)).toBeNull();
+      expect((await checkQrAuthStatus(qr.sessionId, storage)).status).toBe("expired");
+    } finally { globalThis.fetch = originalFetch; storage.close(); }
+  });
+
+  it("persists rotated passport cookies across waiting polls without extending the QR expiry", async () => {
+    const storage = new OAuthStorage(":memory:");
+    const originalFetch = globalThis.fetch;
+    const mock = createMockFetch("magic_code_waiting");
+    let polls = 0;
+    globalThis.fetch = vi.fn(async (input, init) => {
+      if (String(input).includes("/magic/code/status")) {
+        polls++;
+        if (polls === 2) expect((init?.headers as Record<string, string>).Cookie).toContain("passport=rotated");
+        return new Response(JSON.stringify({ state: polls === 1 ? "magic_code_waiting" : "otp_auth_finished", trackId: "test_track_123" }), { headers: { "Set-Cookie": "passport=rotated; Path=/" } });
+      }
+      return mock(input, init);
+    });
+    try {
+      const qr = await initQrAuth(storage);
+      const before = JSON.parse(storage.getBrowserTransaction(`qr-state:${qr.sessionId}`)!);
+      expect((await checkQrAuthStatus(qr.sessionId, storage)).status).toBe("waiting");
+      const saved = JSON.parse(storage.getBrowserTransaction(`qr-state:${qr.sessionId}`)!);
+      expect(saved.cookies).toContain("passport=rotated");
+      expect(saved.createdAt).toBe(before.createdAt);
+      expect((await checkQrAuthStatus(qr.sessionId, storage)).status).toBe("ok");
+      expect(polls).toBe(2);
+    } finally { globalThis.fetch = originalFetch; storage.close(); }
   });
 
   it("should return expired for unknown sessionId", async () => {

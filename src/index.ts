@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { VERSION } from "./version.js";
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -36,7 +37,7 @@ async function runStdioServer() {
   const server = new Server(
     {
       name: "mctl-alice",
-      version: "1.0.0",
+      version: VERSION,
     },
     {
       capabilities: {

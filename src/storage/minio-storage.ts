@@ -1,3 +1,4 @@
+import { CredentialDecryptionError } from "./storage-interface.js";
 import crypto from "node:crypto";
 import {
   IStorage,
@@ -7,6 +8,7 @@ import {
   PendingAuth,
   AuthCode,
   OAuthTokenRecord,
+  UserGrant,
 } from "./storage-interface.js";
 import { encryptToken, decryptToken, hashToken } from "./crypto.js";
 
@@ -47,7 +49,7 @@ export class MinioStorage implements IStorage {
   /**
    * Generates AWS SigV4 authorization headers for S3/MinIO REST API
    */
-  private signRequest(method: string, canonicalPath: string, body = ""): Record<string, string> {
+  private signRequest(method: string, canonicalPath: string, body = "", query = ""): Record<string, string> {
     const parsedUrl = new URL(this.endpoint);
     const host = parsedUrl.host;
     const now = new Date();
@@ -62,7 +64,7 @@ export class MinioStorage implements IStorage {
     const canonicalRequest = [
       method,
       canonicalPath,
-      "", // query string
+      query,
       canonicalHeaders,
       signedHeaders,
       payloadHash,
@@ -180,7 +182,7 @@ export class MinioStorage implements IStorage {
       : null;
     const encryptedQuasar = creds.quasarCookie
       ? encryptToken(creds.quasarCookie, userId)
-      : existing?.quasarCookie
+      : !("quasarCookie" in creds) && existing?.quasarCookie
       ? encryptToken(existing.quasarCookie, userId)
       : null;
 
@@ -218,7 +220,7 @@ export class MinioStorage implements IStorage {
         quasarUpdatedAt: raw.quasarUpdatedAt || undefined,
       };
     } catch {
-      return null;
+      throw new CredentialDecryptionError();
     }
   }
 
@@ -237,6 +239,19 @@ export class MinioStorage implements IStorage {
   }
 
   // --- Web Sessions ---
+
+  async saveBrowserTransaction(key: string, payload: string, expiresAt: number): Promise<void> {
+    await this.putObject(`transactions/${hashToken(key)}.json`, { payload: encryptToken(payload, key), expiresAt });
+  }
+  async getBrowserTransaction(key: string): Promise<string | null> {
+    const record = await this.getObject<{ payload: string; expiresAt: number }>(`transactions/${hashToken(key)}.json`);
+    if (!record) return null;
+    if (record.expiresAt <= Date.now()) { await this.deleteBrowserTransaction(key); return null; }
+    return decryptToken(record.payload, key);
+  }
+  async deleteBrowserTransaction(key: string): Promise<void> {
+    await this.deleteObject(`transactions/${hashToken(key)}.json`);
+  }
 
   async saveWebSession(sessionId: string, userId: string, expiresAt: number): Promise<void> {
     const hash = hashToken(sessionId);
@@ -460,13 +475,67 @@ export class MinioStorage implements IStorage {
     };
   }
 
+  private async tokenKeys(): Promise<string[]> {
+    const keys: string[] = [];
+    let continuation = "";
+    do {
+      const params: Record<string, string> = { "list-type": "2", prefix: this.buildKey("tokens/") };
+      if (continuation) params["continuation-token"] = continuation;
+      const query = Object.keys(params).sort().map(k => `${encodeURIComponent(k)}=${encodeURIComponent(params[k])}`).join("&");
+      const path = `/${this.bucket}`;
+      const response = await fetch(`${this.endpoint}${path}?${query}`, { method: "GET", headers: this.signRequest("GET", path, "", query) });
+      if (!response.ok) throw new Error("Token listing unavailable");
+      const xml = await response.text();
+      if (!xml.includes("<ListBucketResult") || !xml.includes("</ListBucketResult>")) throw new Error("Invalid token listing");
+      for (const match of xml.matchAll(/<Key>([^<]+)<\/Key>/g)) {
+        const prefix = this.buildKey("tokens/");
+        if (!match[1].startsWith(prefix) || !/^[a-f0-9]+\.json$/.test(match[1].slice(prefix.length))) throw new Error("Invalid token key");
+        keys.push("tokens/" + match[1].slice(prefix.length));
+      }
+      const next = /<NextContinuationToken>([^<]+)<\/NextContinuationToken>/.exec(xml)?.[1];
+      if (xml.includes("<IsTruncated>true</IsTruncated>") && !next) throw new Error("Incomplete token listing");
+      continuation = next?.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&apos;/g, "'") || "";
+    } while (continuation);
+    return keys;
+  }
+
+  async listUserGrants(userId: string): Promise<UserGrant[]> {
+    const grants = new Map<string, UserGrant>();
+    for (const key of await this.tokenKeys()) {
+      const token = await this.getObject<OAuthTokenRecord>(key);
+      if (token?.userId === userId && token.expiresAt > Date.now()) {
+        const client = await this.getClient(token.clientId);
+        grants.set(token.clientId, { clientId: token.clientId, clientName: client?.clientName, scope: token.scope, createdAt: token.createdAt });
+      }
+    }
+    return [...grants.values()];
+  }
+
+  async revokeUserGrant(userId: string, clientId: string): Promise<boolean> {
+    let revoked = false;
+    for (const key of await this.tokenKeys()) {
+      const token = await this.getObject<OAuthTokenRecord>(key);
+      if (token?.userId === userId && token.clientId === clientId) {
+        await this.deleteObject(key);
+        if (token.refreshToken) await this.deleteObject(`tokens_refresh/${hashToken(token.refreshToken)}.json`);
+        revoked = true;
+      }
+    }
+    return revoked;
+  }
+
   async revokeToken(token: string): Promise<boolean> {
-    const tokenHash = hashToken(token);
-    // Try both access and refresh pointer
-    await Promise.all([
-      this.deleteObject(`tokens/${tokenHash}.json`),
-      this.deleteObject(`tokens_refresh/${tokenHash}.json`),
-    ]);
+    let key = `tokens/${hashToken(token)}.json`;
+    let record = await this.getObject<OAuthTokenRecord>(key);
+    if (!record) {
+      const pointer = await this.getObject<{ accessTokenHash: string }>(`tokens_refresh/${hashToken(token)}.json`);
+      if (!pointer) return false;
+      key = `tokens/${pointer.accessTokenHash}.json`;
+      record = await this.getObject<OAuthTokenRecord>(key);
+      if (!record) { await this.deleteObject(`tokens_refresh/${hashToken(token)}.json`); return false; }
+    }
+    await this.deleteObject(key);
+    if (record?.refreshToken) await this.deleteObject(`tokens_refresh/${hashToken(record.refreshToken)}.json`);
     return true;
   }
 }

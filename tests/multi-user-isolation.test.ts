@@ -153,7 +153,7 @@ describe("Multi-User SaaS Isolation & Security", () => {
     // 3. Unauthenticated POST to /auth/save-cookie should return 401
     const saveCookieRes = await fetch(`${baseUrl}/auth/save-cookie`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", Origin: baseUrl },
       body: JSON.stringify({ cookie: "Session_id=dummy" }),
     });
     expect(saveCookieRes.status).toBe(401);

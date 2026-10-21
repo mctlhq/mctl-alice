@@ -13,6 +13,7 @@ describe("HTTP Server & ChatGPT REST API", () => {
   beforeAll(async () => {
     server = createHttpServer(PORT, {
       publicBaseUrl: baseUrl,
+      enableSampler: false,
     });
     await new Promise<void>((resolve) => server.listen(PORT, resolve));
   });
@@ -510,7 +511,11 @@ describe("HTTP Server with authRequired: true (OAuth & RFC 9728 discovery)", () 
 
   beforeAll(async () => {
     oauthStorage = new OAuthStorage(":memory:");
+    oauthStorage.saveUser({ id: "test_user", yandexUid: "test_user", createdAt: Date.now(), updatedAt: Date.now() });
+    oauthStorage.saveUserCredentials("test_user", { yandexAccessToken: "mock_yandex_token" });
+    oauthStorage.saveWebSession("test_browser", "test_user", Date.now() + 3600000);
     oauthStorage.saveToken({
+      userId: "test_user",
       accessToken: validBearerToken,
       clientId: "test_client",
       yandexAccessToken: "mock_yandex_token",
@@ -657,7 +662,7 @@ describe("HTTP Server with authRequired: true (OAuth & RFC 9728 discovery)", () 
     const clientState = "codex_state_nonce_123";
 
     const authUrl = `${authBaseUrl}/oauth/authorize?response_type=code&client_id=${encodeURIComponent(codexClientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&code_challenge=${codeChallenge}&code_challenge_method=S256&state=${clientState}&scope=iot%3Aview+iot%3Acontrol`;
-    const consentRes = await fetch(authUrl);
+    const consentRes = await fetch(authUrl, { headers: { Cookie: "mctl_session=test_browser" } });
     expect(consentRes.status).toBe(200);
     const html = await consentRes.text();
     expect(html).toContain("Codex");
@@ -672,8 +677,8 @@ describe("HTTP Server with authRequired: true (OAuth & RFC 9728 discovery)", () 
     // 4. User clicks [Разрешить доступ]
     const approveRes = await fetch(`${authBaseUrl}/oauth/authorize`, {
       method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: `session_id=${encodeURIComponent(sessionId)}&action=approve`,
+      headers: { "Content-Type": "application/x-www-form-urlencoded", Origin: authBaseUrl, Cookie: "mctl_session=test_browser" },
+      body: `session_id=${encodeURIComponent(sessionId)}&action=approve&scope_iot%3Aview=yes&scope_iot%3Acontrol=yes`,
       redirect: "manual",
     });
 

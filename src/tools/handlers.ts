@@ -1,42 +1,38 @@
 import { StationService } from "../services/station-service.js";
 import { YandexApiError } from "../client/yandex-api.js";
 
+export const TOOL_SCOPES: Record<string, string[]> = {
+  alice_list_devices: ["iot:view", "iot:control"],
+  alice_get_device_state: ["iot:view", "iot:control"],
+  alice_get_home_summary: ["iot:view", "iot:control"],
+  alice_get_device_history: ["iot:view", "iot:control"],
+  alice_control_device: ["iot:control"],
+  alice_set_light: ["iot:control"],
+  alice_control_room: ["iot:control"],
+  alice_trigger_scenario: ["iot:control"],
+  alice_set_volume: ["iot:control"],
+  alice_media_control: ["iot:control"],
+  alice_send_command: ["quasar"],
+  alice_say_phrase: ["quasar"],
+};
+
+export function validScope(scope: string | undefined): scope is string {
+  return !!scope?.trim() && scope.trim().split(/\s+/).every(s => ["iot:view", "iot:control", "quasar"].includes(s));
+}
+
 export function checkScope(name: string, scope?: string): boolean {
-  if (!scope) return true; // Local or unrestricted mode
-  const granted = new Set(scope.split(/\s+/));
-  if (granted.has("*")) return true;
-
-  switch (name) {
-    case "alice_list_devices":
-    case "alice_get_device_state":
-    case "alice_get_home_summary":
-    case "alice_get_device_history":
-      return granted.has("iot:view") || granted.has("iot:control");
-
-    case "alice_control_device":
-    case "alice_control_devices_batch":
-    case "alice_control_room":
-    case "alice_execute_scenario":
-    case "alice_set_volume":
-    case "alice_playback_control":
-      return granted.has("iot:control");
-
-    case "alice_send_command":
-    case "alice_say_phrase":
-      return granted.has("quasar") || granted.has("iot:control");
-
-    default:
-      return true;
-  }
+  if (scope === "*") return true; // Explicit local access only.
+  const granted = new Set(scope?.split(/\s+/) || []);
+  return (TOOL_SCOPES[name] || []).some(s => granted.has(s));
 }
 
 export async function handleToolCall(
   name: string,
   args: any,
   stationService: StationService,
-  scope?: string
+  scope: string = "*"
 ): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> {
-  if (scope && !checkScope(name, scope)) {
+  if (!checkScope(name, scope)) {
     return {
       content: [
         {

@@ -283,7 +283,7 @@ export interface YandexProfile {
   displayName: string;
 }
 
-export async function fetchYandexProfile(accessToken: string): Promise<YandexProfile> {
+export async function fetchYandexProfile(accessToken: string, requireVerifiedIdentity = false): Promise<YandexProfile> {
   try {
     const res = await fetch("https://login.yandex.ru/info?format=json", {
       headers: { Authorization: `OAuth ${accessToken}` },
@@ -302,6 +302,8 @@ export async function fetchYandexProfile(accessToken: string): Promise<YandexPro
   } catch (err: any) {
     console.warn("[OAuth] Failed to fetch profile from login.yandex.ru:", err.message);
   }
+
+  if (requireVerifiedIdentity) throw new Error("Yandex profile verification failed; reconnect");
 
   // Fallback: smart home API user info
   try {

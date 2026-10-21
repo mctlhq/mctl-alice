@@ -115,6 +115,10 @@ export interface QuasarClientOptions {
   storage?: IStorage;
 }
 
+// Hosted mode builds a QuasarClient per request, so per-device serialization
+// must outlive the instance. Keyed by owner and device; single process only.
+const sharedLocks = new Map<string, { chain: Promise<void> }>();
+
 export class QuasarClient {
   private onCookieRefresh?: QuasarClientOptions["onCookieRefresh"];
   private cookie: string | null = null;
@@ -125,7 +129,6 @@ export class QuasarClient {
   private persistEnv: boolean;
   private envFilePath?: string;
 
-  private locks = new Map<string, Promise<any>>();
   private userId?: string;
   private storage?: IStorage;
 
@@ -151,27 +154,23 @@ export class QuasarClient {
   /**
    * Serializes async operations targeting the same key (e.g. deviceId)
    */
-  private async runWithLock<T>(key: string, task: () => Promise<T>): Promise<T> {
-    const prev = this.locks.get(key) || Promise.resolve();
+  private async runWithLock<T>(deviceId: string, task: () => Promise<T>): Promise<T> {
+    const key = `${this.userId ?? ""}:${deviceId}`;
+    const prev = sharedLocks.get(key)?.chain || Promise.resolve();
     let release: () => void;
     const next = new Promise<void>((resolve) => {
       release = resolve;
     });
-    this.locks.set(
-      key,
-      prev.then(
-        () => next,
-        () => next
-      )
-    );
+    const holder = { chain: prev.then(() => next, () => next) };
+    sharedLocks.set(key, holder);
 
     await prev.catch(() => {});
     try {
       return await task();
     } finally {
       release!();
-      if (this.locks.get(key) === next) {
-        this.locks.delete(key);
+      if (sharedLocks.get(key) === holder) {
+        sharedLocks.delete(key);
       }
     }
   }
@@ -345,7 +344,12 @@ export class QuasarClient {
     const data = await this.request("https://iot.quasar.yandex.ru/m/user/scenarios", {
       method: "GET",
     });
-    return data.scenarios || [];
+    // An unexpected body is a failed read, never "no scenarios": callers act
+    // on absence by creating duplicates or forgetting ownership.
+    if (!data || !Array.isArray(data.scenarios)) {
+      throw new Error("Unexpected response from Quasar scenario list");
+    }
+    return data.scenarios;
   }
 
   async triggerScenario(scenarioId: string): Promise<any> {
@@ -354,26 +358,27 @@ export class QuasarClient {
     });
   }
 
+  private proxyScenarioName(deviceId: string): string {
+    return this.userId ? `mctl-${this.userId.slice(0, 8)}-${deviceId}` : `mctl-${deviceId}`;
+  }
+
   async getOrCreateSpeakerScenario(deviceId: string): Promise<string> {
     if (this.scenarioCache.has(deviceId)) {
       return this.scenarioCache.get(deviceId)!;
     }
 
     const trigger = encodeDeviceId(deviceId);
-    const name = this.userId ? `mctl-${this.userId.slice(0, 8)}-${deviceId}` : `mctl-${deviceId}`;
+    const name = this.proxyScenarioName(deviceId);
+    const scenarios = await this.getScenarios();
 
-    // Check existing scenarios
-    try {
-      const scenarios = await this.getScenarios();
-      // Look for exact matching speaker scenario only (never adopt arbitrary scenarios)
-      for (const sc of scenarios) {
-        if (sc.name === name || sc.triggers?.[0]?.value === trigger) {
-          this.scenarioCache.set(deviceId, sc.id);
-          return sc.id;
-        }
-      }
-    } catch {
-      // ignore, try create
+    // 1. The scenario this owner created, as recorded in storage.
+    const owned = this.storage && this.userId ? await this.storage.getQuasarScenario(this.userId, deviceId) : null;
+    // 2. Proxies created before ownership was recorded carry this owner's exact
+    //    generated name. Never adopt by trigger or by any other name.
+    const existing = (owned ? scenarios.find((sc: any) => sc.id === owned) : undefined) || scenarios.find((sc: any) => sc.name === name);
+    if (existing) {
+      await this.recordOwnership(deviceId, existing.id, name);
+      return existing.id;
     }
 
     // Create a new proxy scenario on /m/user/scenarios (not /v4/)
@@ -388,8 +393,13 @@ export class QuasarClient {
       throw new Error(`Failed to create proxy scenario: ${JSON.stringify(res)}`);
     }
 
-    this.scenarioCache.set(deviceId, res.scenario_id);
+    await this.recordOwnership(deviceId, res.scenario_id, name);
     return res.scenario_id;
+  }
+
+  private async recordOwnership(deviceId: string, scenarioId: string, name: string): Promise<void> {
+    if (this.storage && this.userId) await this.storage.saveQuasarScenario(this.userId, deviceId, scenarioId, name);
+    this.scenarioCache.set(deviceId, scenarioId);
   }
 
   async sendTts(
@@ -400,7 +410,7 @@ export class QuasarClient {
     return this.runWithLock(deviceId, async () => {
       const scenarioId = await this.getOrCreateSpeakerScenario(deviceId);
       const trigger = encodeDeviceId(deviceId);
-      const name = this.userId ? `mctl-${this.userId.slice(0, 8)}-${deviceId}` : `mctl-${deviceId}`;
+      const name = this.proxyScenarioName(deviceId);
 
       const payload = buildTtsScenarioPayload(name, trigger, deviceId, text);
       const updateRes = await this.request(
@@ -435,7 +445,7 @@ export class QuasarClient {
     return this.runWithLock(deviceId, async () => {
       const scenarioId = await this.getOrCreateSpeakerScenario(deviceId);
       const trigger = encodeDeviceId(deviceId);
-      const name = this.userId ? `mctl-${this.userId.slice(0, 8)}-${deviceId}` : `mctl-${deviceId}`;
+      const name = this.proxyScenarioName(deviceId);
 
       const payload = buildCommandScenarioPayload(name, trigger, deviceId, command);
       const updateRes = await this.request(
@@ -476,27 +486,32 @@ export class QuasarClient {
     }
   }
 
+  /**
+   * Deletes every proxy scenario this owner created: those recorded in storage
+   * plus older ones carrying the owner's generated name prefix. Throws when the
+   * scenario list cannot be read, so a failure is never reported as "none".
+   */
   async cleanupAllProxyScenarios(): Promise<number> {
     const prefix = this.userId ? `mctl-${this.userId.slice(0, 8)}-` : "mctl-";
-    try {
-      const scenarios = await this.getScenarios();
-      let deleted = 0;
-      for (const sc of scenarios) {
-        if (sc.name && sc.name.startsWith(prefix)) {
-          try {
-            await this.request(`https://iot.quasar.yandex.ru/m/v4/user/scenarios/${encodeURIComponent(sc.id)}`, {
-              method: "DELETE",
-            });
-            deleted++;
-          } catch {
-            // ignore individual delete failures
-          }
-        }
+    const recorded = this.storage && this.userId ? await this.storage.listQuasarScenarios(this.userId) : [];
+    const recordedIds = new Set(recorded.map((r) => r.scenarioId));
+    const scenarios = await this.getScenarios();
+    let deleted = 0;
+    let failed = 0;
+    for (const sc of scenarios) {
+      if (!recordedIds.has(sc.id) && !(sc.name && sc.name.startsWith(prefix))) continue;
+      try {
+        await this.request(`https://iot.quasar.yandex.ru/m/v4/user/scenarios/${encodeURIComponent(sc.id)}`, {
+          method: "DELETE",
+        });
+        deleted++;
+      } catch {
+        failed++;
       }
-      this.scenarioCache.clear();
-      return deleted;
-    } catch {
-      return 0;
     }
+    this.scenarioCache.clear();
+    if (failed) throw new Error(`Could not delete ${failed} of ${deleted + failed} proxy scenarios`);
+    if (this.storage && this.userId) await this.storage.deleteQuasarScenarios(this.userId);
+    return deleted;
   }
 }

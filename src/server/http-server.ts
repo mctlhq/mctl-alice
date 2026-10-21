@@ -1375,17 +1375,36 @@ export function createHttpServer(
     }
 
     // "/account/delete-all" is what account pages rendered before 2.2.3 post to.
+    // Deletes the proxy scenarios this user created in their Yandex account.
+    // Returns false when that could not be done, so the caller can say so.
+    const removeProxyScenarios = async (userId: string): Promise<boolean> => {
+      let cookie: string | undefined;
+      try { cookie = (await oauthStorage.getUserCredentials(userId))?.quasarCookie; }
+      catch (error) { if (!(error instanceof CredentialDecryptionError)) throw error; }
+      if (!cookie) return (await oauthStorage.listQuasarScenarios(userId)).length === 0;
+      try {
+        await new QuasarClient({ credentialsMode: authRequired ? "hosted" : "local", cookie, userId, storage: oauthStorage, useKeychain: false, persistEnv: false }).cleanupAllProxyScenarios();
+        return true;
+      } catch (error) {
+        if (error instanceof StorageUnavailableError) throw error;
+        console.warn(`[Account] Could not remove proxy scenarios for ${userId}:`, (error as Error).message);
+        return false;
+      }
+    };
+
     if ((url.pathname === "/account/delete" || url.pathname === "/account/delete-all") && req.method === "POST") {
       setSecurityHeaders(res);
       const user = await getSessionUser(req, oauthStorage);
+      let scenariosLeft = false;
       if (user) {
+        scenariosLeft = !(await removeProxyScenarios(user.id));
         await telemetryStorage.forUser(user.id).deleteOwnerSamples();
         await oauthStorage.deleteUser(user.id);
         await closeSessions(user.id);
       }
       res.writeHead(302, {
         "Set-Cookie": clearSessionCookie,
-        Location: "/?deleted=true",
+        Location: scenariosLeft ? "/?deleted=true&scenarios_left=true" : "/?deleted=true",
       });
       res.end();
       return;
@@ -1403,8 +1422,12 @@ export function createHttpServer(
     if (url.pathname === "/account/disconnect-quasar" && req.method === "POST") {
       setSecurityHeaders(res);
       const user = await getSessionUser(req, oauthStorage);
+      let scenariosLeft = false;
       if (user) {
-        const creds = await oauthStorage.getUserCredentials(user.id);
+        scenariosLeft = !(await removeProxyScenarios(user.id));
+        let creds = null;
+        try { creds = await oauthStorage.getUserCredentials(user.id); }
+        catch (error) { if (!(error instanceof CredentialDecryptionError)) throw error; }
         if (creds) {
           await oauthStorage.saveUserCredentials(user.id, {
             ...creds,
@@ -1412,9 +1435,11 @@ export function createHttpServer(
             quasarUpdatedAt: undefined,
           });
         }
-        await oauthStorage.deleteQuasarScenarios(user.id);
+        // On failure keep the recorded ids, so a later reconnect can still
+        // find and remove the scenarios that were left behind.
+        if (!scenariosLeft) await oauthStorage.deleteQuasarScenarios(user.id);
       }
-      res.writeHead(302, { Location: "/account?quasar_disconnected=true" });
+      res.writeHead(302, { Location: scenariosLeft ? "/account?quasar_disconnected=true&scenarios_left=true" : "/account?quasar_disconnected=true" });
       res.end();
       return;
     }

@@ -1,4 +1,4 @@
-import { IStorage } from "../storage/storage-interface.js";
+import { IStorage, StorageUnavailableError } from "../storage/storage-interface.js";
 import QRCode from "qrcode";
 
 export interface QrAuthSession {
@@ -247,6 +247,7 @@ export async function checkQrAuthStatus(sessionId: string, storage?: IStorage): 
     if (dataStatus.state !== "otp_auth_finished") {
       // Update accumulated cookies in session
       session.cookies = jar.toString();
+      if (storage) await storage.saveBrowserTransaction(`qr-state:${sessionId}`, JSON.stringify(session), session.createdAt + SESSION_TTL_MS);
       return { status: "waiting" };
     }
 
@@ -289,6 +290,7 @@ export async function checkQrAuthStatus(sessionId: string, storage?: IStorage): 
       cookie: fullCookies,
     };
   } catch (err: any) {
+    if (err instanceof StorageUnavailableError) throw err;
     return {
       status: "error",
       message: err.message,

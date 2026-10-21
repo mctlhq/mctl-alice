@@ -476,3 +476,5 @@ Additional review dispositions: consent attribute values are escaped and danglin
 Verification: all 218 tests passed on Node 22, including the disposable PostgreSQL 17 suite; typecheck and production build passed.
 
 The candidate deployment remains healthy while these follow-ups go through tests and a review of the new PR head; final `2.2.2` tagging is still pending.
+
+Second review confirmed all three P2 fixes and found one QR persistence regression: cookies accumulated during a waiting poll must be written back to shared storage. Fixed with a two-poll test checking the rotated cookie on the next request and unchanged session creation time. Storage failures during QR persistence remain 503. The remaining P3 recovery surfaces still fail closed; the documented recovery path is a fresh `/auth/login`, and additional recovery UI and empty-consent UX can be improved separately.

@@ -74,6 +74,15 @@ Pods from before 2.2.3 look secrets up by their raw value, so on a shared Postgr
 
 SQLite deployments run a single process, so they rehash on start without a flag.
 
+### Rotating the encryption key
+
+`ENCRYPTION_KEY` alone encrypts everything in the unversioned `v1` envelope. For rotation, configure named keys: `ENCRYPTION_KEYS` lists `id:key` pairs separated by commas (each key 32 bytes as 64 hex or 44 standard base64 characters, e.g. `openssl rand -base64 32`; no passphrases; ids of `[A-Za-z0-9_-]`), and `ENCRYPTION_KEY_ID` names the one new values are encrypted under, as `v2:<id>:iv:tag:ct`; without it, new values stay `v1`. Every listed key decrypts values written under its id; a value under an id that is not listed fails closed (HTTP 503), it is never treated as plaintext. An inconsistent configuration stops the server at startup.
+
+1. **Deploy this version first.** Releases before key ids treat a `v2` value as plaintext and would send ciphertext upstream as a token. Set `ENCRYPTION_KEY_ID` only once no older pod serves traffic, as a separate change after the version rollout, also with a single replica.
+2. **Add the new key.** List it next to the current one, e.g. `ENCRYPTION_KEYS=k2:<new>` while keeping `ENCRYPTION_KEY` for existing `v1` values (or `ENCRYPTION_KEYS=k1:<old>,k2:<new>` when rotating away from a named key). With more than one replica, first roll out the list without changing `ENCRYPTION_KEY_ID`, so every pod can read the new key before any pod writes with it; then set `ENCRYPTION_KEY_ID=k2`.
+3. **Re-encrypt.** Set `REENCRYPT_STORED_CREDENTIALS=true` and restart. Shortly after start, a background pass rewrites stored credentials that are not under the active key, one conditional update per value (a value changed by a request in the meantime is left alone, it already uses the active key), and logs how many were stale, rewritten and undecryptable. Without the flag the pass only reports. On PostgreSQL the server does not wait for the pass; on SQLite it runs during start. Either way a failed pass is logged, the server keeps serving, and the pass runs again on the next start.
+4. **Retire the old key.** Once a start reports `0` stale (or only values reported as undecryptable, which no configured key opens and which you decide to drop), unset `REENCRYPT_STORED_CREDENTIALS`, then wait at least 10 minutes (login, consent and QR transactions are encrypted too, are not counted, and live 10 minutes) and remove the old key (`ENCRYPTION_KEY` or its `ENCRYPTION_KEYS` entry). Keep a copy of it until the backups taken before step 3 have aged out: they still need it.
+
 ---
 
 ## License

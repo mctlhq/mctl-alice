@@ -17,6 +17,7 @@ import {
   QueryHistoryOptions,
   HistoryDataPoint,
 } from "./telemetry-storage.js";
+import { ENCRYPTED_COLUMNS, ROTATION_PAGE_SIZE, RotationCounts, RotationHooks, activeKeyId, logRotation, reencryptRequested, rotateRow, staleRowsParams, staleRowsQuery } from "./credential-rotation.js";
 import { encryptToken, decryptToken, decryptStoredToken, secretDigest, secretLookupKeys, storedSecret, SECRET_DIGEST_PREFIX } from "./crypto.js";
 
 export interface PostgresStorageOptions {
@@ -29,15 +30,22 @@ export interface PostgresStorageOptions {
    * enable it (REHASH_STORED_SECRETS=true) only once no such pod serves traffic.
    */
   rehashStoredSecrets?: boolean;
+  /**
+   * Rewrite stored credentials that are not under the active key id at
+   * startup (REENCRYPT_STORED_CREDENTIALS=true), so an old key can be retired.
+   */
+  reencryptStoredCredentials?: boolean;
 }
 
 export class PostgresStorage implements IStorage {
   private pool: pg.Pool;
   private rehashStoredSecrets: boolean;
+  private reencryptStoredCredentials: boolean;
   private initPromise: Promise<void> | null = null;
 
   constructor(options: PostgresStorageOptions = {}) {
     this.rehashStoredSecrets = options.rehashStoredSecrets ?? process.env.REHASH_STORED_SECRETS === "true";
+    this.reencryptStoredCredentials = options.reencryptStoredCredentials ?? reencryptRequested();
     if (options.pool) {
       this.pool = options.pool;
     } else {
@@ -54,6 +62,14 @@ export class PostgresStorage implements IStorage {
       console.error("❌ [PostgresStorage] Failed to initialize tables:", err);
       throw err;
     });
+    // Off the ready() path: serving does not wait for the scan, and a failed
+    // pass is logged and retried on the next start instead of failing storage.
+    this.initPromise.then(
+      () => this.rotateCredentials().catch((err) => {
+        console.error("❌ [PostgresStorage] Credential re-encryption pass failed:", err);
+      }),
+      () => { /* reported above; ready() keeps the rejection */ },
+    );
   }
 
   public async ready(): Promise<void> {
@@ -203,6 +219,39 @@ export class PostgresStorage implements IStorage {
     } finally {
       client.release();
     }
+  }
+
+  /**
+   * Reports, and on request rewrites, credentials not under the active key.
+   * Each update is conditional on the value read, so a concurrent write
+   * (always under the active key) is never overwritten.
+   */
+  public async rotateCredentials(rewrite = this.reencryptStoredCredentials, hooks: RotationHooks = {}): Promise<RotationCounts | null> {
+    const activeId = activeKeyId();
+    if (!activeId) return null;
+    await this.ready();
+    const counts: RotationCounts = { stale: 0, rewritten: 0, failed: 0 };
+    let complete = false;
+    try {
+      for (const spec of ENCRYPTED_COLUMNS) {
+        for (let after = "", more = true; more;) {
+          const { rows } = await this.pool.query(staleRowsQuery(spec, n => `$${n}`), staleRowsParams(activeId, after));
+          await hooks.afterScan?.(spec.table);
+          for (const row of rows) {
+            for (const [column, { from, to }] of rotateRow(row, spec.columns, activeId, rewrite, counts)) {
+              const result = await this.pool.query(`UPDATE ${spec.table} SET ${column} = $1 WHERE ${spec.key} = $2 AND ${column} = $3`, [to, row[spec.key], from]);
+              counts.rewritten += result.rowCount ?? 0;
+            }
+          }
+          more = rows.length === ROTATION_PAGE_SIZE;
+          if (more) after = String(rows[rows.length - 1][spec.key]);
+        }
+      }
+      complete = true;
+    } finally {
+      logRotation("PostgresStorage", counts, rewrite, complete);
+    }
+    return counts;
   }
 
   // --- Users & Credentials ---

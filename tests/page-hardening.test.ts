@@ -104,12 +104,18 @@ describe("CSP, CORS and HTML hardening", () => {
     const referenced = new Set<string>();
     for (const [page, { body }] of htmlPages) {
       expect(body, page).toContain(`<link rel="stylesheet" href="/assets/pages.css?v=${VERSION}">`);
-      expect(body, page).not.toMatch(/\?v=(?!\d+\.\d+\.\d+")/);
+      // Every suffix is the running version, not merely version-shaped.
+      for (const [, v] of body.matchAll(/\?v=([^"&]*)/g)) expect(v, page).toBe(VERSION);
       for (const [, src] of body.matchAll(/(?:href|src)="(\/assets\/[^"]+\.(?:css|js)(?:\?[^"]*)?)"/g)) referenced.add(src);
     }
     expect(referenced.size).toBeGreaterThan(3);
     // The cache-busting suffix follows the package version, never a literal.
-    expect(fs.readFileSync(path.resolve(__dirname, "../src/server/http-server.ts"), "utf8")).not.toMatch(/\?v=\d/);
+    const publicDir = path.resolve(__dirname, "../public");
+    const sources = ["../src/server/http-server.ts", ...fs.readdirSync(publicDir).filter(f => f.endsWith(".html")).map(f => `../public/${f}`)];
+    expect(sources.length).toBeGreaterThan(1);
+    for (const source of sources) {
+      expect(fs.readFileSync(path.resolve(__dirname, source), "utf8"), source).not.toMatch(/\?v=\d/);
+    }
     for (const asset of referenced) {
       const res = await fetch(base + asset);
       expect(res.status, asset).toBe(200);
@@ -158,6 +164,16 @@ describe("CSP, CORS and HTML hardening", () => {
     }
     expect(isLocalOrigin(undefined, "http://localhost")).toBe(true);
     expect(isLocalOrigin("https://alice.example", "https://alice.example")).toBe(true);
+  });
+
+  it("refuses cross-site credential writes on a server without auth", async () => {
+    for (const path of ["/auth/save-token", "/auth/save-cookie"]) {
+      // A text/plain form needs no preflight and parses as JSON on the server.
+      const crossSite = await fetch(base + path, { method: "POST", headers: { Origin: "https://evil.example", "Content-Type": "text/plain" }, body: '{"token":"attacker","x":"="}' });
+      expect(crossSite.status, path).toBe(403);
+      const local = await fetch(base + path, { method: "POST", headers: { Origin: "http://localhost", "Content-Type": "application/json" }, body: "{}" });
+      expect(local.status, path).not.toBe(403);
+    }
   });
 
   it("keeps CORS open to any origin on a hosted server", async () => {

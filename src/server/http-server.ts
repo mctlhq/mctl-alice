@@ -2,6 +2,9 @@ import { BrowserTransactions } from "../storage/browser-transactions.js";
 import { CredentialDecryptionError } from "../storage/storage-interface.js";
 import { getKeyring } from "../storage/crypto.js";
 import { VERSION } from "../version.js";
+import { isLocalOrigin } from "./origin.js";
+
+export { isLocalOrigin };
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
@@ -62,6 +65,11 @@ const STATIC_MIME_TYPES: Record<string, string> = {
   ".txt": "text/plain; charset=utf-8",
 };
 
+/** Static HTML names its asset suffix `?v=__VERSION__`, filled in at serve time. */
+function withAssetVersion(html: string): string {
+  return html.replaceAll("?v=__VERSION__", `?v=${VERSION}`);
+}
+
 function serveStaticFile(
   reqPath: string,
   res: http.ServerResponse,
@@ -95,7 +103,7 @@ function serveStaticFile(
     if (stats.isDirectory()) {
       const indexPath = path.join(filePath, "index.html");
       if (fs.existsSync(indexPath)) {
-        const content = fs.readFileSync(indexPath);
+        const content = withAssetVersion(fs.readFileSync(indexPath, "utf8"));
         res.writeHead(200, {
           "Content-Type": "text/html; charset=utf-8",
           "Cache-Control": "no-cache",
@@ -108,7 +116,7 @@ function serveStaticFile(
 
     const ext = path.extname(filePath).toLowerCase();
     const contentType = STATIC_MIME_TYPES[ext] || fallbackContentType;
-    const content = fs.readFileSync(filePath);
+    const content = ext === ".html" ? withAssetVersion(fs.readFileSync(filePath, "utf8")) : fs.readFileSync(filePath);
 
     res.writeHead(200, {
       "Content-Type": contentType,
@@ -304,20 +312,6 @@ export function isCorsPath(pathname: string): boolean {
     || pathname.startsWith("/.well-known/")
     || pathname.startsWith("/mcp/.well-known/")
     || pathname.startsWith("/api/");
-}
-
-/**
- * True for a request without an Origin (non-browser clients), from this
- * server's own origin, or from a loopback host such as a local MCP inspector.
- */
-export function isLocalOrigin(origin: string | undefined, baseUrl: string): boolean {
-  if (origin === undefined) return true;
-  try {
-    const { hostname, origin: normalized } = new URL(origin);
-    return normalized === new URL(baseUrl).origin || ["localhost", "127.0.0.1", "[::1]"].includes(hostname);
-  } catch {
-    return false;
-  }
 }
 
 const CORS_ALLOW_HEADERS = "Authorization, Content-Type, Accept, Last-Event-ID, Mcp-Session-Id, Mcp-Protocol-Version";
@@ -680,8 +674,12 @@ export function createHttpServer(
   const server = http.createServer(async (req, res) => {
     try {
     const url = new URL(req.url || "/", baseUrl);
-    if (authRequired && req.method === "POST" && (url.pathname.startsWith("/account/") || ["/oauth/authorize", "/auth/save-cookie", "/auth/save-token"].includes(url.pathname))) {
-      if (req.headers.origin !== new URL(baseUrl).origin) {
+    if (req.method === "POST" && (url.pathname.startsWith("/account/") || ["/oauth/authorize", "/auth/save-cookie", "/auth/save-token"].includes(url.pathname))) {
+      // State-changing forms. Hosted: exactly our origin. Self-hosted: these
+      // need no session and rewrite the stored Yandex credentials, so a
+      // cross-site text/plain form must not reach them either.
+      const allowed = authRequired ? req.headers.origin === new URL(baseUrl).origin : isLocalOrigin(req.headers.origin, baseUrl);
+      if (!allowed) {
         res.writeHead(403); res.end("Invalid origin"); return;
       }
     }

@@ -1,6 +1,7 @@
 import http from "node:http";
 import crypto from "node:crypto";
 import { YandexIoTClient } from "../client/yandex-api.js";
+import { isLocalOrigin } from "../server/origin.js";
 import { StationService } from "../services/station-service.js";
 import {
   OAuthTokenResponse,
@@ -230,6 +231,11 @@ export function startAuthServer(options: AuthServerOptions): Promise<{
       }
 
       if (url.pathname === "/save-token" && req.method === "POST") {
+        // Only this helper's own page may hand it a token: a cross-site
+        // text/plain form would otherwise store an attacker's account.
+        if (!isLocalOrigin(req.headers.origin, `http://localhost:${port}`)) {
+          res.writeHead(403); res.end("Invalid origin"); return;
+        }
         let body = "";
         req.on("data", (chunk) => (body += chunk));
         req.on("end", async () => {

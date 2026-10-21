@@ -56,6 +56,8 @@ export interface ITelemetryStorage {
   saveSamples(samples: TelemetrySample[]): Promise<void> | void;
   queryHistory(options: QueryHistoryOptions): Promise<TelemetryHistoryResult> | TelemetryHistoryResult;
   pruneOld(retentionDays?: number): Promise<number> | number;
+  /** Deletes every sample of the owner this view is bound to (see forUser). */
+  deleteOwnerSamples(): Promise<number> | number;
   getStats(): Promise<{ totalSamples: number; oldestTimestamp: number | null; newestTimestamp: number | null }> | { totalSamples: number; oldestTimestamp: number | null; newestTimestamp: number | null };
   close(): Promise<void> | void;
 }
@@ -319,6 +321,12 @@ export class TelemetryStorage implements ITelemetryStorage {
     const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
     const stmt = this.db.prepare("DELETE FROM telemetry_samples WHERE user_id IS ? AND timestamp < ?");
     const info = stmt.run(this.userId, cutoff);
+    return Number(info.changes);
+  }
+
+  deleteOwnerSamples(): number {
+    if (!this.userId) throw new Error("deleteOwnerSamples requires an owner-bound view");
+    const info = this.db.prepare("DELETE FROM telemetry_samples WHERE user_id = ?").run(this.userId);
     return Number(info.changes);
   }
 

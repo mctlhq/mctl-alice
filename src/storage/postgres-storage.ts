@@ -305,7 +305,23 @@ export class PostgresStorage implements IStorage {
 
   async deleteUser(userId: string): Promise<void> {
     await this.ready();
-    await this.pool.query("DELETE FROM users WHERE id = $1", [userId]);
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      // Only user_credentials references users(id); every other owner-keyed
+      // table must be cleared explicitly, otherwise tokens and sessions survive
+      // and reattach when the same Yandex account (deterministic usr_<uid>) returns.
+      for (const table of ["user_credentials", "quasar_proxy_scenarios", "web_sessions", "oauth_tokens", "oauth_codes", "oauth_pending"]) {
+        await client.query(`DELETE FROM ${table} WHERE user_id = $1`, [userId]);
+      }
+      await client.query("DELETE FROM users WHERE id = $1", [userId]);
+      await client.query("COMMIT");
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
   }
 
   // --- Web Sessions ---
@@ -711,11 +727,11 @@ export class PostgresStorage implements IStorage {
 
   async revokeUserGrant(userId: string, clientId: string): Promise<boolean> {
     await this.ready();
-    await this.pool.query(
+    const result = await this.pool.query(
       "DELETE FROM oauth_tokens WHERE user_id = $1 AND client_id = $2",
       [userId, clientId]
     );
-    return true;
+    return (result.rowCount ?? 0) > 0;
   }
 
   async pruneExpired(): Promise<void> {
@@ -987,6 +1003,13 @@ export class PostgresTelemetryStorage implements ITelemetryStorage {
     await this.ready();
     const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
     const res = await this.pool.query("DELETE FROM telemetry_samples WHERE timestamp < $1 AND user_id IS NOT DISTINCT FROM $2::text", [cutoff, this.userId]);
+    return res.rowCount ?? 0;
+  }
+
+  async deleteOwnerSamples(): Promise<number> {
+    if (!this.userId) throw new Error("deleteOwnerSamples requires an owner-bound view");
+    await this.ready();
+    const res = await this.pool.query("DELETE FROM telemetry_samples WHERE user_id = $1", [this.userId]);
     return res.rowCount ?? 0;
   }
 

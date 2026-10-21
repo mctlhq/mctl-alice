@@ -644,7 +644,9 @@ export class OAuthController {
         await this.storage.saveUserCredentials(existing.userId!, { ...latest, yandexAccessToken, yandexRefreshToken, yandexExpiresAt });
       }
       // Rotate tokens
-      if (!await this.storage.revokeToken(existing.accessToken)) throw new Error("Grant already revoked or rotated");
+      // Revoke by the presented refresh token: storage only knows the access
+      // token as a digest, so existing.accessToken is an opaque handle here.
+      if (!await this.storage.revokeToken(body.refresh_token)) throw new Error("Grant already revoked or rotated");
       const newAccessToken = `mctl_at_${crypto.randomUUID().replace(/-/g, "")}`;
       const newRefreshToken = `mctl_rt_${crypto.randomUUID().replace(/-/g, "")}`;
       const expiresIn = 2592000;

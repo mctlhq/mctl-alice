@@ -112,6 +112,9 @@ export interface IStorage {
 
   // Tokens
   saveToken(token: OAuthTokenRecord): Promise<void> | void;
+  // Secrets are stored as digests: both getters return the presented secret in
+  // clear text and the other one only as an opaque stored handle, so never pass
+  // the other field back as a secret (e.g. to revokeToken).
   getToken(accessToken: string): Promise<OAuthTokenRecord | null> | (OAuthTokenRecord | null);
   getTokenByRefreshToken(refreshToken: string): Promise<OAuthTokenRecord | null> | (OAuthTokenRecord | null);
   revokeToken(token: string): Promise<boolean> | boolean;

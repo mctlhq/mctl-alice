@@ -293,7 +293,9 @@ scenario was created or modified during the review.
 - Encrypt upstream OAuth/refresh tokens and Quasar cookies using authenticated
   encryption (AES-256-GCM, random nonce, key ID, owner-bound associated data),
   with keys supplied separately through the platform secret store. Store only
-  hashes of opaque MCP tokens and browser session tokens. Use a non-root
+  hashes of opaque MCP tokens and browser session tokens (done for 2.2.3; on
+  PostgreSQL existing rows are rewritten only after `REHASH_STORED_SECRETS=true`
+  is set once no older pod remains, see the README). Use a non-root
   container, restrictive data permissions and a read-only application layer.
 - Do not assign old unowned rows to a guessed user. Invalidate legacy grants,
   require reconnection, and remove unowned credentials/history under an

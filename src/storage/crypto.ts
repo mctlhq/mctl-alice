@@ -105,3 +105,33 @@ export function decryptToken(envelope: string, userId: string, customKey?: Buffe
 export function hashToken(token: string): string {
   return crypto.createHash("sha256").update(token).digest("hex");
 }
+
+/** Prefix that marks a stored value as a digest rather than a bearer secret. */
+export const SECRET_DIGEST_PREFIX = "sha256:";
+
+/**
+ * Stored form of a bearer secret (MCP access/refresh token, auth code, session
+ * ID, browser transaction key): a database dump must not yield usable secrets.
+ */
+export function secretDigest(secret: string): string {
+  return SECRET_DIGEST_PREFIX + hashToken(secret);
+}
+
+/**
+ * Stored form for a token record field that may already be a stored handle
+ * (a record read back and saved again must not be hashed twice).
+ */
+export function storedSecret(secretOrHandle: string): string {
+  return secretOrHandle.startsWith(SECRET_DIGEST_PREFIX) ? secretOrHandle : secretDigest(secretOrHandle);
+}
+
+/**
+ * Keys to look a presented secret up by: its digest, plus the raw value for
+ * rows written before hashing (e.g. by an older pod during a rollout). A
+ * presented value that already looks like a digest never matches raw, so a
+ * leaked digest cannot be replayed as a credential.
+ */
+export function secretLookupKeys(secret: string): [string, string] {
+  const digest = secretDigest(secret);
+  return [digest, secret.startsWith(SECRET_DIGEST_PREFIX) ? digest : secret];
+}

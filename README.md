@@ -58,9 +58,21 @@ docker run -d \
 ## Security Architecture & Threat Model
 
 - **Multi-Tenant Cryptographic Isolation**: All upstream access tokens, refresh tokens, and Quasar session cookies are encrypted at rest using **AES-256-GCM**. The `userId` is passed as Additional Authenticated Data (AAD), cryptographically binding ciphertext to the user's record.
+- **Hashed Bearer Secrets**: MCP access and refresh tokens, authorization codes, browser session ids and login-transaction keys are stored only as SHA-256 digests. Rows written by versions before 2.2.3 are rewritten on PostgreSQL in a second step, see [Upgrading to hashed secrets](#upgrading-to-hashed-secrets).
 - **Granular Scopes**: AI client grants are scoped to `iot:view`, `iot:control`, and `quasar`.
 - **Operator Trust Boundary**: Because `mctl-alice` acts as an MCP proxy to Yandex Cloud, upstream tokens must be held in process memory at the moment of request dispatch. We transparently disclose that the infrastructure operator has access to the runtime environment, and envelope encryption protects data-at-rest.
 - **Data Erasure**: Users can revoke AI client access and permanently delete all stored data with a single click at `/account`.
+
+
+### Upgrading to hashed secrets
+
+Pods from before 2.2.3 look secrets up by their raw value, so on a shared PostgreSQL database the rewrite is a separate, operator-triggered step:
+
+1. Deploy the new version without `REHASH_STORED_SECRETS`. New secrets are stored hashed, old rows keep working through a raw-value fallback, and each start logs how many stored secrets are still in clear text.
+2. Once no pre-2.2.3 pod serves traffic, set `REHASH_STORED_SECRETS=true`. The next start rewrites the remaining rows in one transaction and logs the count.
+3. Unset the variable again once the log reports no clear-text rows; leaving it set only repeats a no-op scan on every start.
+
+SQLite deployments run a single process, so they rehash on start without a flag.
 
 ---
 

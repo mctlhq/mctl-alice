@@ -66,27 +66,18 @@ Candidate state:
   `sha256:7ff6767dca379adf02f8daaa1c182cef44869af19c08ed011a1fc15a629d8f26`.
   An exported Docker archive is retained in the sibling local
   `mctl-alice-release-artifacts/` directory.
-- GitOps candidate prepared and Helm-rendered in a separate worktree, commit
-  `2190f4269` on `chore/alice-candidate-rollout`. It is not pushed or deployed.
-- Registry publication is blocked: both available cluster pull credentials
-  fail push with insufficient scopes; the normal local Docker login is
-  unauthorized. No candidate manifest has been published. A registry login
-  with push rights is required; do not publish application source to obtain it.
-- Follow-up inspection of the standard build workflow confirms that this
-  package uses a job-scoped `GITHUB_TOKEN` with package write access. That
-  credential is available only inside CI; the workflow checks out a remote
-  source ref and cannot build the local-only remediation commit as configured.
-  No reusable registry writer was identified in the documented platform
-  secret mappings. The former broad operator token was explicitly replaced
-  with a repository-read-only credential and is not a publication path.
-- The designated real test connection is awaiting owner identification.
-  Production remains on `2.2.1`; no production configuration or data was changed.
+- Candidate published to the verified private GHCR package on 2026-10-21.
+  Registry digest matches the local manifest above. The operator authorized
+  `write:packages` for the active `mashkovd` GitHub CLI account.
+- GitOps PR https://github.com/mctlhq/mctl-gitops/pull/2055 adds the candidate,
+  `maxUnavailable=0`, `maxSurge=1`, and readiness `/readyz`. Helm rendering
+  passed; CI/review is in progress. Application source remains local.
+- The operator authorized the `mashkoffdmitry` account for read-only production
+  verification. No device-control commands are authorized for this smoke test.
+- Production remains on `2.2.1` pending the GitOps merge and rollout.
 
 Outstanding release gates:
 
-- Publish the verified candidate. GitHub Packages API confirms
-  `mctlhq/mctl-alice` visibility is private (2026-10-21).
-- Identify the dedicated test connection for the production read-only smoke test.
 - Deploy through GitOps, check readiness, random-token denial, the test account,
   and old-pod termination. Observe sanitized auth/upstream outcomes.
 - Publish sources only after remediation; complete public CI/review and release.

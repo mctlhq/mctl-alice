@@ -231,21 +231,26 @@ export class PostgresStorage implements IStorage {
     if (!activeId) return null;
     await this.ready();
     const counts: RotationCounts = { stale: 0, rewritten: 0, failed: 0 };
-    for (const spec of ENCRYPTED_COLUMNS) {
-      for (let after = "", more = true; more;) {
-        const { rows } = await this.pool.query(staleRowsQuery(spec, n => `$${n}`), staleRowsParams(activeId, after));
-        await hooks.afterScan?.(spec.table);
-        for (const row of rows) {
-          for (const [column, { from, to }] of rotateRow(row, spec.columns, activeId, rewrite, counts)) {
-            const result = await this.pool.query(`UPDATE ${spec.table} SET ${column} = $1 WHERE ${spec.key} = $2 AND ${column} = $3`, [to, row[spec.key], from]);
-            counts.rewritten += result.rowCount ?? 0;
+    let complete = false;
+    try {
+      for (const spec of ENCRYPTED_COLUMNS) {
+        for (let after = "", more = true; more;) {
+          const { rows } = await this.pool.query(staleRowsQuery(spec, n => `$${n}`), staleRowsParams(activeId, after));
+          await hooks.afterScan?.(spec.table);
+          for (const row of rows) {
+            for (const [column, { from, to }] of rotateRow(row, spec.columns, activeId, rewrite, counts)) {
+              const result = await this.pool.query(`UPDATE ${spec.table} SET ${column} = $1 WHERE ${spec.key} = $2 AND ${column} = $3`, [to, row[spec.key], from]);
+              counts.rewritten += result.rowCount ?? 0;
+            }
           }
+          more = rows.length === ROTATION_PAGE_SIZE;
+          if (more) after = String(rows[rows.length - 1][spec.key]);
         }
-        more = rows.length === ROTATION_PAGE_SIZE;
-        if (more) after = String(rows[rows.length - 1][spec.key]);
       }
+      complete = true;
+    } finally {
+      logRotation("PostgresStorage", counts, rewrite, complete);
     }
-    logRotation("PostgresStorage", counts, rewrite);
     return counts;
   }
 

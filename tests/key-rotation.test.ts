@@ -65,7 +65,7 @@ describe("encryption keyring", () => {
   it("refuses to open a v2 envelope with a custom key", () => {
     useKeys(`a:${KEY_A}`, "a");
     const underA = encryptToken("secret", "alice");
-    expect(() => decryptToken(underA, "alice", KEY_A)).toThrow();
+    expect(() => decryptToken(underA, "alice", Buffer.from(KEY_A, "hex"))).toThrow(CredentialDecryptionError);
   });
 
   it("refuses to start the HTTP server with an inconsistent keyring", () => {
@@ -170,6 +170,19 @@ describe("credential re-encryption", () => {
       new OAuthStorage(":memory:").close();
       expect(logged).toHaveBeenCalledWith(expect.stringContaining("re-encryption pass failed"), expect.any(Error));
     } finally { failing.mockRestore(); logged.mockRestore(); }
+  });
+
+  it("logs the progress of a pass that stops part-way", async () => {
+    const storage = new OAuthStorage(":memory:");
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const now = Date.now();
+      await storage.saveUser({ id: "alice", yandexUid: "alice", createdAt: now, updatedAt: now });
+      await storage.saveUserCredentials("alice", { yandexAccessToken: "upstream", quasarCookie: "Session_id=alice" });
+      useKeys(`b:${KEY_B}`, "b");
+      expect(() => storage.rotateCredentials(true, { afterScan: table => { if (table === "oauth_tokens") throw new Error("connection lost"); } })).toThrow("connection lost");
+      expect(logged).toHaveBeenCalledWith(expect.stringMatching(/stopped part-way after 2 stale and 2 re-encrypted/));
+    } finally { logged.mockRestore(); storage.close(); }
   });
 
   it("SQLite, more rows than a page", async () => {

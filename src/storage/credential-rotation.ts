@@ -5,7 +5,8 @@ import { CredentialDecryptionError } from "./storage-interface.js";
  * Columns holding encryption envelopes, with the row key and the owner whose
  * id is the AAD. Browser transactions are left out: their AAD is the raw
  * transaction key, which is stored only as a digest, and they expire in
- * minutes anyway.
+ * minutes anyway. Each `key` must be a NOT NULL single-column text primary
+ * key: the rotation pass pages on it with `key > last ORDER BY key`.
  */
 export const ENCRYPTED_COLUMNS = [
   { table: "user_credentials", key: "user_id", columns: ["encrypted_yandex_access_token", "encrypted_yandex_refresh_token", "encrypted_quasar_cookie"] },
@@ -91,8 +92,13 @@ export interface RotationHooks {
   afterScan?: (table: string) => void | Promise<void>;
 }
 
-export function logRotation(backend: string, counts: RotationCounts, rewrite: boolean): void {
+export function logRotation(backend: string, counts: RotationCounts, rewrite: boolean, complete = true): void {
   const tag = `[${backend}]`;
+  if (!complete) {
+    // A pass that stopped part-way still reports what it already did.
+    console.error(`${tag} Re-encryption pass stopped part-way after ${counts.stale} stale and ${counts.rewritten} re-encrypted stored credentials; it resumes on the next start.`);
+    return;
+  }
   if (counts.failed > 0) console.error(`${tag} ${counts.failed} stored credentials cannot be decrypted with any configured key; they are left unchanged and still count as stale.`);
   if (rewrite) {
     console.log(`${tag} Re-encrypted ${counts.rewritten} of ${counts.stale} stored credentials under the active key; unset REENCRYPT_STORED_CREDENTIALS once the stale count equals the undecryptable count (normally 0).`);

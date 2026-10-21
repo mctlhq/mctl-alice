@@ -92,23 +92,28 @@ export class OAuthStorage implements IStorage {
     const activeId = activeKeyId();
     if (!activeId) return null;
     const counts: RotationCounts = { stale: 0, rewritten: 0, failed: 0 };
-    for (const spec of ENCRYPTED_COLUMNS) {
-      const select = this.db.prepare(staleRowsQuery(spec, n => `?${n}`));
-      const updates = new Map<string, StatementSync>(spec.columns.map(column =>
-        [column, this.db.prepare(`UPDATE ${spec.table} SET ${column} = ? WHERE ${spec.key} = ? AND ${column} = ?`)] as const));
-      for (let after = "", more = true; more;) {
-        const rows = select.all(...staleRowsParams(activeId, after)) as Record<string, unknown>[];
-        void hooks.afterScan?.(spec.table);
-        for (const row of rows) {
-          for (const [column, { from, to }] of rotateRow(row, spec.columns, activeId, rewrite, counts)) {
-            counts.rewritten += Number(updates.get(column)!.run(to, row[spec.key] as string, from).changes);
+    let complete = false;
+    try {
+      for (const spec of ENCRYPTED_COLUMNS) {
+        const select = this.db.prepare(staleRowsQuery(spec, n => `?${n}`));
+        const updates = new Map<string, StatementSync>(spec.columns.map(column =>
+          [column, this.db.prepare(`UPDATE ${spec.table} SET ${column} = ? WHERE ${spec.key} = ? AND ${column} = ?`)] as const));
+        for (let after = "", more = true; more;) {
+          const rows = select.all(...staleRowsParams(activeId, after)) as Record<string, unknown>[];
+          void hooks.afterScan?.(spec.table);
+          for (const row of rows) {
+            for (const [column, { from, to }] of rotateRow(row, spec.columns, activeId, rewrite, counts)) {
+              counts.rewritten += Number(updates.get(column)!.run(to, row[spec.key] as string, from).changes);
+            }
           }
+          more = rows.length === ROTATION_PAGE_SIZE;
+          if (more) after = String(rows[rows.length - 1][spec.key]);
         }
-        more = rows.length === ROTATION_PAGE_SIZE;
-        if (more) after = String(rows[rows.length - 1][spec.key]);
       }
+      complete = true;
+    } finally {
+      logRotation("OAuthStorage", counts, rewrite, complete);
     }
-    logRotation("OAuthStorage", counts, rewrite);
     return counts;
   }
 

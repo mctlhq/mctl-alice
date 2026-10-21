@@ -222,6 +222,53 @@ describe("hosted access boundary", () => {
     expect(revoke.status).toBe(302); expect((await reader.read()).done).toBe(true);
     expect(await storage.getTokenByRefreshToken("rt-alice")).toBeNull();
   });
+  it.each(["/account/delete", "/account/delete-all"])("%s erases every owner row and history and keeps other users", async path => {
+    await start();
+    await storage.saveWebSession("browser-a", "alice", Date.now() + 60000);
+    await storage.saveWebSession("browser-a2", "alice", Date.now() + 60000);
+    await storage.saveQuasarScenario("alice", "speaker", "scn-a");
+    await storage.saveAuthCode({ code: "code-a", clientId: "client", redirectUri: "http://localhost/cb", userId: "alice", yandexAccessToken: "x", scope: "iot:view", createdAt: now, expiresAt: now + 60000 });
+    for (const id of ["alice", "bob"]) await telemetry.forUser(id).saveSamples([{ deviceId: "d", deviceName: "d", metric: "power", value: 1, timestamp: now }]);
+    const response = await realFetch(base + path, { method: "POST", headers: { Cookie: "mctl_session=browser-a", Origin: "http://localhost" }, redirect: "manual" });
+    expect(response.status).toBe(302); expect(response.headers.get("location")).toBe("/?deleted=true");
+    expect(response.headers.get("set-cookie")).toMatch(/^mctl_session=;.*Max-Age=0/);
+    expect(await storage.getUser("alice")).toBeNull();
+    expect(await storage.getUserCredentials("alice")).toBeNull();
+    expect(await storage.getToken("mcp-alice")).toBeNull();
+    expect(await storage.getWebSession("browser-a2")).toBeNull();
+    expect(await storage.listQuasarScenarios("alice")).toEqual([]);
+    expect(await storage.consumeAuthCode("code-a")).toBeNull();
+    expect((await telemetry.forUser("alice").getStats()).totalSamples).toBe(0);
+    expect((await telemetry.forUser("bob").getStats()).totalSamples).toBe(1);
+    expect(await storage.getToken("mcp-bob")).not.toBeNull();
+  });
+  it("account deletion without a session deletes nothing", async () => {
+    await start();
+    const response = await realFetch(base + "/account/delete", { method: "POST", headers: { Origin: "http://localhost" }, redirect: "manual" });
+    expect(response.status).toBe(302);
+    expect(await storage.getUser("alice")).not.toBeNull(); expect(await storage.getUser("bob")).not.toBeNull();
+  });
+  it("logout ends only the browser session and keeps MCP grants", async () => {
+    await start();
+    await storage.saveWebSession("browser-a", "alice", Date.now() + 60000);
+    await storage.saveWebSession("browser-a2", "alice", Date.now() + 60000);
+    const response = await realFetch(base + "/account/logout", { method: "POST", headers: { Cookie: "mctl_session=browser-a", Origin: "http://localhost" }, redirect: "manual" });
+    expect(response.status).toBe(302); expect(response.headers.get("location")).toBe("/");
+    expect(response.headers.get("set-cookie")).toMatch(/^mctl_session=;.*Max-Age=0/);
+    expect(await storage.getWebSession("browser-a")).toBeNull();
+    expect(await storage.getWebSession("browser-a2")).not.toBeNull();
+    expect(await storage.getToken("mcp-alice")).not.toBeNull();
+  });
+  it("account forms post only to routes that exist", async () => {
+    await start(); await storage.saveWebSession("browser-a", "alice", Date.now() + 60000);
+    const html = await (await realFetch(base + "/account", { headers: { Cookie: "mctl_session=browser-a" } })).text();
+    const actions = [...html.matchAll(/<form[^>]*action="([^"]+)"/g)].map(m => m[1]);
+    expect(actions).toEqual(expect.arrayContaining(["/account/logout", "/account/delete"]));
+    for (const action of actions) {
+      const probe = await realFetch(base + action, { method: "POST", headers: { Origin: "http://localhost" }, redirect: "manual" });
+      expect(probe.status, action).not.toBe(404);
+    }
+  });
   it("readiness fails when storage cannot be read", async () => {
     await start(); expect((await realFetch(base + "/readyz")).status).toBe(200);
     vi.spyOn(db, "getUser").mockImplementation(() => { throw new Error("offline"); });

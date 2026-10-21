@@ -468,6 +468,7 @@ export function createHttpServer(
   const browserId = (req: http.IncomingMessage) => parseCookies(req).mctl_session || "";
   const sseOwners = new Map<string, { userId?: string; clientId?: string; fingerprint: string }>();
   const fingerprint = (req: http.IncomingMessage) => createHash("sha256").update((req.headers.authorization || "").replace(/^Bearer +/i, "")).digest("hex");
+  const clearSessionCookie = `mctl_session=; Path=/; HttpOnly; SameSite=Lax; ${authRequired ? "Secure; " : ""}Max-Age=0`;
   async function closeSessions(userId: string, clientId?: string) {
     for (const [id, owner] of sseOwners) {
       if (owner.userId === userId && (!clientId || owner.clientId === clientId)) {
@@ -1356,17 +1357,28 @@ export function createHttpServer(
       return;
     }
 
-    if (url.pathname === "/account/delete" && req.method === "POST") {
+    // "/account/delete-all" is what account pages rendered before 2.2.3 post to.
+    if ((url.pathname === "/account/delete" || url.pathname === "/account/delete-all") && req.method === "POST") {
       setSecurityHeaders(res);
       const user = await getSessionUser(req, oauthStorage);
       if (user) {
+        await telemetryStorage.forUser(user.id).deleteOwnerSamples();
         await oauthStorage.deleteUser(user.id);
         await closeSessions(user.id);
       }
       res.writeHead(302, {
-        "Set-Cookie": "mctl_session=; Path=/; HttpOnly; Max-Age=0",
+        "Set-Cookie": clearSessionCookie,
         Location: "/?deleted=true",
       });
+      res.end();
+      return;
+    }
+
+    if (url.pathname === "/account/logout" && req.method === "POST") {
+      setSecurityHeaders(res);
+      const sessionId = parseCookies(req)["mctl_session"];
+      if (sessionId) await oauthStorage.deleteWebSession(sessionId);
+      res.writeHead(302, { "Set-Cookie": clearSessionCookie, Location: "/" });
       res.end();
       return;
     }

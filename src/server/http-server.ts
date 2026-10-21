@@ -1,5 +1,6 @@
 import { BrowserTransactions } from "../storage/browser-transactions.js";
 import { CredentialDecryptionError } from "../storage/storage-interface.js";
+import { getKeyring } from "../storage/crypto.js";
 import { VERSION } from "../version.js";
 import http from "node:http";
 import fs from "node:fs";
@@ -500,6 +501,9 @@ export function createHttpServer(
     process.env.YANDEX_CALLBACK_URL ||
     redirectUri;
 
+  // An inconsistent ENCRYPTION_KEYS / ENCRYPTION_KEY_ID stops startup here
+  // rather than on the first credential write.
+  getKeyring();
   const oauthStorage = guardedStorage(options.oauthStorage || createStorage());
   const telemetryStorage = options.storage || createTelemetryStorage();
   const oauthController = new OAuthController({

@@ -2,6 +2,7 @@ import { CredentialDecryptionError } from "./storage-interface.js";
 import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync, StatementSync } from "node:sqlite";
+import { ENCRYPTED_COLUMNS, RotationCounts, activeKeyId, logRotation, reencryptRequested, rotateRow } from "./credential-rotation.js";
 import { encryptToken, decryptToken, decryptStoredToken, hashToken, secretDigest, secretLookupKeys, storedSecret, SECRET_DIGEST_PREFIX } from "./crypto.js";
 
 import {
@@ -78,6 +79,25 @@ export class OAuthStorage implements IStorage {
     this.db = new DatabaseSync(resolvedPath);
     this.initTables();
     this.prepareStatements();
+    this.rotateCredentials();
+  }
+
+  /** SQLite counterpart of PostgresStorage.rotateCredentials. */
+  public rotateCredentials(rewrite = reencryptRequested()): RotationCounts | null {
+    const activeId = activeKeyId();
+    if (!activeId) return null;
+    const counts: RotationCounts = { stale: 0, rewritten: 0, failed: 0 };
+    for (const { table, key, columns } of ENCRYPTED_COLUMNS) {
+      const rows = this.db.prepare(`SELECT ${key}, user_id, ${columns.join(", ")} FROM ${table}`).all() as Record<string, unknown>[];
+      for (const row of rows) {
+        for (const [column, { from, to }] of rotateRow(row, columns, activeId, rewrite, counts)) {
+          const result = this.db.prepare(`UPDATE ${table} SET ${column} = ? WHERE ${key} = ? AND ${column} = ?`).run(to, row[key] as string, from);
+          counts.rewritten += Number(result.changes);
+        }
+      }
+    }
+    logRotation("OAuthStorage", counts, rewrite);
+    return counts;
   }
 
   private initTables() {

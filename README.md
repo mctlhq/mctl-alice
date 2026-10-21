@@ -74,6 +74,16 @@ Pods from before 2.2.3 look secrets up by their raw value, so on a shared Postgr
 
 SQLite deployments run a single process, so they rehash on start without a flag.
 
+### Rotating the encryption key
+
+`ENCRYPTION_KEY` alone encrypts everything in the unversioned `v1` envelope. For rotation, configure named keys: `ENCRYPTION_KEYS` lists `id:key` pairs separated by commas (each key 32 bytes as 64 hex or 44 base64 characters, ids of `[A-Za-z0-9_-]`), and `ENCRYPTION_KEY_ID` names the one new values are encrypted under, as `v2:<id>:iv:tag:ct`; without it, new values stay `v1`. Every listed key decrypts values written under its id; a value under an id that is not listed fails closed (HTTP 503), it is never treated as plaintext. An inconsistent configuration stops the server at startup.
+
+1. **Add the new key.** List it next to the current one, e.g. `ENCRYPTION_KEYS=k2:<new>` while keeping `ENCRYPTION_KEY` for existing `v1` values (or `ENCRYPTION_KEYS=k1:<old>,k2:<new>` when rotating away from a named key). With more than one replica, first deploy the list without changing `ENCRYPTION_KEY_ID`, so every pod can read the new key before any pod writes with it; then set `ENCRYPTION_KEY_ID=k2`. A single replica can do both at once.
+2. **Re-encrypt.** Set `REENCRYPT_STORED_CREDENTIALS=true` and restart. Each start rewrites stored credentials that are not under the active key, one conditional update per value, and logs how many were stale, rewritten and undecryptable. Without the flag the start only logs the stale count. Values written in the meantime already use the active key.
+3. **Retire the old key.** Once the log reports `0` stale and `0` undecryptable, unset `REENCRYPT_STORED_CREDENTIALS`, then remove the old key (`ENCRYPTION_KEY` or its `ENCRYPTION_KEYS` entry). Keep a copy of it until the next backup cycle has passed: database backups taken before step 2 still need it.
+
+Short-lived login and consent transactions are not rewritten; they expire within minutes.
+
 ---
 
 ## License

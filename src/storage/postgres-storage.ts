@@ -17,7 +17,7 @@ import {
   QueryHistoryOptions,
   HistoryDataPoint,
 } from "./telemetry-storage.js";
-import { ENCRYPTED_COLUMNS, RotationCounts, activeKeyId, logRotation, reencryptRequested, rotateRow } from "./credential-rotation.js";
+import { ENCRYPTED_COLUMNS, RotationCounts, RotationHooks, activeKeyId, logRotation, reencryptRequested, rotateRow, staleRowsParams, staleRowsQuery } from "./credential-rotation.js";
 import { encryptToken, decryptToken, decryptStoredToken, secretDigest, secretLookupKeys, storedSecret, SECRET_DIGEST_PREFIX } from "./crypto.js";
 
 export interface PostgresStorageOptions {
@@ -58,9 +58,14 @@ export class PostgresStorage implements IStorage {
       });
     }
 
-    this.initPromise = this.initTables().then(async () => { await this.rotateCredentials(); }).catch((err) => {
+    this.initPromise = this.initTables().catch((err) => {
       console.error("❌ [PostgresStorage] Failed to initialize tables:", err);
       throw err;
+    });
+    // Off the ready() path: serving does not wait for the scan, and a failed
+    // pass is logged and retried on the next start instead of failing storage.
+    this.initPromise.then(() => this.rotateCredentials()).catch((err) => {
+      if (err) console.error("❌ [PostgresStorage] Credential re-encryption pass failed:", err);
     });
   }
 
@@ -218,15 +223,17 @@ export class PostgresStorage implements IStorage {
    * Each update is conditional on the value read, so a concurrent write
    * (always under the active key) is never overwritten.
    */
-  public async rotateCredentials(rewrite = this.reencryptStoredCredentials): Promise<RotationCounts | null> {
+  public async rotateCredentials(rewrite = this.reencryptStoredCredentials, hooks: RotationHooks = {}): Promise<RotationCounts | null> {
     const activeId = activeKeyId();
     if (!activeId) return null;
+    await this.ready();
     const counts: RotationCounts = { stale: 0, rewritten: 0, failed: 0 };
-    for (const { table, key, columns } of ENCRYPTED_COLUMNS) {
-      const { rows } = await this.pool.query(`SELECT ${key}, user_id, ${columns.join(", ")} FROM ${table}`);
+    for (const spec of ENCRYPTED_COLUMNS) {
+      const { rows } = await this.pool.query(staleRowsQuery(spec, n => `$${n}`), staleRowsParams(activeId));
+      await hooks.afterScan?.(spec.table);
       for (const row of rows) {
-        for (const [column, { from, to }] of rotateRow(row, columns, activeId, rewrite, counts)) {
-          const result = await this.pool.query(`UPDATE ${table} SET ${column} = $1 WHERE ${key} = $2 AND ${column} = $3`, [to, row[key], from]);
+        for (const [column, { from, to }] of rotateRow(row, spec.columns, activeId, rewrite, counts)) {
+          const result = await this.pool.query(`UPDATE ${spec.table} SET ${column} = $1 WHERE ${spec.key} = $2 AND ${column} = $3`, [to, row[spec.key], from]);
           counts.rewritten += result.rowCount ?? 0;
         }
       }

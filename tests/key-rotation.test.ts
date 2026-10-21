@@ -6,10 +6,12 @@ import { encryptToken, decryptToken, decryptStoredToken, getKeyring } from "../s
 import { CredentialDecryptionError, IStorage } from "../src/storage/storage-interface.js";
 import { OAuthStorage } from "../src/storage/oauth-storage.js";
 import { PostgresStorage } from "../src/storage/postgres-storage.js";
+import type { RotationHooks } from "../src/storage/credential-rotation.js";
 import { createHttpServer } from "../src/server/http-server.js";
 
 const KEY_A = "a".repeat(64);
 const KEY_B = Buffer.alloc(32, 7).toString("base64");
+const KEY_C = "c".repeat(64);
 const useKeys = (keys: string, active: string) => { vi.stubEnv("ENCRYPTION_KEYS", keys); vi.stubEnv("ENCRYPTION_KEY_ID", active); };
 
 afterEach(() => { vi.unstubAllEnvs(); });
@@ -69,40 +71,51 @@ describe("encryption keyring", () => {
   });
 });
 
-// Rotation: rows written under one key are rewritten under the next, after
-// which the old key can be removed without losing a credential.
+// Rotation: values written as v1 (production today) are rewritten under a
+// named key, then under the next one, after which the old key can be removed
+// without losing a credential.
+type Rotate = (rewrite: boolean, hooks?: RotationHooks) => Promise<{ stale: number; rewritten: number; failed: number } | null>;
 async function rotation(
   storage: IStorage,
-  rotate: (rewrite: boolean) => Promise<{ stale: number; rewritten: number; failed: number } | null>,
+  rotate: Rotate,
   run: (sql: string, params: unknown[]) => Promise<unknown>,
   read: (sql: string) => Promise<string[]>,
 ) {
   const now = Date.now();
-  useKeys(`a:${KEY_A}`, "a");
+  const all = "SELECT encrypted_yandex_access_token AS v FROM user_credentials UNION ALL SELECT yandex_access_token FROM oauth_tokens UNION ALL SELECT yandex_access_token FROM oauth_codes";
   await storage.saveUser({ id: "alice", yandexUid: "alice", createdAt: now, updatedAt: now });
   await storage.saveUserCredentials("alice", { yandexAccessToken: "upstream", yandexRefreshToken: "upstream-refresh", quasarCookie: "Session_id=alice" });
   await storage.saveToken({ accessToken: "at", refreshToken: "rt", userId: "alice", clientId: "client",
     yandexAccessToken: "upstream", yandexRefreshToken: "upstream-refresh", scope: "iot:view", createdAt: now, expiresAt: now + 3600000 });
   await storage.saveAuthCode({ code: "code", clientId: "client", redirectUri: "https://claude.ai/cb", userId: "alice",
     yandexAccessToken: "upstream", scope: "iot:view", createdAt: now, expiresAt: now + 60000 });
+  expect((await read(all)).every(v => v.startsWith("v1:"))).toBe(true);
 
-  useKeys(`a:${KEY_A},b:${KEY_B}`, "b");
-  expect(await rotate(false)).toEqual({ stale: 6, rewritten: 0, failed: 0 });
-  expect(await rotate(true)).toEqual({ stale: 6, rewritten: 6, failed: 0 });
-  expect(await rotate(false)).toEqual({ stale: 0, rewritten: 0, failed: 0 });
-  const stored = await read("SELECT encrypted_yandex_access_token AS v FROM user_credentials UNION ALL SELECT yandex_access_token FROM oauth_tokens UNION ALL SELECT yandex_access_token FROM oauth_codes");
-  expect(stored.every(v => v.startsWith("v2:b:"))).toBe(true);
-
+  // v1 -> v2:b. A value rewritten by a request between scan and update is kept.
   useKeys(`b:${KEY_B}`, "b");
+  expect(await rotate(false)).toEqual({ stale: 6, rewritten: 0, failed: 0 });
+  const concurrent = encryptToken("concurrent", "alice");
+  expect(await rotate(true, { afterScan: table => table === "oauth_tokens" ? run("UPDATE oauth_tokens SET yandex_access_token = $1", [concurrent]) : undefined }))
+    .toEqual({ stale: 6, rewritten: 5, failed: 0 });
+  expect(await read("SELECT yandex_access_token AS v FROM oauth_tokens")).toEqual([concurrent]);
+  expect(await rotate(false)).toEqual({ stale: 0, rewritten: 0, failed: 0 });
+  expect((await read(all)).every(v => v.startsWith("v2:b:"))).toBe(true);
+
+  // v2:b -> v2:c, then b is retired.
+  useKeys(`b:${KEY_B},c:${KEY_C}`, "c");
+  expect(await rotate(true)).toEqual({ stale: 6, rewritten: 6, failed: 0 });
+  useKeys(`c:${KEY_C}`, "c");
+  expect(await rotate(false)).toEqual({ stale: 0, rewritten: 0, failed: 0 });
   expect(await storage.getUserCredentials("alice")).toMatchObject({ yandexAccessToken: "upstream", yandexRefreshToken: "upstream-refresh", quasarCookie: "Session_id=alice" });
-  expect((await storage.getToken("at"))?.yandexRefreshToken).toBe("upstream-refresh");
+  expect((await storage.getToken("at"))).toMatchObject({ yandexAccessToken: "concurrent", yandexRefreshToken: "upstream-refresh" });
   expect((await storage.consumeAuthCode("code"))?.yandexAccessToken).toBe("upstream");
 
-  // A value no configured key opens is counted, reported and left in place.
-  useKeys(`a:${KEY_A}`, "a");
-  const orphan = encryptToken("orphan", "alice");
+  // A value no configured key opens is reported before the flag is set, and left in place.
   useKeys(`b:${KEY_B}`, "b");
+  const orphan = encryptToken("orphan", "alice");
+  useKeys(`c:${KEY_C}`, "c");
   await run("UPDATE oauth_tokens SET yandex_access_token = $1", [orphan]);
+  expect(await rotate(false)).toEqual({ stale: 1, rewritten: 0, failed: 1 });
   expect(await rotate(true)).toEqual({ stale: 1, rewritten: 0, failed: 1 });
   expect(await read("SELECT yandex_access_token AS v FROM oauth_tokens")).toEqual([orphan]);
 }
@@ -113,7 +126,7 @@ describe("credential re-encryption", () => {
     const sql = (storage as unknown as { db: DatabaseSync }).db;
     try {
       await rotation(storage,
-        async rewrite => storage.rotateCredentials(rewrite),
+        async (rewrite, hooks) => storage.rotateCredentials(rewrite, hooks),
         async (query, params) => sql.prepare(query.replace(/\$\d/g, "?")).run(...(params as string[])),
         async query => (sql.prepare(query).all() as { v: string }[]).map(r => r.v));
     } finally { storage.close(); }
@@ -137,7 +150,7 @@ describe("credential re-encryption", () => {
       storage = new PostgresStorage({ pool: new pg.Pool(options) });
       await storage.ready();
       await rotation(storage,
-        rewrite => storage.rotateCredentials(rewrite),
+        (rewrite, hooks) => storage.rotateCredentials(rewrite, hooks),
         (query, params) => pool.query(query, params),
         async query => (await pool.query(query)).rows.map(r => r.v));
     });

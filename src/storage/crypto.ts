@@ -162,17 +162,6 @@ export function decryptStoredToken(value: string, userId: string): string {
 }
 
 /**
- * The value re-encrypted under the active key, or null when it already is
- * (or no key id is active, or it is empty or legacy plaintext). Throws
- * CredentialDecryptionError when the value cannot be decrypted.
- */
-export function reencryptedEnvelope(value: string | null | undefined, userId: string): string | null {
-  const { activeId } = getKeyring();
-  if (!activeId || !value || !isEncryptedEnvelope(value) || value.startsWith(`v2:${activeId}:`)) return null;
-  return encryptToken(decryptToken(value, userId), userId);
-}
-
-/**
  * Computes a constant SHA-256 hex hash for indexing opaque tokens and session IDs.
  */
 export function hashToken(token: string): string {

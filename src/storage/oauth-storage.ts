@@ -2,7 +2,7 @@ import { CredentialDecryptionError } from "./storage-interface.js";
 import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync, StatementSync } from "node:sqlite";
-import { ENCRYPTED_COLUMNS, RotationCounts, activeKeyId, logRotation, reencryptRequested, rotateRow } from "./credential-rotation.js";
+import { ENCRYPTED_COLUMNS, RotationCounts, RotationHooks, activeKeyId, logRotation, reencryptRequested, rotateRow, staleRowsParams, staleRowsQuery } from "./credential-rotation.js";
 import { encryptToken, decryptToken, decryptStoredToken, hashToken, secretDigest, secretLookupKeys, storedSecret, SECRET_DIGEST_PREFIX } from "./crypto.js";
 
 import {
@@ -83,16 +83,18 @@ export class OAuthStorage implements IStorage {
   }
 
   /** SQLite counterpart of PostgresStorage.rotateCredentials. */
-  public rotateCredentials(rewrite = reencryptRequested()): RotationCounts | null {
+  public rotateCredentials(rewrite = reencryptRequested(), hooks: RotationHooks = {}): RotationCounts | null {
     const activeId = activeKeyId();
     if (!activeId) return null;
     const counts: RotationCounts = { stale: 0, rewritten: 0, failed: 0 };
-    for (const { table, key, columns } of ENCRYPTED_COLUMNS) {
-      const rows = this.db.prepare(`SELECT ${key}, user_id, ${columns.join(", ")} FROM ${table}`).all() as Record<string, unknown>[];
+    for (const spec of ENCRYPTED_COLUMNS) {
+      const rows = this.db.prepare(staleRowsQuery(spec, n => `?${n}`)).all(...staleRowsParams(activeId)) as Record<string, unknown>[];
+      void hooks.afterScan?.(spec.table);
+      const updates = new Map<string, StatementSync>(spec.columns.map(column =>
+        [column, this.db.prepare(`UPDATE ${spec.table} SET ${column} = ? WHERE ${spec.key} = ? AND ${column} = ?`)] as const));
       for (const row of rows) {
-        for (const [column, { from, to }] of rotateRow(row, columns, activeId, rewrite, counts)) {
-          const result = this.db.prepare(`UPDATE ${table} SET ${column} = ? WHERE ${key} = ? AND ${column} = ?`).run(to, row[key] as string, from);
-          counts.rewritten += Number(result.changes);
+        for (const [column, { from, to }] of rotateRow(row, spec.columns, activeId, rewrite, counts)) {
+          counts.rewritten += Number(updates.get(column)!.run(to, row[spec.key] as string, from).changes);
         }
       }
     }

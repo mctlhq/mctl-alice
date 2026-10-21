@@ -32,7 +32,7 @@ import { getOpenApiSpec } from "./openapi.js";
 import { TelemetryStorage, ITelemetryStorage } from "../storage/telemetry-storage.js";
 import { TelemetrySampler } from "../services/telemetry-sampler.js";
 import { IStorage, createStorage, createTelemetryStorage, OAuthStorage } from "../storage/index.js";
-import { OAuthController } from "../auth/oauth-controller.js";
+import { OAuthController, OAuthError } from "../auth/oauth-controller.js";
 import { initQrAuth, checkQrAuthStatus } from "../auth/yandex-qr-auth.js";
 import { fetchYandexProfile } from "../auth/oauth-helper.js";
 import { renderAboutPage, renderPrivacyPage, renderTermsPage, renderSecurityPage } from "./pages.js";
@@ -713,7 +713,7 @@ export function createHttpServer(
         res.end(JSON.stringify(clientInfo));
       } catch (err: any) {
         res.writeHead(400, { "Content-Type": "application/json; charset=utf-8" });
-        res.end(JSON.stringify({ error: "invalid_request", error_description: err.message }));
+        res.end(JSON.stringify({ error: err instanceof OAuthError ? err.code : "invalid_request", error_description: err.message }));
       }
       return;
     }
@@ -772,6 +772,7 @@ export function createHttpServer(
         scope: url.searchParams.get("scope") || undefined,
         auto_approve: autoApprove,
         prompt,
+        resource: url.searchParams.get("resource") ?? undefined,
       });
 
       if ("error" in result) {
@@ -935,7 +936,7 @@ export function createHttpServer(
           "Content-Type": "application/json; charset=utf-8",
           "Cache-Control": "no-store",
         });
-        res.end(JSON.stringify({ error: err instanceof StorageUnavailableError ? "temporarily_unavailable" : "invalid_grant", error_description: err.message }));
+        res.end(JSON.stringify({ error: err instanceof StorageUnavailableError ? "temporarily_unavailable" : err instanceof OAuthError ? err.code : "invalid_grant", error_description: err.message }));
       }
       return;
     }

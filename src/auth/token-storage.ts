@@ -12,13 +12,15 @@ export interface OAuthTokenResponse {
 export function buildOAuthUrl(
   clientId: string,
   redirectUri: string,
-  responseType: "token" | "code" = "token"
+  responseType: "token" | "code" = "token",
+  state?: string
 ): string {
   const params = new URLSearchParams({
     response_type: responseType,
     client_id: clientId,
     redirect_uri: redirectUri,
   });
+  if (state) params.set("state", state);
   return `https://oauth.yandex.ru/authorize?${params.toString()}`;
 }
 

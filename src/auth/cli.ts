@@ -4,6 +4,7 @@ dotenv.config();
 
 import readline from "node:readline";
 import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { browserOpener } from "./browser-opener.js";
 import {
   startAuthServer,
@@ -97,7 +98,8 @@ async function main() {
 
   const redirectUri = `http://localhost:${PORT}/callback`;
   const responseType = clientSecret ? "code" : "token";
-  const authUrl = buildOAuthUrl(clientId, redirectUri, responseType);
+  const state = randomUUID();
+  const authUrl = buildOAuthUrl(clientId, redirectUri, responseType, state);
   const directVerifyUrl = `https://oauth.yandex.ru/authorize?response_type=token&client_id=${clientId}`;
 
   console.log("1. Открываем окно браузера для авторизации...");
@@ -115,6 +117,7 @@ async function main() {
     await startAuthServer({
       port: PORT,
       clientId,
+      state,
       clientSecret: clientSecret || undefined,
       onSuccess: ({ speakers, refreshToken }) => {
         console.log("==================================================");

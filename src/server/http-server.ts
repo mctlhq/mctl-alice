@@ -541,6 +541,11 @@ export function createHttpServer(
 
   const browserTransactions = new BrowserTransactions<{ browser: string; expires: number }>(oauthStorage, "consent");
   const loginTransactions = new BrowserTransactions<{ browser: string; expires: number; returnTo: string }>(oauthStorage, "login");
+  /** The unexpired sign-in `state` names, if this browser started it. */
+  async function liveLoginTransaction(state: string | null | undefined, req: http.IncomingMessage) {
+    const transaction = state ? await loginTransactions.get(state) : undefined;
+    return transaction && transaction.expires > Date.now() && transaction.browser === parseCookies(req).mctl_login ? transaction : undefined;
+  }
   const qrOwners = new BrowserTransactions<{ userId: string; browser: string; expires: number }>(oauthStorage, "qr-owner");
   const browserId = (req: http.IncomingMessage) => parseCookies(req).mctl_session || "";
   const sseOwners = new Map<string, { userId?: string; clientId?: string; fingerprint: string }>();
@@ -1535,17 +1540,18 @@ export function createHttpServer(
     // Auth login redirect
     if (url.pathname === "/auth/login") {
       const responseType = clientSecret ? "code" : "token";
-      let oauthUrl = buildOAuthUrl(clientId, redirectUri, responseType);
-      if (authRequired) {
-        if (!clientSecret) { res.writeHead(503); res.end("OAuth application not configured"); return; }
-        const state = randomUUID();
-        const browser = randomUUID();
-        const requestedReturn = url.searchParams.get("return_to") || "/account";
-        const returnTo = requestedReturn.startsWith("/oauth/authorize?") ? requestedReturn : "/account";
-        await loginTransactions.set(state, { browser, expires: Date.now() + 600000, returnTo });
-        res.setHeader("Set-Cookie", `mctl_login=${browser}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=600`);
-        const target = new URL(oauthUrl); target.searchParams.set("state", state); oauthUrl = target.toString();
-      }
+      if (authRequired && !clientSecret) { res.writeHead(503); res.end("OAuth application not configured"); return; }
+      // Every sign-in is a transaction bound to this browser, self-hosted
+      // too: there the callback writes the server's own credentials, so a
+      // page that sends the operator's browser to /auth/callback with its
+      // own code or #access_token must not be able to complete one.
+      const state = randomUUID();
+      const browser = randomUUID();
+      const requestedReturn = url.searchParams.get("return_to") || "/account";
+      const returnTo = requestedReturn.startsWith("/oauth/authorize?") ? requestedReturn : "/account";
+      await loginTransactions.set(state, { browser, expires: Date.now() + 600000, returnTo });
+      res.setHeader("Set-Cookie", `mctl_login=${browser}; Path=/; ${baseUrl.startsWith("https:") ? "Secure; " : ""}HttpOnly; SameSite=Lax; Max-Age=600`);
+      const oauthUrl = buildOAuthUrl(clientId, redirectUri, responseType, state);
       res.writeHead(302, { Location: oauthUrl });
       res.end();
       return;
@@ -1557,9 +1563,11 @@ export function createHttpServer(
       const code = url.searchParams.get("code");
       const error = url.searchParams.get("error");
       let loginReturnTo: string | undefined;
-      if (authRequired) {
-        const transaction = state ? await loginTransactions.get(state) : undefined;
-        if (!transaction || transaction.expires <= Date.now() || transaction.browser !== parseCookies(req).mctl_login) {
+      // Self-hosted, the implicit flow returns its state in the fragment, so
+      // only a code is checked here; /auth/save-token checks the fragment's.
+      if (authRequired || (code && !(state && await oauthStorage.getPendingAuth(state)))) {
+        const transaction = await liveLoginTransaction(state, req);
+        if (!transaction) {
           res.writeHead(400); res.end("Invalid login transaction; sign in again"); return;
         }
         await loginTransactions.delete(state!);
@@ -1732,6 +1740,15 @@ export function createHttpServer(
             res.end(JSON.stringify({ status: "error", message: "Token missing" }));
             return;
           }
+          // The token must come back through a sign-in this browser started:
+          // the callback page posts the fragment's state alongside it.
+          const state = typeof data.state === "string" ? data.state : undefined;
+          if (!await liveLoginTransaction(state, req)) {
+            res.writeHead(403, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ status: "error", message: "Invalid login transaction; sign in again" }));
+            return;
+          }
+          await loginTransactions.delete(state!);
 
           // Verify with Yandex API
           const client = new YandexIoTClient(token, { credentialsMode: authRequired ? "hosted" : "local", useKeychain: false, persistEnv: false });

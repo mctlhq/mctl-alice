@@ -4,6 +4,7 @@
 (function () {
   var params = new URLSearchParams(window.location.hash.substring(1));
   var token = params.get("access_token");
+  var state = params.get("state");
   var statusEl = document.getElementById("status");
   var speakersEl = document.getElementById("speakers");
   var actionsEl = document.getElementById("actions");
@@ -45,7 +46,7 @@
   fetch("/auth/save-token", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ token: token }),
+    body: JSON.stringify({ token: token, state: state }),
   })
     .then(function (res) { return res.json(); })
     .then(function (data) {

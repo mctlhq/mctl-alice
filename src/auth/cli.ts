@@ -4,6 +4,7 @@ dotenv.config();
 
 import readline from "node:readline";
 import { execFile } from "node:child_process";
+import { browserOpener } from "./browser-opener.js";
 import {
   startAuthServer,
   buildOAuthUrl,
@@ -31,14 +32,7 @@ function prompt(question: string): Promise<string> {
 }
 
 function openBrowser(url: string) {
-  // No shell: the URL is passed as a single argument to the opener.
-  const [command, args]: [string, string[]] =
-    process.platform === "darwin"
-      ? ["open", [url]]
-      : process.platform === "win32"
-      ? ["rundll32", ["url.dll,FileProtocolHandler", url]]
-      : ["xdg-open", [url]];
-
+  const [command, args] = browserOpener(process.platform, url);
   execFile(command, args, () => {
     // Ignore error if open fails
   });

@@ -181,12 +181,12 @@ function renderAuthPage({
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<script src="/assets/theme-init.js?v=2.2.4"></script>
+<script src="/assets/theme-init.js?v=${VERSION}"></script>
 <title>${escapeHtml(title)}</title>
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-<link rel="stylesheet" href="/assets/tokens.css?v=2.2.4">
-<link rel="stylesheet" href="/assets/components.css?v=2.2.4">
-<link rel="stylesheet" href="/assets/pages.css?v=2.2.4">
+<link rel="stylesheet" href="/assets/tokens.css?v=${VERSION}">
+<link rel="stylesheet" href="/assets/components.css?v=${VERSION}">
+<link rel="stylesheet" href="/assets/pages.css?v=${VERSION}">
 </head>
 <body>
 <header class="wrap topbar">
@@ -238,7 +238,7 @@ function renderAuthPage({
     </span>
   </div>
 </footer>
-<script src="/assets/site.js?v=2.2.4"></script>
+<script src="/assets/site.js?v=${VERSION}"></script>
 ${scriptHtml}
 </body>
 </html>`;
@@ -304,6 +304,20 @@ export function isCorsPath(pathname: string): boolean {
     || pathname.startsWith("/.well-known/")
     || pathname.startsWith("/mcp/.well-known/")
     || pathname.startsWith("/api/");
+}
+
+/**
+ * True for a request without an Origin (non-browser clients), from this
+ * server's own origin, or from a loopback host such as a local MCP inspector.
+ */
+export function isLocalOrigin(origin: string | undefined, baseUrl: string): boolean {
+  if (origin === undefined) return true;
+  try {
+    const { hostname, origin: normalized } = new URL(origin);
+    return normalized === new URL(baseUrl).origin || ["localhost", "127.0.0.1", "[::1]"].includes(hostname);
+  } catch {
+    return false;
+  }
 }
 
 const CORS_ALLOW_HEADERS = "Authorization, Content-Type, Accept, Last-Event-ID, Mcp-Session-Id, Mcp-Protocol-Version";
@@ -675,6 +689,11 @@ export function createHttpServer(
     setSecurityHeaders(res);
 
     const corsPath = isCorsPath(url.pathname);
+    // Without auth any page the operator visits could drive the local server
+    // through CORS, so only this server's own origin or a loopback one may.
+    if (!authRequired && corsPath && !isLocalOrigin(req.headers.origin, baseUrl)) {
+      res.writeHead(403); res.end("Invalid origin"); return;
+    }
     if (corsPath) {
       res.setHeader("Access-Control-Allow-Origin", "*");
       res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS, HEAD");
@@ -968,7 +987,7 @@ export function createHttpServer(
         res.writeHead(err instanceof StorageUnavailableError ? 503 : 500, { "Content-Type": "text/html; charset=utf-8" });
         res.end(`<!DOCTYPE html>
 <html lang="ru">
-<head><meta charset="utf-8"><title>OAuth Error</title><link rel="stylesheet" href="/assets/pages.css?v=2.2.4"></head>
+<head><meta charset="utf-8"><title>OAuth Error</title><link rel="stylesheet" href="/assets/pages.css?v=${VERSION}"></head>
 <body class="s-b84785">
   <h2 class="s-f892ee">Ошибка авторизации Яндекс</h2>
   <p class="s-128036">${escapeHtml(err.message)}</p>
@@ -1692,7 +1711,7 @@ export function createHttpServer(
           <a href="/auth/cookie" class="btn btn-secondary" data-i18n="callback_btn_cookie">Настроить Quasar Cookie</a>
         </div>
       `;
-      const script = `<script src="/assets/auth-callback.js?v=2.2.4"></script>`;
+      const script = `<script src="/assets/auth-callback.js?v=${VERSION}"></script>`;
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       res.end(renderAuthPage({ title: "mctl-alice — Авторизация", titleKey: "callback_success_page_title", contentHtml: content, scriptHtml: script }));
       return;
@@ -1845,7 +1864,7 @@ export function createHttpServer(
         </details>
       `;
 
-      const script = `<script src="/assets/auth-cookie.js?v=2.2.4"></script>`;
+      const script = `<script src="/assets/auth-cookie.js?v=${VERSION}"></script>`;
 
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       res.end(renderAuthPage({ title: "mctl-alice — Настройка Quasar Cookie", titleKey: "cookie_page_title", contentHtml: content, scriptHtml: script }));

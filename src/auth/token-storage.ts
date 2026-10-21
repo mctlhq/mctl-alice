@@ -81,7 +81,11 @@ export function saveTokenToKeychain(
   if (process.platform !== "darwin") return false;
   try {
     // Arguments go straight to the binary, never through a shell: the token
-    // comes from an OAuth response and must not be interpreted.
+    // comes from an OAuth response and must not be interpreted. `security`
+    // takes the secret only as an argument or from a TTY prompt, so the token
+    // is visible to processes of the same user (`ps`) for the moment the call
+    // runs. This is the local CLI on the operator's own Mac; hosted mode never
+    // uses the keychain.
     execFileSync("security", ["add-generic-password", "-a", account, "-s", service, "-w", token, "-U"], {
       stdio: ["pipe", "pipe", "ignore"],
     });

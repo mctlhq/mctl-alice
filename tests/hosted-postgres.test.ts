@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import pg from "pg";
 import { randomUUID } from "node:crypto";
 import { PostgresStorage, PostgresTelemetryStorage } from "../src/storage/postgres-storage.js";
@@ -40,6 +40,29 @@ describe.skipIf(!connectionString)("hosted isolation with real PostgreSQL", () =
     await storage.revokeUserGrant("bob", "client");
     expect(await auth("bob")).toMatchObject({ authenticated: false, status: 401 });
     expect(await storage.getTokenByRefreshToken("rt-bob")).toBeNull();
+  });
+  it("rejects expired, unowned, missing-owner and empty-scope grants without upstream calls", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    try {
+      for (const [index, change] of [
+        { expiresAt: Date.now() - 1 }, { userId: undefined }, { userId: "missing-owner" },
+        { userId: "legacy_user" }, { userId: "usr_local" }, { scope: "" }, { scope: "*" },
+      ].entries()) {
+        const accessToken = `negative-${index}`;
+        await storage.saveToken({ accessToken, clientId: "client", userId: "bob", yandexAccessToken: "stale", scope: "iot:view", createdAt: Date.now(), expiresAt: Date.now() + 60000, ...change });
+        const result = await authenticateRequest({ headers: { authorization: `Bearer ${accessToken}` } } as http.IncomingMessage, undefined, undefined, storage, history, true);
+        expect(result).toMatchObject({ authenticated: false, status: 401 });
+      }
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally { fetchMock.mockRestore(); }
+  });
+  it("returns storage unavailable for a real SQL failure", async () => {
+    await pool.query("ALTER TABLE oauth_tokens RENAME TO unavailable_tokens");
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    try {
+      const result = await authenticateRequest({ headers: { authorization: "Bearer bob" } } as http.IncomingMessage, undefined, undefined, storage, history, true);
+      expect(result).toMatchObject({ authenticated: false, status: 503 }); expect(fetchMock).not.toHaveBeenCalled();
+    } finally { await pool.query("ALTER TABLE unavailable_tokens RENAME TO oauth_tokens"); fetchMock.mockRestore(); }
   });
   it("migrates and isolates all history resolutions, stats and pruning", async () => {
     await verifyHistory(history);

@@ -13,6 +13,7 @@ describe("HTTP Server & ChatGPT REST API", () => {
   beforeAll(async () => {
     server = createHttpServer(PORT, {
       publicBaseUrl: baseUrl,
+      enableSampler: false,
     });
     await new Promise<void>((resolve) => server.listen(PORT, resolve));
   });

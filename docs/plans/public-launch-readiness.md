@@ -42,7 +42,7 @@ for SQLite, PostgreSQL and MinIO; additive history isolation and storage readine
 Validation so far:
 
 - Node 22 typecheck and production TypeScript build pass.
-- 210 tests pass, including a disposable PostgreSQL 17 instance. The integration
+- 212 tests pass, including a disposable PostgreSQL 17 instance. The integration
   database is selected only by `TEST_POSTGRES_URL`, never `DATABASE_URL`.
 - Two-user tests cover async storage, invalid/expired/revoked tokens, reserved
   owners, invalid scopes, database errors, corrupt PostgreSQL credentials,
@@ -57,6 +57,23 @@ Validation so far:
   200/version 2.2.2; random, reserved-owner and shared-environment Bearers return
   401; an owned synthetic grant lists four read tools; forbidden REST returns
   403. These smoke tests make no calls to real homes.
+
+Candidate state:
+
+- Application source commit: `1a8e158` (local only). Candidate image:
+  `ghcr.io/mctlhq/mctl-alice:2.2.2-candidate-1a8e158`, Linux/amd64.
+- Local image manifest digest:
+  `sha256:7ff6767dca379adf02f8daaa1c182cef44869af19c08ed011a1fc15a629d8f26`.
+  An exported Docker archive is retained in the sibling local
+  `mctl-alice-release-artifacts/` directory.
+- GitOps candidate prepared and Helm-rendered in a separate worktree, commit
+  `2190f4269` on `chore/alice-candidate-rollout`. It is not pushed or deployed.
+- Registry publication is blocked: both available cluster pull credentials
+  fail push with insufficient scopes; the normal local Docker login is
+  unauthorized. No candidate manifest has been published. A registry login
+  with push rights is required; do not publish application source to obtain it.
+- The designated real test connection is awaiting owner identification.
+  Production remains on `2.2.1`; no production configuration or data was changed.
 
 Outstanding release gates:
 
@@ -438,8 +455,8 @@ site, actual tools and documented permissions agree; all public links work.
 - [x] Review site, repository, authorization/storage code and deployment metadata.
 - [x] Reproduce the authorization boundary failure locally with fake data.
 - [x] Record owner decisions and baseline verification.
-- [ ] Contain unsafe public onboarding and investigate potential existing impact.
-- [ ] Implement and verify isolated hosted identity, storage and permissions.
+- [ ] Complete the production isolation rollout without a preliminary shutdown.
+- [x] Implement and locally verify isolated hosted identity, storage and permissions.
 - [ ] Deliver consent, account controls and optional Quasar/history flows.
 - [ ] Complete public documentation, README, GitHub metadata and CI protections.
 - [ ] Pass staging and invited-user acceptance checks before promotion.

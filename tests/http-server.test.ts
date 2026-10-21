@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
+import { VERSION } from "../src/version.js";
 import http from "node:http";
 import crypto from "node:crypto";
 import { createHttpServer } from "../src/server/http-server.js";
@@ -272,7 +273,7 @@ describe("HTTP Server & ChatGPT REST API", () => {
     expect(text).toContain('data-lang="ru"');
     expect(text).toContain('data-lang="en"');
     expect(text).toContain("data-i18n=");
-    expect(text).toContain("/assets/site.js?v=2.2.4");
+    expect(text).toContain(`/assets/site.js?v=${VERSION}`);
     // Should NOT contain openapi link in navigation or hero GitHub CTA button
     expect(text).not.toContain('<a href="/openapi.json">OpenAPI</a>');
     expect(text).not.toContain('>Репозиторий на GitHub</a>');
@@ -372,7 +373,7 @@ describe("HTTP Server & ChatGPT REST API", () => {
   it("should validate missing cookie on /auth/save-cookie", async () => {
     const res = await fetch(`${baseUrl}/auth/save-cookie`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { Origin: baseUrl, "Content-Type": "application/json" },
       body: JSON.stringify({}),
     });
     expect(res.status).toBe(400);
@@ -435,7 +436,7 @@ describe("HTTP Server & ChatGPT REST API", () => {
     // 2. POST /oauth/authorize with approve action
     const approveRes = await fetch(`${baseUrl}/oauth/authorize`, {
       method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      headers: { Origin: baseUrl, "Content-Type": "application/x-www-form-urlencoded" },
       body: `session_id=${encodeURIComponent(sessionId)}&action=approve`,
       redirect: "manual",
     });
@@ -475,7 +476,7 @@ describe("HTTP Server & ChatGPT REST API", () => {
     // 2. Deny authorization
     const denyRes = await fetch(`${baseUrl}/oauth/authorize`, {
       method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      headers: { Origin: baseUrl, "Content-Type": "application/x-www-form-urlencoded" },
       body: `session_id=${encodeURIComponent(sessionId)}&action=deny`,
       redirect: "manual",
     });

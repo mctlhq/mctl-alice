@@ -1,6 +1,7 @@
 import http from "node:http";
 import crypto from "node:crypto";
 import { YandexIoTClient } from "../client/yandex-api.js";
+import { isLocalOrigin } from "../server/origin.js";
 import { StationService } from "../services/station-service.js";
 import {
   OAuthTokenResponse,
@@ -19,6 +20,8 @@ export interface AuthServerOptions {
   clientId: string;
   clientSecret?: string;
   responseType?: "token" | "code";
+  /** Nonce the authorization URL carries; generated when absent. */
+  state?: string;
   envFilePath?: string;
   onSuccess?: (info: { token: string; refreshToken?: string; speakers: string[] }) => void;
 }
@@ -76,11 +79,17 @@ export function startAuthServer(options: AuthServerOptions): Promise<{
   const clientSecret = options.clientSecret;
   const responseType = options.responseType || (clientSecret ? "code" : "token");
   const redirectUri = `http://localhost:${port}/callback`;
-  const oauthUrl = buildOAuthUrl(clientId, redirectUri, responseType);
+  // Binds a callback to the flow this process started: without it any page
+  // could load /callback#access_token=<its own token> in the operator's
+  // browser and have that page hand the token over with a valid Origin.
+  const state = options.state || crypto.randomUUID();
+  const oauthUrl = buildOAuthUrl(clientId, redirectUri, responseType, state);
 
   return new Promise((resolve, reject) => {
     const server = http.createServer(async (req, res) => {
       const url = new URL(req.url || "/", `http://localhost:${port}`);
+      res.setHeader("X-Frame-Options", "DENY");
+      res.setHeader("Content-Security-Policy", "frame-ancestors 'none'");
 
       if (url.pathname === "/") {
         // Redirect directly to Yandex OAuth
@@ -94,6 +103,9 @@ export function startAuthServer(options: AuthServerOptions): Promise<{
 
         // If Authorization Code flow was used, exchange code directly on backend
         if (code && clientSecret) {
+          if (url.searchParams.get("state") !== state) {
+            res.writeHead(403); res.end("Invalid state"); return;
+          }
           try {
             const tokens = await exchangeCodeForToken({
               code,
@@ -181,6 +193,7 @@ export function startAuthServer(options: AuthServerOptions): Promise<{
     const hash = window.location.hash.substring(1);
     const params = new URLSearchParams(hash);
     const token = params.get('access_token');
+    const state = params.get('state');
     const statusEl = document.getElementById('status');
     const speakersEl = document.getElementById('speakers');
 
@@ -189,7 +202,7 @@ export function startAuthServer(options: AuthServerOptions): Promise<{
       fetch('/save-token', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token })
+        body: JSON.stringify({ token, state })
       })
       .then(res => res.json())
       .then(data => {
@@ -230,11 +243,23 @@ export function startAuthServer(options: AuthServerOptions): Promise<{
       }
 
       if (url.pathname === "/save-token" && req.method === "POST") {
+        // Only this helper's own page may hand it a token: a cross-site
+        // text/plain form would otherwise store an attacker's account. Its
+        // fetch always carries Origin, so a request without one is refused.
+        const origin = req.headers.origin;
+        if (origin === undefined || !isLocalOrigin(origin, `http://localhost:${port}`)) {
+          res.writeHead(403); res.end("Invalid origin"); return;
+        }
         let body = "";
         req.on("data", (chunk) => (body += chunk));
         req.on("end", async () => {
           try {
             const data = JSON.parse(body);
+            if (data.state !== state) {
+              res.writeHead(403, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({ status: "error", message: "Invalid state; start the sign-in again" }));
+              return;
+            }
             const token = data.token?.trim();
             const refreshToken = data.refreshToken?.trim();
             if (!token) {
@@ -283,7 +308,9 @@ export function startAuthServer(options: AuthServerOptions): Promise<{
       res.end("Not Found");
     });
 
-    server.listen(port, () => {
+    // Loopback only: the redirect URI is localhost, and nothing on the
+    // network should be able to reach /save-token while the flow is open.
+    server.listen(port, "127.0.0.1", () => {
       // server is ready
     });
 

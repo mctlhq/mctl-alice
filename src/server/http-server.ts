@@ -2,6 +2,9 @@ import { BrowserTransactions } from "../storage/browser-transactions.js";
 import { CredentialDecryptionError } from "../storage/storage-interface.js";
 import { getKeyring } from "../storage/crypto.js";
 import { VERSION } from "../version.js";
+import { isLocalOrigin } from "./origin.js";
+
+export { isLocalOrigin };
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
@@ -62,6 +65,11 @@ const STATIC_MIME_TYPES: Record<string, string> = {
   ".txt": "text/plain; charset=utf-8",
 };
 
+/** Static HTML names its asset suffix `?v=__VERSION__`, filled in at serve time. */
+function withAssetVersion(html: string): string {
+  return html.replaceAll("?v=__VERSION__", `?v=${VERSION}`);
+}
+
 function serveStaticFile(
   reqPath: string,
   res: http.ServerResponse,
@@ -95,7 +103,7 @@ function serveStaticFile(
     if (stats.isDirectory()) {
       const indexPath = path.join(filePath, "index.html");
       if (fs.existsSync(indexPath)) {
-        const content = fs.readFileSync(indexPath);
+        const content = withAssetVersion(fs.readFileSync(indexPath, "utf8"));
         res.writeHead(200, {
           "Content-Type": "text/html; charset=utf-8",
           "Cache-Control": "no-cache",
@@ -108,7 +116,7 @@ function serveStaticFile(
 
     const ext = path.extname(filePath).toLowerCase();
     const contentType = STATIC_MIME_TYPES[ext] || fallbackContentType;
-    const content = fs.readFileSync(filePath);
+    const content = ext === ".html" ? withAssetVersion(fs.readFileSync(filePath, "utf8")) : fs.readFileSync(filePath);
 
     res.writeHead(200, {
       "Content-Type": contentType,
@@ -181,12 +189,12 @@ function renderAuthPage({
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<script src="/assets/theme-init.js?v=2.2.4"></script>
+<script src="/assets/theme-init.js?v=${VERSION}"></script>
 <title>${escapeHtml(title)}</title>
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-<link rel="stylesheet" href="/assets/tokens.css?v=2.2.4">
-<link rel="stylesheet" href="/assets/components.css?v=2.2.4">
-<link rel="stylesheet" href="/assets/pages.css?v=2.2.4">
+<link rel="stylesheet" href="/assets/tokens.css?v=${VERSION}">
+<link rel="stylesheet" href="/assets/components.css?v=${VERSION}">
+<link rel="stylesheet" href="/assets/pages.css?v=${VERSION}">
 </head>
 <body>
 <header class="wrap topbar">
@@ -238,7 +246,7 @@ function renderAuthPage({
     </span>
   </div>
 </footer>
-<script src="/assets/site.js?v=2.2.4"></script>
+<script src="/assets/site.js?v=${VERSION}"></script>
 ${scriptHtml}
 </body>
 </html>`;
@@ -533,6 +541,11 @@ export function createHttpServer(
 
   const browserTransactions = new BrowserTransactions<{ browser: string; expires: number }>(oauthStorage, "consent");
   const loginTransactions = new BrowserTransactions<{ browser: string; expires: number; returnTo: string }>(oauthStorage, "login");
+  /** The unexpired sign-in `state` names, if this browser started it. */
+  async function liveLoginTransaction(state: string | null | undefined, req: http.IncomingMessage) {
+    const transaction = state ? await loginTransactions.get(state) : undefined;
+    return transaction && transaction.expires > Date.now() && transaction.browser === parseCookies(req).mctl_login ? transaction : undefined;
+  }
   const qrOwners = new BrowserTransactions<{ userId: string; browser: string; expires: number }>(oauthStorage, "qr-owner");
   const browserId = (req: http.IncomingMessage) => parseCookies(req).mctl_session || "";
   const sseOwners = new Map<string, { userId?: string; clientId?: string; fingerprint: string }>();
@@ -666,8 +679,14 @@ export function createHttpServer(
   const server = http.createServer(async (req, res) => {
     try {
     const url = new URL(req.url || "/", baseUrl);
-    if (authRequired && req.method === "POST" && (url.pathname.startsWith("/account/") || ["/oauth/authorize", "/auth/save-cookie", "/auth/save-token"].includes(url.pathname))) {
-      if (req.headers.origin !== new URL(baseUrl).origin) {
+    if (req.method === "POST" && (url.pathname.startsWith("/account/") || ["/oauth/authorize", "/auth/save-cookie", "/auth/save-token"].includes(url.pathname))) {
+      // State-changing forms. Hosted: exactly our origin. Self-hosted: these
+      // need no session and rewrite the stored Yandex credentials, so neither
+      // a cross-site text/plain form nor an Origin-less non-browser request
+      // may reach them; a browser always sends Origin on POST.
+      const origin = req.headers.origin;
+      const allowed = authRequired ? origin === new URL(baseUrl).origin : origin !== undefined && isLocalOrigin(origin, baseUrl);
+      if (!allowed) {
         res.writeHead(403); res.end("Invalid origin"); return;
       }
     }
@@ -675,6 +694,11 @@ export function createHttpServer(
     setSecurityHeaders(res);
 
     const corsPath = isCorsPath(url.pathname);
+    // Without auth any page the operator visits could drive the local server
+    // through CORS, so only this server's own origin or a loopback one may.
+    if (!authRequired && corsPath && !isLocalOrigin(req.headers.origin, baseUrl)) {
+      res.writeHead(403); res.end("Invalid origin"); return;
+    }
     if (corsPath) {
       res.setHeader("Access-Control-Allow-Origin", "*");
       res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS, HEAD");
@@ -968,7 +992,7 @@ export function createHttpServer(
         res.writeHead(err instanceof StorageUnavailableError ? 503 : 500, { "Content-Type": "text/html; charset=utf-8" });
         res.end(`<!DOCTYPE html>
 <html lang="ru">
-<head><meta charset="utf-8"><title>OAuth Error</title><link rel="stylesheet" href="/assets/pages.css?v=2.2.4"></head>
+<head><meta charset="utf-8"><title>OAuth Error</title><link rel="stylesheet" href="/assets/pages.css?v=${VERSION}"></head>
 <body class="s-b84785">
   <h2 class="s-f892ee">Ошибка авторизации Яндекс</h2>
   <p class="s-128036">${escapeHtml(err.message)}</p>
@@ -1516,17 +1540,18 @@ export function createHttpServer(
     // Auth login redirect
     if (url.pathname === "/auth/login") {
       const responseType = clientSecret ? "code" : "token";
-      let oauthUrl = buildOAuthUrl(clientId, redirectUri, responseType);
-      if (authRequired) {
-        if (!clientSecret) { res.writeHead(503); res.end("OAuth application not configured"); return; }
-        const state = randomUUID();
-        const browser = randomUUID();
-        const requestedReturn = url.searchParams.get("return_to") || "/account";
-        const returnTo = requestedReturn.startsWith("/oauth/authorize?") ? requestedReturn : "/account";
-        await loginTransactions.set(state, { browser, expires: Date.now() + 600000, returnTo });
-        res.setHeader("Set-Cookie", `mctl_login=${browser}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=600`);
-        const target = new URL(oauthUrl); target.searchParams.set("state", state); oauthUrl = target.toString();
-      }
+      if (authRequired && !clientSecret) { res.writeHead(503); res.end("OAuth application not configured"); return; }
+      // Every sign-in is a transaction bound to this browser, self-hosted
+      // too: there the callback writes the server's own credentials, so a
+      // page that sends the operator's browser to /auth/callback with its
+      // own code or #access_token must not be able to complete one.
+      const state = randomUUID();
+      const browser = randomUUID();
+      const requestedReturn = url.searchParams.get("return_to") || "/account";
+      const returnTo = requestedReturn.startsWith("/oauth/authorize?") ? requestedReturn : "/account";
+      await loginTransactions.set(state, { browser, expires: Date.now() + 600000, returnTo });
+      res.setHeader("Set-Cookie", `mctl_login=${browser}; Path=/; ${baseUrl.startsWith("https:") ? "Secure; " : ""}HttpOnly; SameSite=Lax; Max-Age=600`);
+      const oauthUrl = buildOAuthUrl(clientId, redirectUri, responseType, state);
       res.writeHead(302, { Location: oauthUrl });
       res.end();
       return;
@@ -1538,9 +1563,11 @@ export function createHttpServer(
       const code = url.searchParams.get("code");
       const error = url.searchParams.get("error");
       let loginReturnTo: string | undefined;
-      if (authRequired) {
-        const transaction = state ? await loginTransactions.get(state) : undefined;
-        if (!transaction || transaction.expires <= Date.now() || transaction.browser !== parseCookies(req).mctl_login) {
+      // Self-hosted, the implicit flow returns its state in the fragment, so
+      // only a code is checked here; /auth/save-token checks the fragment's.
+      if (authRequired || (code && !(state && await oauthStorage.getPendingAuth(state)))) {
+        const transaction = await liveLoginTransaction(state, req);
+        if (!transaction) {
           res.writeHead(400); res.end("Invalid login transaction; sign in again"); return;
         }
         await loginTransactions.delete(state!);
@@ -1692,7 +1719,7 @@ export function createHttpServer(
           <a href="/auth/cookie" class="btn btn-secondary" data-i18n="callback_btn_cookie">Настроить Quasar Cookie</a>
         </div>
       `;
-      const script = `<script src="/assets/auth-callback.js?v=2.2.4"></script>`;
+      const script = `<script src="/assets/auth-callback.js?v=${VERSION}"></script>`;
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       res.end(renderAuthPage({ title: "mctl-alice — Авторизация", titleKey: "callback_success_page_title", contentHtml: content, scriptHtml: script }));
       return;
@@ -1713,6 +1740,15 @@ export function createHttpServer(
             res.end(JSON.stringify({ status: "error", message: "Token missing" }));
             return;
           }
+          // The token must come back through a sign-in this browser started:
+          // the callback page posts the fragment's state alongside it.
+          const state = typeof data.state === "string" ? data.state : undefined;
+          if (!await liveLoginTransaction(state, req)) {
+            res.writeHead(403, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ status: "error", message: "Invalid login transaction; sign in again" }));
+            return;
+          }
+          await loginTransactions.delete(state!);
 
           // Verify with Yandex API
           const client = new YandexIoTClient(token, { credentialsMode: authRequired ? "hosted" : "local", useKeychain: false, persistEnv: false });
@@ -1845,7 +1881,7 @@ export function createHttpServer(
         </details>
       `;
 
-      const script = `<script src="/assets/auth-cookie.js?v=2.2.4"></script>`;
+      const script = `<script src="/assets/auth-cookie.js?v=${VERSION}"></script>`;
 
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       res.end(renderAuthPage({ title: "mctl-alice — Настройка Quasar Cookie", titleKey: "cookie_page_title", contentHtml: content, scriptHtml: script }));

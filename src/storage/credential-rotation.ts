@@ -96,7 +96,8 @@ export function logRotation(backend: string, counts: RotationCounts, rewrite: bo
   const tag = `[${backend}]`;
   if (!complete) {
     // A pass that stopped part-way still reports what it already did.
-    console.error(`${tag} Re-encryption pass stopped part-way after ${counts.stale} stale and ${counts.rewritten} re-encrypted stored credentials; it resumes on the next start.`);
+    const done = rewrite ? `, ${counts.rewritten} re-encrypted` : "";
+    console.error(`${tag} ${rewrite ? "Re-encryption" : "Key rotation report"} pass stopped part-way after ${counts.stale} stale${done} and ${counts.failed} undecryptable stored credentials; it runs again on the next start.`);
     return;
   }
   if (counts.failed > 0) console.error(`${tag} ${counts.failed} stored credentials cannot be decrypted with any configured key; they are left unchanged and still count as stale.`);

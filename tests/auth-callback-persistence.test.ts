@@ -127,7 +127,16 @@ describe("/auth/callback code exchange persistence", () => {
     const port = 8198;
     server = await startServer(port, false);
 
-    const res = await realFetch(`http://localhost:${port}/auth/callback?code=abc`);
+    // A code the operator's browser did not ask for is refused: a page could
+    // otherwise send that browser here with a code for its own account.
+    const forged = await realFetch(`http://localhost:${port}/auth/callback?code=abc`, { headers: { Connection: "close" } });
+    expect(forged.status).toBe(400);
+    expect(tokenStorage.saveTokenToEnvFile).not.toHaveBeenCalled();
+
+    const login = await realFetch(`http://localhost:${port}/auth/login`, { redirect: "manual", headers: { Connection: "close" } });
+    const state = new URL(login.headers.get("location")!).searchParams.get("state");
+    const cookie = login.headers.get("set-cookie")!.split(";")[0];
+    const res = await realFetch(`http://localhost:${port}/auth/callback?code=abc&state=${state}`, { headers: { Cookie: cookie, Connection: "close" } });
 
     expect(res.status).toBe(200);
     expect(tokenStorage.saveTokenToEnvFile).toHaveBeenCalledWith("y0_user_access");

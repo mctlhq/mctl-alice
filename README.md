@@ -34,6 +34,8 @@ docker run -d \
   ghcr.io/mctlhq/mctl-alice:2.0.0
 ```
 
+Set `PUBLIC_BASE_URL` to the exact origin browsers use to reach the server. With `AUTH_REQUIRED=true`, the account pages, the consent form and the credential forms accept a `POST` only from that origin. Without auth, they and browser requests to `/mcp` and `/api/*` are accepted only from that origin or from a loopback host (`localhost`, `127.0.0.1`, `[::1]`). Pages still load from any name, but a server reached as `http://nas.local:3000` without a matching `PUBLIC_BASE_URL` rejects its own forms and requests with 403.
+
 ---
 
 ## Available MCP Tools

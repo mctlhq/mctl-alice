@@ -181,7 +181,11 @@ describe("credential re-encryption", () => {
       await storage.saveUserCredentials("alice", { yandexAccessToken: "upstream", quasarCookie: "Session_id=alice" });
       useKeys(`b:${KEY_B}`, "b");
       expect(() => storage.rotateCredentials(true, { afterScan: table => { if (table === "oauth_tokens") throw new Error("connection lost"); } })).toThrow("connection lost");
-      expect(logged).toHaveBeenCalledWith(expect.stringMatching(/stopped part-way after 2 stale and 2 re-encrypted/));
+      expect(logged).toHaveBeenCalledWith(expect.stringMatching(/Re-encryption pass stopped part-way after 2 stale, 2 re-encrypted and 0 undecryptable/));
+      logged.mockClear();
+      useKeys(`c:${KEY_C}`, "c");
+      expect(() => storage.rotateCredentials(false, { afterScan: table => { if (table === "oauth_tokens") throw new Error("connection lost"); } })).toThrow("connection lost");
+      expect(logged).toHaveBeenCalledWith(expect.stringMatching(/report pass stopped part-way after 2 stale and 2 undecryptable/));
     } finally { logged.mockRestore(); storage.close(); }
   });
 

@@ -1,6 +1,6 @@
 # Public launch readiness: audit and implementation plan
 
-Status: production isolation candidate deployed and verified; public PR review and final `2.2.2` release in progress; **not ready for public promotion**.
+Status: isolation release `2.2.2` deployed and verified in production on 2026-10-21; **not ready for public promotion** (remaining gates below).
 
 Reviewed on 2026-09-20 against repository commit `5496ece` and the deployed
 `ghcr.io/mctlhq/mctl-alice:1.9.4` image. This is the canonical plan. The findings
@@ -457,7 +457,7 @@ site, actual tools and documented permissions agree; all public links work.
 - [x] Review site, repository, authorization/storage code and deployment metadata.
 - [x] Reproduce the authorization boundary failure locally with fake data.
 - [x] Record owner decisions and baseline verification.
-- [ ] Complete the production isolation rollout without a preliminary shutdown.
+- [x] Complete the production isolation rollout without a preliminary shutdown.
 - [x] Implement and locally verify isolated hosted identity, storage and permissions.
 - [ ] Deliver consent, account controls and optional Quasar/history flows.
 - [ ] Complete public documentation, README, GitHub metadata and CI protections.
@@ -478,3 +478,22 @@ Verification: all 218 tests passed on Node 22, including the disposable PostgreS
 The candidate deployment remains healthy while these follow-ups go through tests and a review of the new PR head; final `2.2.2` tagging is still pending.
 
 Second review confirmed all three P2 fixes and found one QR persistence regression: cookies accumulated during a waiting poll must be written back to shared storage. Fixed with a two-poll test checking the rotated cookie on the next request and unchanged session creation time. Storage failures during QR persistence remain 503. The remaining P3 recovery surfaces still fail closed; the documented recovery path is a fresh `/auth/login`, and additional recovery UI and empty-consent UX can be improved separately.
+
+### Final 2.2.2 release — 21 October 2026
+
+The review of PR [#51](https://github.com/mctlhq/mctl-alice/pull/51) head `a43fcfc` approved it with no P1/P2 findings; CI passed. Merged as `7ce2804` and tagged `2.2.2` on that merge commit. The source `release-deploy` workflow and the centralized mctl-gitops `release-deploy.yaml` both completed successfully.
+
+Production verification after rollout:
+
+- Deployment `labs-mctl-alice-base-service` runs `ghcr.io/mctlhq/mctl-alice:2.2.2`, digest `sha256:7afd8791e738f2a5f43eeb00a4b347cb7721553de4749da803942a0f045ec0c4`, Ready since 19:39:31 UTC. The rolling update kept the candidate serving until the new pod was ready; the candidate pod has terminated. ArgoCD reports Synced/Healthy.
+- Public `/readyz` returns 200 with version 2.2.2. Random Bearer tokens and unauthenticated requests receive 401 with the RFC 6750 challenge.
+- The existing authorized test connection lists devices without issuing control commands. One request during the pod replacement failed with an upstream fetch error and succeeded on retry.
+- Sanitized log inspection shows no error lines after the rollout.
+
+The issue was reported privately through the process in `SECURITY.md`. Retained production logs and device-state telemetry from the exposure window were reviewed; no device on/off state changes coincided with the reporter's test session.
+
+Remaining work:
+
+- Publish a security advisory once the reporter confirms the credit wording.
+- Rotate or remove the shared home credentials still present in the hosted deployment environment; hosted mode no longer reads them.
+- Remaining P3s (recovery UI on other credential mutation paths, consent UX, unconditional QR write-back) and personal opt-in history collection are separate tasks.

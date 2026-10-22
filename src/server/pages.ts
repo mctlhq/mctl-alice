@@ -225,13 +225,13 @@ export function renderSetupPage(siteUrl: string): string {
         <ul class="s-a0190f" data-i18n-html="setup_tested_list">
           <li><strong>Claude</strong> (claude.ai и Claude Desktop): <em>Customize → Connectors → «+» → Add custom connector</em>, вставьте MCP URL и нажмите <em>Add</em>, затем <em>Connect</em>.</li>
           <li><strong>ChatGPT</strong>: <em>Settings → Apps &amp; Connectors → Advanced settings</em> → включите <em>Developer mode</em>, затем <em>Apps &amp; Connectors → Create</em> и вставьте MCP URL.</li>
-          <li><strong>Codex</strong>: добавьте MCP URL как удалённый (streamable HTTP) MCP-сервер; вход через Яндекс ID откроется в браузере.</li>
+          
         </ul>
       </section>
 
       <section class="s-8f4f37" aria-labelledby="setup-other">
         <h2 class="section-title s-96cfba" id="setup-other" data-i18n="setup_other_title">Другие MCP-клиенты</h2>
-        <p class="s-2a0ca8" data-i18n="setup_other_desc">Подойдёт любой клиент, который подключает удалённые MCP-серверы с авторизацией OAuth 2.1, например Claude Code или Cursor. Мы их сами не проверяли, поэтому напишите нам, если что-то не работает.</p>
+        <p class="s-2a0ca8" data-i18n="setup_other_desc">Подойдёт любой клиент, который подключает удалённые MCP-серверы с авторизацией OAuth 2.1, например Claude Code, Codex или Cursor. Мы их сами не проверяли, поэтому напишите нам, если что-то не работает.</p>
         <pre><code>claude mcp add --transport http alice <span class="mcp-url-slot">${mcpUrl}</span></code></pre>
         <pre><code>{
   "mcpServers": {
@@ -259,7 +259,7 @@ export function renderSetupPage(siteUrl: string): string {
           <li><strong>Отключить ассистента.</strong> В <a href="/account">личном кабинете</a> нажмите «Отозвать» рядом с ассистентом: его токены перестанут работать сразу.</li>
           <li><strong>Отключить Quasar.</strong> Кнопка в личном кабинете удаляет сохранённую веб-сессию и сценарии <code>mctl-*</code>, созданные сервисом.</li>
           <li><strong>Удалить всё.</strong> «Удалить все мои данные» в личном кабинете стирает аккаунт, токены, сессии и сценарии <code>mctl-*</code>.</li>
-          <li><strong>На стороне Яндекса.</strong> Удаление в mctl-alice стирает наши копии ключей, но не отзывает их у Яндекса. Доступ приложения отзывается в <a href="https://id.yandex.ru/security" target="_blank" rel="noopener">Яндекс ID</a>, в разделе доступов приложений. Веб-сессию, созданную входом по QR, завершает выход из аккаунта на всех устройствах там же.</li>
+          <li><strong>На стороне Яндекса.</strong> Удаление в mctl-alice стирает наши копии ключей, но не отзывает их у Яндекса. Доступ приложения и веб-сессию, созданную входом по QR, можно отозвать в <a href="https://id.yandex.ru/security" target="_blank" rel="noopener">Яндекс ID</a>.</li>
         </ul>
       </section>
     </div>

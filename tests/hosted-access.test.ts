@@ -117,7 +117,7 @@ describe("hosted access boundary", () => {
     expect(new QuasarClient({ credentialsMode: "hosted" }).hasCookie()).toBe(false);
     const service = new StationService(undefined, undefined, undefined, "hosted");
     await expect(service.listDevices()).rejects.toThrow("Reconnect");
-    await expect(service.getDeviceHistory({ device: "same" })).rejects.toThrow("not enabled");
+    await expect(service.getDeviceHistory({ device: "same" })).rejects.toThrow("not recorded in the hosted service");
     await storage.saveUserCredentials("alice", { yandexAccessToken: "upstream-alice", quasarCookie: undefined });
     const auth = await authenticate(storage, "mcp-alice");
     if (!auth.authenticated) throw new Error("IoT remains available");

@@ -56,6 +56,12 @@ export interface ITelemetryStorage {
   saveSamples(samples: TelemetrySample[]): Promise<void> | void;
   queryHistory(options: QueryHistoryOptions): Promise<TelemetryHistoryResult> | TelemetryHistoryResult;
   pruneOld(retentionDays?: number): Promise<number> | number;
+  /**
+   * Deletes at most `limit` samples older than `cutoff` (ms) across every
+   * owner and returns how many it deleted. Retention calls it on the unbound
+   * store only; an owner-bound view (see forUser) refuses.
+   */
+  pruneBatch(cutoff: number, limit: number): Promise<number> | number;
   /** Deletes every sample of the owner this view is bound to (see forUser). */
   deleteOwnerSamples(): Promise<number> | number;
   getStats(): Promise<{ totalSamples: number; oldestTimestamp: number | null; newestTimestamp: number | null }> | { totalSamples: number; oldestTimestamp: number | null; newestTimestamp: number | null };
@@ -321,6 +327,14 @@ export class TelemetryStorage implements ITelemetryStorage {
     const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
     const stmt = this.db.prepare("DELETE FROM telemetry_samples WHERE user_id IS ? AND timestamp < ?");
     const info = stmt.run(this.userId, cutoff);
+    return Number(info.changes);
+  }
+
+  pruneBatch(cutoff: number, limit: number): number {
+    if (this.userId) throw new Error("pruneBatch runs on the unbound store, not an owner view");
+    const info = this.db.prepare(
+      "DELETE FROM telemetry_samples WHERE id IN (SELECT id FROM telemetry_samples WHERE timestamp < ? LIMIT ?)"
+    ).run(cutoff, limit);
     return Number(info.changes);
   }
 

@@ -1139,6 +1139,21 @@ export class PostgresTelemetryStorage implements ITelemetryStorage {
     return res.rowCount ?? 0;
   }
 
+  async pruneBatch(cutoff: number, limit: number): Promise<number> {
+    if (this.userId) throw new Error("pruneBatch runs on the unbound store, not an owner view");
+    await this.ready();
+    // One short statement per batch, found through idx_telemetry_ts. SKIP
+    // LOCKED lets a second pod overlapping in a rolling update take other rows
+    // instead of waiting on these.
+    const res = await this.pool.query(
+      `DELETE FROM telemetry_samples WHERE id IN (
+         SELECT id FROM telemetry_samples WHERE timestamp < $1 LIMIT $2 FOR UPDATE SKIP LOCKED
+       )`,
+      [cutoff, limit]
+    );
+    return res.rowCount ?? 0;
+  }
+
   async deleteOwnerSamples(): Promise<number> {
     if (!this.userId) throw new Error("deleteOwnerSamples requires an owner-bound view");
     await this.ready();

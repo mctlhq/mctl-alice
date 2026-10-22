@@ -3,16 +3,13 @@ import { ITelemetryStorage, TelemetrySample } from "../storage/telemetry-storage
 
 export interface TelemetrySamplerOptions {
   intervalMs?: number;
-  retentionDays?: number;
   enabled?: boolean;
 }
 
 export class TelemetrySampler {
   private timer: NodeJS.Timeout | null = null;
-  private pruneTimer: NodeJS.Timeout | null = null;
   private isSampling = false;
   private intervalMs: number;
-  private retentionDays: number;
   private enabled: boolean;
 
   constructor(
@@ -23,9 +20,6 @@ export class TelemetrySampler {
     this.intervalMs =
       options.intervalMs ??
       parseInt(process.env.TELEMETRY_SAMPLE_INTERVAL_MS || "60000", 10);
-    this.retentionDays =
-      options.retentionDays ??
-      parseInt(process.env.TELEMETRY_RETENTION_DAYS || "30", 10);
     this.enabled =
       options.enabled ?? (process.env.TELEMETRY_SAMPLING_ENABLED !== "false");
   }
@@ -46,7 +40,7 @@ export class TelemetrySampler {
     console.log(
       `📊 [TelemetrySampler] Started background sampling every ${Math.round(
         this.intervalMs / 1000
-      )}s (retention: ${this.retentionDays} days)`
+      )}s`
     );
 
     // Initial sample with small delay so server startup finishes
@@ -62,17 +56,7 @@ export class TelemetrySampler {
       });
     }, this.intervalMs);
 
-    // Prune old samples once every 24 hours
-    this.pruneTimer = setInterval(async () => {
-      try {
-        const deleted = await this.storage.pruneOld(this.retentionDays);
-        if (deleted > 0) {
-          console.log(`🧹 [TelemetrySampler] Pruned ${deleted} old telemetry samples.`);
-        }
-      } catch (err: any) {
-        console.warn(`⚠️ [TelemetrySampler] Prune error: ${err.message}`);
-      }
-    }, 24 * 60 * 60 * 1000);
+    // Retention runs separately (TelemetryRetention), in every mode.
   }
 
   /**
@@ -82,10 +66,6 @@ export class TelemetrySampler {
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = null;
-    }
-    if (this.pruneTimer) {
-      clearInterval(this.pruneTimer);
-      this.pruneTimer = null;
     }
     console.log("🛑 [TelemetrySampler] Stopped background sampling.");
   }

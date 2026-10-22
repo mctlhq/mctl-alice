@@ -169,7 +169,7 @@ export const ALICE_TOOLS: Tool[] = [
   {
     name: "alice_get_device_history",
     description:
-      "Get historical telemetry time-series, energy consumption (total kWh, peak/min/average power in Watts), and sensor charts for a smart home device. Data is sampled every minute.",
+      "Get historical telemetry time-series, energy consumption (total kWh, peak/min/average power in Watts), and sensor charts for a smart home device. Works only on a self-hosted single-user server, which samples devices every minute; the hosted service (alice.mctl.ai) does not record history and returns an error.",
     inputSchema: {
       type: "object",
       properties: {

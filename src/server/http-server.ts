@@ -39,6 +39,7 @@ import {
 import { getOpenApiSpec } from "./openapi.js";
 import { TelemetryStorage, ITelemetryStorage } from "../storage/telemetry-storage.js";
 import { TelemetrySampler } from "../services/telemetry-sampler.js";
+import { TelemetryRetention, TelemetryRetentionOptions } from "../services/telemetry-retention.js";
 import { IStorage, createStorage, createTelemetryStorage, OAuthStorage } from "../storage/index.js";
 import { OAuthController, OAuthError } from "../auth/oauth-controller.js";
 import { initQrAuth, checkQrAuthStatus } from "../auth/yandex-qr-auth.js";
@@ -548,6 +549,8 @@ export interface HttpServerOptions {
   publicBaseUrl?: string;
   storage?: ITelemetryStorage;
   enableSampler?: boolean;
+  /** Retention schedule for telemetry samples; runs in every mode. `false` turns it off (the default under Vitest). */
+  retention?: TelemetryRetentionOptions | false;
   oauthStorage?: IStorage;
   yandexCallbackUri?: string;
   authRequired?: boolean;
@@ -627,6 +630,13 @@ export function createHttpServer(
       console.warn(`⚠️ [mctl-alice] Telemetry sampler initialization skipped: ${err.message}`);
     }
   }
+  // Not tied to the sampler: hosted mode samples nothing (2.2.2), yet rows
+  // recorded earlier must still age out of the retention period.
+  // Under the test runner it runs only when a test asks for it, so a suite run
+  // never prunes a real ./data/telemetry.db or TELEMETRY_DB_PATH.
+  const retentionOptions = options.retention ?? (process.env.VITEST ? false : {});
+  const retention = retentionOptions === false ? null : new TelemetryRetention(telemetryStorage, retentionOptions);
+  retention?.start();
 
   // Keep track of active legacy SSE transports
   const sseTransports = new Map<string, SSEServerTransport>();
@@ -2281,6 +2291,7 @@ export function createHttpServer(
   server.on("close", () => {
     for (const transport of sseTransports.values()) void transport.close();
     if (sampler) sampler.stop();
+    retention?.stop();
     if (!options.storage) void telemetryStorage.close();
   });
 

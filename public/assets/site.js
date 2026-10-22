@@ -183,7 +183,6 @@
       oauth_retention_tokens: "Приложение получит токен MCP на 30 дней; мы храним только его SHA-256 хеш.",
       oauth_retention_yandex: "Ваши токены Яндекса (и cookie Quasar, если вы её подключили) хранятся зашифрованными AES-256-GCM, пока вы не удалите аккаунт.",
       oauth_retention_revoke: "Отозвать доступ приложения или удалить аккаунт можно в любой момент в личном кабинете; резервные копии хранятся не дольше 14 дней.",
-      oauth_status_connected: "Подключение к умному дому Яндекс Алисы активно.",
       oauth_btn_approve: "Разрешить доступ",
       oauth_btn_deny: "Отклонить",
 
@@ -393,7 +392,6 @@
       oauth_retention_tokens: "The app receives an MCP token valid for 30 days; we store only its SHA-256 hash.",
       oauth_retention_yandex: "Your Yandex tokens (and the Quasar cookie, if you connected it) are stored encrypted with AES-256-GCM until you delete your account.",
       oauth_retention_revoke: "You can revoke the app's access or delete your account at any time on your account page; backups are kept for at most 14 days.",
-      oauth_status_connected: "Connection to Yandex Alice Smart Home is active.",
       oauth_btn_approve: "Authorize Access",
       oauth_btn_deny: "Cancel",
 

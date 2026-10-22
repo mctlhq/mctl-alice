@@ -3,6 +3,15 @@
 Versions follow semantic versioning; tags carry no `v` prefix. Full notes for
 every version are on the [Releases page](https://github.com/mctlhq/mctl-alice/releases).
 
+## 2.2.8 (2026-10-22)
+
+- Request bodies are capped (64 KiB for forms, 1 MiB for MCP, 413 above),
+  sign-in, OAuth and MCP endpoints are rate limited (429 with `Retry-After`),
+  JSON-RPC batches are bounded, and every Yandex call has a timeout (504) with
+  sanitized error text (502) (#75, closes #74).
+- Honest data-flow and privacy text, a data inventory with retention, a
+  non-affiliation disclaimer, corrected README tool list (#78).
+
 ## 2.2.7 (2026-10-22)
 
 - Database restore runbook and the read-only `restore-check` tool (#73).

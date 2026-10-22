@@ -13,3 +13,12 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    ignore:
+      # Never propose a Node major for the base image. Dependabot follows the
+      # newest tag, including odd non-LTS lines (it opened #84 for
+      # 25-alpine, already EOL). Moving between LTS lines (22 -> 24 -> 26)
+      # is a deliberate change made in one PR together with `node-version`
+      # in ci.yml and `@types/node` in package.json. Minor and patch tags
+      # within the current line still come through.
+      - dependency-name: "node"
+        update-types: ["version-update:semver-major"]

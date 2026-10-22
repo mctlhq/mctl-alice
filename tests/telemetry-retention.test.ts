@@ -98,9 +98,14 @@ describe("TelemetryRetention on SQLite", () => {
     const start = vi.spyOn(TelemetryRetention.prototype, "start");
     storage = new TelemetryStorage(":memory:");
     const oauth = new OAuthStorage(":memory:");
-    for (const authRequired of [false, true]) {
-      const server = createHttpServer(0, { publicBaseUrl: "http://localhost", authRequired, oauthStorage: oauth, storage, enableSampler: false });
-      server.emit("close");
+    // As Vitest sets it, a run with NODE_ENV=production, and NODE_ENV=test without VITEST.
+    for (const env of [{}, { NODE_ENV: "production" }, { NODE_ENV: "test", VITEST: undefined }]) {
+      for (const [name, value] of Object.entries(env)) vi.stubEnv(name, value as string | undefined);
+      for (const authRequired of [false, true]) {
+        const server = createHttpServer(0, { publicBaseUrl: "http://localhost", authRequired, oauthStorage: oauth, storage, enableSampler: false });
+        server.emit("close");
+      }
+      vi.unstubAllEnvs();
     }
     expect(start).not.toHaveBeenCalled();
     const server = createHttpServer(0, { publicBaseUrl: "http://localhost", authRequired: true, oauthStorage: oauth, storage, retention: { initialDelayMs: 60_000 } });

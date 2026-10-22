@@ -50,6 +50,15 @@ describe("route buckets and client address", () => {
     expect(clientAddress(req, 2)).toBe("2.2.2.2");
     expect(clientAddress(req, 5)).toBe("9.9.9.9");
   });
+
+  it("prefers a configured single-valued client IP header", () => {
+    const req = (h: Record<string, unknown>) => ({ headers: { "x-forwarded-for": "3.3.3.3", ...h }, socket: { remoteAddress: "9.9.9.9" } }) as any;
+    expect(clientAddress(req({ "cf-connecting-ip": "4.4.4.4" }), 0, "cf-connecting-ip")).toBe("4.4.4.4");
+    expect(clientAddress(req({ "cf-connecting-ip": "4.4.4.4" }), 0, "")).toBe("9.9.9.9");
+    expect(clientAddress(req({}), 1, "cf-connecting-ip")).toBe("3.3.3.3");
+    expect(clientAddress(req({ "cf-connecting-ip": "4.4.4.4, 5.5.5.5" }), 0, "cf-connecting-ip")).toBe("9.9.9.9");
+    expect(clientAddress(req({ "cf-connecting-ip": "  " }), 0, "cf-connecting-ip")).toBe("9.9.9.9");
+  });
 });
 
 describe("rate limits over HTTP", () => {
@@ -145,5 +154,17 @@ describe("rate limits over HTTP", () => {
     const untrusted = await start(8315, { rateLimits: { register: 1 }, trustProxyHops: 0 });
     await register(untrusted, "10.0.0.1");
     expect((await register(untrusted, "10.0.0.2")).status).toBe(429);
+  });
+
+  it("separates clients by CLIENT_IP_HEADER only when it is configured", async () => {
+    const register = (base: string, ip: string) => fetch(`${base}/oauth/register`, { method: "POST", headers: { "Content-Type": "application/json", "CF-Connecting-IP": ip }, body: "{}" });
+    const keyed = await start(8317, { rateLimits: { register: 1 }, clientIpHeader: "CF-Connecting-IP" });
+    await register(keyed, "198.51.100.1");
+    expect((await register(keyed, "198.51.100.1")).status).toBe(429);
+    expect((await register(keyed, "198.51.100.2")).status).not.toBe(429);
+
+    const unkeyed = await start(8318, { rateLimits: { register: 1 } });
+    await register(unkeyed, "198.51.100.1");
+    expect((await register(unkeyed, "198.51.100.2")).status).toBe(429);
   });
 });

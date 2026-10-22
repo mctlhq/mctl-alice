@@ -330,8 +330,8 @@ login, refresh, simultaneous requests, Quasar use, history and restarts.
   request size limits, endpoint-specific rate limits, upstream timeouts
   (request size limits, in-process per-endpoint rate limits and Yandex upstream
   timeouts with sanitized upstream errors are implemented in issue #74;
-  `TRUST_PROXY_HOPS` still has to be set in mctl-gitops once the ingress's
-  `X-Forwarded-For` behaviour is confirmed),
+  the hosted instance keys clients by `CLIENT_IP_HEADER=cf-connecting-ip`,
+  because Traefik rewrites `X-Forwarded-For` to the Cloudflare edge address),
   session expiry, safe CORS and security headers. Use nonce/hash-based CSP,
   frame-ancestors protection, no-referrer and no-store on authentication pages.
 - Log route templates and redacted outcomes, not codes, cookies, tokens,

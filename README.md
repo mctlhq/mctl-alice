@@ -38,7 +38,7 @@ Set `PUBLIC_BASE_URL` to the exact origin browsers use to reach the server. With
 
 ### Request limits
 
-Bodies are capped at 64 KiB (forms) and 1 MiB (MCP/REST JSON, `MAX_MCP_BODY_BYTES`), and OAuth, sign-in and MCP routes are rate limited per client (`RATE_LIMIT_REGISTER|TOKEN|AUTHORIZE|LOGIN|QR|MCP`, requests per minute). Behind a reverse proxy set `TRUST_PROXY_HOPS` to the number of trusted proxies so the client address is taken from `X-Forwarded-For`; set it only behind a proxy you control, since otherwise clients can spoof their rate-limit key. See `SECURITY.md` for the defaults.
+Bodies are capped at 64 KiB (forms) and 1 MiB (MCP/REST JSON, `MAX_MCP_BODY_BYTES`), and OAuth, sign-in and MCP routes are rate limited per client (`RATE_LIMIT_REGISTER|TOKEN|AUTHORIZE|LOGIN|QR|MCP`, requests per minute). Behind a reverse proxy set `CLIENT_IP_HEADER` to a header the proxy overwrites with the client address (`cf-connecting-ip` behind Cloudflare), or `TRUST_PROXY_HOPS` to the number of trusted proxies so the address is taken from `X-Forwarded-For`; set either only behind a proxy you control, since otherwise clients can spoof their rate-limit key. See `SECURITY.md` for the defaults.
 
 ---
 

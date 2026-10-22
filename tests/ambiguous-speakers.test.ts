@@ -107,10 +107,10 @@ describe("speaker and device ambiguity", () => {
     expect(vi.mocked(quasar.sendTts).mock.calls[0][0]).toBe("spk-guest");
   });
 
-  // Gap: getHomeSummary resolves its room with Array.find, so an ambiguous
-  // room summarises the first match instead of failing like every other tool
-  // (src/services/station-service.ts getHomeSummary). Read-only, so low impact.
-  it.fails("the home summary refuses an ambiguous room", async () => {
-    await expect(service.getHomeSummary("спал")).rejects.toThrow(/ambiguous/);
+  it("the home summary refuses an ambiguous room and still narrows to a unique one", async () => {
+    await expect(service.getHomeSummary("спал")).rejects.toThrow(/Room "спал" is ambiguous/);
+    await expect(service.getHomeSummary("гараж")).rejects.toThrow(/Room "гараж" was not found/);
+    expect(await service.getHomeSummary("спальня")).toMatchObject({ scope: "Спальня" });
+    expect(await service.getHomeSummary("все")).toMatchObject({ scope: "Весь дом" });
   });
 });

@@ -9,6 +9,8 @@ import {
   AuthCode,
   OAuthTokenRecord,
   UserGrant,
+  SpentSecret,
+  spentSecretFromRow,
 } from "./storage-interface.js";
 import {
   ITelemetryStorage,
@@ -23,7 +25,7 @@ import { encryptToken, decryptToken, decryptStoredToken, secretDigest, secretLoo
 /** Tables created by PostgresStorage and PostgresTelemetryStorage. */
 export const POSTGRES_TABLES = [
   "browser_transactions", "users", "user_credentials", "web_sessions", "quasar_proxy_scenarios",
-  "oauth_clients", "oauth_pending", "oauth_codes", "oauth_tokens", "telemetry_samples",
+  "oauth_clients", "oauth_pending", "oauth_codes", "oauth_tokens", "oauth_spent_secrets", "telemetry_samples",
 ] as const;
 
 /** Columns holding bearer secrets, stored as sha256: digests. */
@@ -31,6 +33,7 @@ export const SECRET_COLUMNS: ReadonlyArray<readonly [string, string]> = [
   ["oauth_tokens", "access_token"],
   ["oauth_tokens", "refresh_token"],
   ["oauth_codes", "code"],
+  ["oauth_spent_secrets", "secret"],
   ["web_sessions", "session_hash"],
   ["browser_transactions", "key"],
 ];
@@ -196,6 +199,20 @@ export class PostgresStorage implements IStorage {
         );
         CREATE INDEX IF NOT EXISTS idx_tokens_expires ON oauth_tokens(expires_at);
         CREATE INDEX IF NOT EXISTS idx_tokens_user ON oauth_tokens(user_id);
+        ALTER TABLE oauth_tokens ADD COLUMN IF NOT EXISTS grant_id VARCHAR(255);
+        CREATE INDEX IF NOT EXISTS idx_tokens_grant ON oauth_tokens(grant_id);
+
+        CREATE TABLE IF NOT EXISTS oauth_spent_secrets (
+          secret VARCHAR(255) PRIMARY KEY,
+          kind VARCHAR(16) NOT NULL,
+          grant_id VARCHAR(255) NOT NULL,
+          client_id VARCHAR(255) NOT NULL,
+          user_id VARCHAR(255),
+          spent_at BIGINT NOT NULL,
+          expires_at BIGINT NOT NULL,
+          reused_at BIGINT
+        );
+        CREATE INDEX IF NOT EXISTS idx_spent_secrets_expires ON oauth_spent_secrets(expires_at);
       `);
 
       // Replace bearer secrets stored before hashing with their digests
@@ -395,7 +412,7 @@ export class PostgresStorage implements IStorage {
       // Only user_credentials references users(id); every other owner-keyed
       // table must be cleared explicitly, otherwise tokens and sessions survive
       // and reattach when the same Yandex account (deterministic usr_<uid>) returns.
-      for (const table of ["user_credentials", "quasar_proxy_scenarios", "web_sessions", "oauth_tokens", "oauth_codes", "oauth_pending"]) {
+      for (const table of ["user_credentials", "quasar_proxy_scenarios", "web_sessions", "oauth_tokens", "oauth_codes", "oauth_spent_secrets", "oauth_pending"]) {
         await client.query(`DELETE FROM ${table} WHERE user_id = $1`, [userId]);
       }
       await client.query("DELETE FROM users WHERE id = $1", [userId]);
@@ -622,9 +639,19 @@ export class PostgresStorage implements IStorage {
     );
   }
 
-  async consumeAuthCode(code: string): Promise<AuthCode | null> {
+  async consumeAuthCode(code: string, spend?: { grantId: string; keepUntil: number }): Promise<AuthCode | null> {
     await this.ready();
-    const res = await this.pool.query("DELETE FROM oauth_codes WHERE code IN ($1, $2) RETURNING *", secretLookupKeys(code));
+    if (spend) await this.pool.query("DELETE FROM oauth_spent_secrets WHERE expires_at < $1", [Date.now()]);
+    // One statement: a replay finds the code either live or spent, never neither.
+    const res = spend
+      ? await this.pool.query(
+        `WITH taken AS (DELETE FROM oauth_codes WHERE code IN ($1, $2) RETURNING *),
+              spent AS (INSERT INTO oauth_spent_secrets (secret, kind, grant_id, client_id, user_id, spent_at, expires_at)
+                        SELECT $3, 'code', $4, client_id, user_id, $5, $6 FROM taken WHERE expires_at >= $5
+                        ON CONFLICT (secret) DO NOTHING)
+         SELECT * FROM taken`,
+        [...secretLookupKeys(code), storedSecret(code), spend.grantId, Date.now(), spend.keepUntil])
+      : await this.pool.query("DELETE FROM oauth_codes WHERE code IN ($1, $2) RETURNING *", secretLookupKeys(code));
     const row = res.rows[0];
     if (!row) return null;
     if (Number(row.expires_at) < Date.now()) {
@@ -671,8 +698,8 @@ export class PostgresStorage implements IStorage {
       `INSERT INTO oauth_tokens (
          access_token, refresh_token, client_id, user_id,
          yandex_access_token, yandex_refresh_token, yandex_expires_at,
-         scope, created_at, expires_at
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         scope, created_at, expires_at, grant_id
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
        ON CONFLICT (access_token) DO UPDATE SET
          refresh_token = EXCLUDED.refresh_token,
          client_id = EXCLUDED.client_id,
@@ -681,7 +708,8 @@ export class PostgresStorage implements IStorage {
          yandex_refresh_token = EXCLUDED.yandex_refresh_token,
          yandex_expires_at = EXCLUDED.yandex_expires_at,
          scope = EXCLUDED.scope,
-         expires_at = EXCLUDED.expires_at`,
+         expires_at = EXCLUDED.expires_at,
+         grant_id = EXCLUDED.grant_id`,
       [
         storedSecret(token.accessToken),
         token.refreshToken ? storedSecret(token.refreshToken) : null,
@@ -693,6 +721,7 @@ export class PostgresStorage implements IStorage {
         token.scope,
         token.createdAt,
         token.expiresAt,
+        token.grantId ?? null,
       ]
     );
   }
@@ -740,6 +769,7 @@ export class PostgresStorage implements IStorage {
       scope: row.scope,
       createdAt: Number(row.created_at),
       expiresAt: Number(row.expires_at),
+      grantId: row.grant_id || undefined,
     };
   }
 
@@ -772,6 +802,40 @@ export class PostgresStorage implements IStorage {
       "DELETE FROM oauth_tokens WHERE access_token IN ($1, $2) OR refresh_token IN ($1, $2)",
       secretLookupKeys(token)
     );
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  async recordSpentSecret(secret: string, spent: SpentSecret): Promise<void> {
+    await this.ready();
+    await this.pool.query("DELETE FROM oauth_spent_secrets WHERE expires_at < $1", [Date.now()]);
+    await this.pool.query(
+      `INSERT INTO oauth_spent_secrets (secret, kind, grant_id, client_id, user_id, spent_at, expires_at, reused_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       ON CONFLICT (secret) DO UPDATE SET kind = EXCLUDED.kind, grant_id = EXCLUDED.grant_id, client_id = EXCLUDED.client_id,
+         user_id = EXCLUDED.user_id, spent_at = EXCLUDED.spent_at, expires_at = EXCLUDED.expires_at, reused_at = EXCLUDED.reused_at`,
+      [storedSecret(secret), spent.kind, spent.grantId, spent.clientId, spent.userId ?? null, spent.spentAt, spent.expiresAt, spent.reusedAt ?? null]
+    );
+  }
+
+  async getSpentSecret(secret: string): Promise<SpentSecret | null> {
+    await this.ready();
+    const res = await this.pool.query("SELECT * FROM oauth_spent_secrets WHERE secret IN ($1, $2) AND expires_at >= $3", [...secretLookupKeys(secret), Date.now()]);
+    return res.rows[0] ? spentSecretFromRow(res.rows[0]) : null;
+  }
+
+  async flagSpentSecretReuse(secret: string): Promise<SpentSecret | null> {
+    await this.ready();
+    const res = await this.pool.query(
+      "UPDATE oauth_spent_secrets SET reused_at = COALESCE(reused_at, $3) WHERE secret IN ($1, $2) AND expires_at >= $3 RETURNING *",
+      [...secretLookupKeys(secret), Date.now()]
+    );
+    return res.rows[0] ? spentSecretFromRow(res.rows[0]) : null;
+  }
+
+  async revokeGrantFamily(grantId: string): Promise<boolean> {
+    if (!grantId) return false;
+    await this.ready();
+    const result = await this.pool.query("DELETE FROM oauth_tokens WHERE grant_id = $1", [grantId]);
     return (result.rowCount ?? 0) > 0;
   }
 
@@ -808,6 +872,7 @@ export class PostgresStorage implements IStorage {
     await this.pool.query("DELETE FROM oauth_pending WHERE expires_at < $1", [now]);
     await this.pool.query("DELETE FROM oauth_codes WHERE expires_at < $1", [now]);
     await this.pool.query("DELETE FROM oauth_tokens WHERE expires_at < $1", [now]);
+    await this.pool.query("DELETE FROM oauth_spent_secrets WHERE expires_at < $1", [now]);
     await this.pool.query("DELETE FROM web_sessions WHERE expires_at < $1", [now]);
   }
 

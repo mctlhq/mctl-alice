@@ -1,4 +1,4 @@
-import { CredentialDecryptionError } from "./storage-interface.js";
+import { CredentialDecryptionError, SpentSecret, spentSecretFromRow } from "./storage-interface.js";
 import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync, StatementSync } from "node:sqlite";
@@ -208,7 +208,19 @@ export class OAuthStorage implements IStorage {
         expires_at INTEGER NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS oauth_spent_secrets (
+        secret TEXT PRIMARY KEY,
+        kind TEXT NOT NULL,
+        grant_id TEXT NOT NULL,
+        client_id TEXT NOT NULL,
+        user_id TEXT,
+        spent_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        reused_at INTEGER
+      );
+
       CREATE INDEX IF NOT EXISTS idx_pending_expires ON oauth_pending(expires_at);
+      CREATE INDEX IF NOT EXISTS idx_spent_secrets_expires ON oauth_spent_secrets(expires_at);
       CREATE INDEX IF NOT EXISTS idx_codes_expires ON oauth_codes(expires_at);
       CREATE INDEX IF NOT EXISTS idx_tokens_expires ON oauth_tokens(expires_at);
       CREATE INDEX IF NOT EXISTS idx_web_sessions_expires ON web_sessions(expires_at);
@@ -235,10 +247,16 @@ export class OAuthStorage implements IStorage {
     } catch {
       // Column already exists
     }
+    try {
+      this.db.exec(`ALTER TABLE oauth_tokens ADD COLUMN grant_id TEXT;`);
+    } catch {
+      // Column already exists
+    }
 
     // Indexes on migrated columns
     try {
       this.db.exec(`CREATE INDEX IF NOT EXISTS idx_tokens_user ON oauth_tokens(user_id);`);
+      this.db.exec(`CREATE INDEX IF NOT EXISTS idx_tokens_grant ON oauth_tokens(grant_id);`);
     } catch {
       // Ignore if cannot index
     }
@@ -304,17 +322,17 @@ export class OAuthStorage implements IStorage {
     `);
 
     this.insertTokenStmt = this.db.prepare(`
-      INSERT OR REPLACE INTO oauth_tokens (access_token, refresh_token, client_id, user_id, yandex_access_token, yandex_refresh_token, yandex_expires_at, scope, created_at, expires_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT OR REPLACE INTO oauth_tokens (access_token, refresh_token, client_id, user_id, yandex_access_token, yandex_refresh_token, yandex_expires_at, scope, created_at, expires_at, grant_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     this.getTokenStmt = this.db.prepare(`
-      SELECT access_token, refresh_token, client_id, user_id, yandex_access_token, yandex_refresh_token, yandex_expires_at, scope, created_at, expires_at
+      SELECT access_token, refresh_token, client_id, user_id, yandex_access_token, yandex_refresh_token, yandex_expires_at, scope, created_at, expires_at, grant_id
       FROM oauth_tokens WHERE access_token IN (?, ?)
     `);
 
     this.getTokenByRefreshStmt = this.db.prepare(`
-      SELECT access_token, refresh_token, client_id, user_id, yandex_access_token, yandex_refresh_token, yandex_expires_at, scope, created_at, expires_at
+      SELECT access_token, refresh_token, client_id, user_id, yandex_access_token, yandex_refresh_token, yandex_expires_at, scope, created_at, expires_at, grant_id
       FROM oauth_tokens WHERE refresh_token IN (?, ?)
     `);
 
@@ -607,6 +625,7 @@ export class OAuthStorage implements IStorage {
       this.db.prepare("DELETE FROM web_sessions WHERE user_id = ?").run(userId);
       this.db.prepare("DELETE FROM oauth_tokens WHERE user_id = ?").run(userId);
       this.db.prepare("DELETE FROM oauth_codes WHERE user_id = ?").run(userId);
+      this.db.prepare("DELETE FROM oauth_spent_secrets WHERE user_id = ?").run(userId);
       this.db.prepare("DELETE FROM oauth_pending WHERE user_id = ?").run(userId);
       this.deleteUserStmt.run(userId);
       this.db.exec("COMMIT;");
@@ -707,7 +726,7 @@ export class OAuthStorage implements IStorage {
     );
   }
 
-  consumeAuthCode(code: string): AuthCode | null {
+  consumeAuthCode(code: string, spend?: { grantId: string; keepUntil: number }): AuthCode | null {
     const keys = secretLookupKeys(code);
     const row = this.getCodeStmt.get(...keys) as any;
     if (!row) return null;
@@ -716,6 +735,11 @@ export class OAuthStorage implements IStorage {
     if (Number(this.deleteCodeStmt.run(...keys).changes) === 0) return null;
     if (row.expires_at < Date.now()) {
       return null;
+    }
+    // In the same synchronous step as the delete, so a replay never finds the
+    // code neither live nor spent.
+    if (spend) {
+      this.recordSpentSecret(code, { kind: "code", grantId: spend.grantId, clientId: row.client_id, userId: row.user_id || undefined, spentAt: Date.now(), expiresAt: spend.keepUntil });
     }
 
     const userId = row.user_id || "legacy_user";
@@ -763,7 +787,8 @@ export class OAuthStorage implements IStorage {
       token.yandexExpiresAt || null,
       token.scope,
       token.createdAt,
-      token.expiresAt
+      token.expiresAt,
+      token.grantId || null
     );
   }
 
@@ -797,12 +822,16 @@ export class OAuthStorage implements IStorage {
       scope: row.scope,
       createdAt: row.created_at,
       expiresAt: row.expires_at,
+      grantId: row.grant_id || undefined,
     };
   }
 
   getTokenByRefreshToken(refreshToken: string): OAuthTokenRecord | null {
     const row = this.getTokenByRefreshStmt.get(...secretLookupKeys(refreshToken)) as any;
     if (!row) return null;
+    if (row.expires_at < Date.now()) {
+      return null;
+    }
 
     const userId = row.user_id || "legacy_user";
     let yandexAccessToken = "";
@@ -827,6 +856,7 @@ export class OAuthStorage implements IStorage {
       scope: row.scope,
       createdAt: row.created_at,
       expiresAt: row.expires_at,
+      grantId: row.grant_id || undefined,
     };
   }
 
@@ -853,6 +883,32 @@ export class OAuthStorage implements IStorage {
   revokeToken(token: string): boolean {
     const keys = secretLookupKeys(token);
     return Number(this.deleteTokenStmt.run(...keys, ...keys).changes) > 0;
+  }
+
+  // --- Reuse detection ---
+
+  recordSpentSecret(secret: string, spent: SpentSecret): void {
+    this.db.prepare("DELETE FROM oauth_spent_secrets WHERE expires_at < ?").run(Date.now());
+    this.db.prepare(`
+      INSERT OR REPLACE INTO oauth_spent_secrets (secret, kind, grant_id, client_id, user_id, spent_at, expires_at, reused_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(storedSecret(secret), spent.kind, spent.grantId, spent.clientId, spent.userId ?? null, spent.spentAt, spent.expiresAt, spent.reusedAt ?? null);
+  }
+
+  getSpentSecret(secret: string): SpentSecret | null {
+    const row = this.db.prepare("SELECT * FROM oauth_spent_secrets WHERE secret IN (?, ?) AND expires_at >= ?").get(...secretLookupKeys(secret), Date.now()) as any;
+    return row ? spentSecretFromRow(row) : null;
+  }
+
+  flagSpentSecretReuse(secret: string): SpentSecret | null {
+    const now = Date.now();
+    this.db.prepare("UPDATE oauth_spent_secrets SET reused_at = COALESCE(reused_at, ?) WHERE secret IN (?, ?) AND expires_at >= ?").run(now, ...secretLookupKeys(secret), now);
+    return this.getSpentSecret(secret);
+  }
+
+  revokeGrantFamily(grantId: string): boolean {
+    if (!grantId) return false;
+    return Number(this.db.prepare("DELETE FROM oauth_tokens WHERE grant_id = ?").run(grantId).changes) > 0;
   }
 
   close(): void {

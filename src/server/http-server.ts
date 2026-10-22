@@ -644,7 +644,10 @@ export function createHttpServer(
   // recorded earlier must still age out of the retention period.
   // Under the test runner it runs only when a test asks for it, so a suite run
   // never prunes a real ./data/telemetry.db or TELEMETRY_DB_PATH.
-  const retentionOptions = options.retention ?? (process.env.VITEST ? false : {});
+  // NODE_ENV=test is what Vitest sets unless NODE_ENV is already set;
+  // VITEST covers a run started with NODE_ENV=production.
+  const underTest = process.env.NODE_ENV === "test" || Boolean(process.env.VITEST);
+  const retentionOptions = options.retention ?? (underTest ? false : {});
   const retention = retentionOptions === false ? null : new TelemetryRetention(telemetryStorage, retentionOptions);
   retention?.start();
 

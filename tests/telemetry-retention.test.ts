@@ -99,8 +99,13 @@ describe("TelemetryRetention on SQLite", () => {
     storage = new TelemetryStorage(":memory:");
     const oauth = new OAuthStorage(":memory:");
     // As Vitest sets it, a run with NODE_ENV=production, and NODE_ENV=test without VITEST.
-    for (const env of [{}, { NODE_ENV: "production" }, { NODE_ENV: "test", VITEST: undefined }]) {
-      for (const [name, value] of Object.entries(env)) vi.stubEnv(name, value as string | undefined);
+    const envs: Array<Record<string, string | undefined>> = [{}, { NODE_ENV: "production" }, { NODE_ENV: "test", VITEST: undefined }];
+    for (const env of envs) {
+      for (const [name, value] of Object.entries(env)) {
+        // Vitest 3 deletes the variable for undefined; assert it, so a coerced "undefined" cannot hide the NODE_ENV case.
+        vi.stubEnv(name, value);
+        expect(name in process.env ? process.env[name] : undefined).toBe(value);
+      }
       for (const authRequired of [false, true]) {
         const server = createHttpServer(0, { publicBaseUrl: "http://localhost", authRequired, oauthStorage: oauth, storage, enableSampler: false });
         server.emit("close");

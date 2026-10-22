@@ -1,6 +1,6 @@
 # mctl-alice
 
-Model Context Protocol (MCP) server for controlling **Yandex Station (Алиса)** smart speakers and smart home devices via the Yandex Cloud IoT API.
+Model Context Protocol (MCP) server for controlling **Yandex Station (Алиса)** smart speakers and smart home devices through the official Yandex Smart Home API and, optionally, the unofficial Quasar API.
 
 Enables AI assistants (Claude, ChatGPT, Codex, Antigravity, OpenClaw, Cursor, etc.) to speak through your Alice speakers, send voice commands, control volume and playback, and manage your smart home.
 
@@ -31,7 +31,7 @@ docker run -d \
   -e ENCRYPTION_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
   -e YANDEX_CLIENT_ID=your_yandex_client_id \
   -e YANDEX_CLIENT_SECRET=your_yandex_client_secret \
-  ghcr.io/mctlhq/mctl-alice:2.0.0
+  ghcr.io/mctlhq/mctl-alice:<version>   # e.g. 2.2.7, see Releases
 ```
 
 Set `PUBLIC_BASE_URL` to the exact origin browsers use to reach the server. With `AUTH_REQUIRED=true`, the account pages, the consent form and the credential forms accept a `POST` only from that origin. Without auth, they and browser requests to `/mcp` and `/api/*` are accepted only from that origin or from a loopback host (`localhost`, `127.0.0.1`, `[::1]`). Pages still load from any name, but a server reached as `http://nas.local:3000` without a matching `PUBLIC_BASE_URL` rejects its own forms and requests with 403.
@@ -42,19 +42,40 @@ Set `PUBLIC_BASE_URL` to the exact origin browsers use to reach the server. With
 
 | Tool Name | Scope | Description |
 | :--- | :--- | :--- |
-| `alice_list_devices` | `iot:view` | Discovers all smart speakers, rooms, household appliances, and scenarios. |
-| `alice_get_device_state` | `iot:view` | Fetches real-time status, capabilities, and sensor values for a device. |
-| `alice_get_home_summary` | `iot:view` | Returns a human-readable overview of rooms and devices. |
-| `alice_get_device_history` | `iot:view` | Returns historical telemetry readings (sensor samples over time). |
-| `alice_control_device` | `iot:control` | Turns devices on/off, sets temperature, mode, or brightness. |
-| `alice_control_devices_batch`| `iot:control` | Dispatches batch control actions across multiple devices simultaneously. |
-| `alice_control_room` | `iot:control` | Controls all devices in a specified room (e.g. turn off all lights). |
-| `alice_execute_scenario` | `iot:control` | Triggers a predefined smart home automation scenario. |
-| `alice_set_volume` | `iot:control` | Adjusts speaker volume (1 to 10). |
-| `alice_playback_control` | `iot:control` | Media playback commands (play, pause, stop, next, prev). |
-| `alice_say_phrase` | `quasar` | Makes a Yandex Station speak arbitrary text (TTS). |
-| `alice_send_command` | `quasar` | Simulates a voice command as text (e.g. "Включи джаз"). |
+| `alice_list_devices` | `iot:view` | Lists speakers, rooms, smart home devices and scenarios. |
+| `alice_get_device_state` | `iot:view` | Returns the current state, capabilities and sensor values of a device. |
+| `alice_get_home_summary` | `iot:view` | Returns a readable overview of rooms and devices. |
+| `alice_get_device_history` | `iot:view` | Returns stored telemetry samples. The hosted service does not sample telemetry, so it returns no new data there. |
+| `alice_control_device` | `iot:control` | Turns a device on or off and sets temperature, mode or brightness. |
+| `alice_set_light` | `iot:control` | Sets a light's power, brightness, color temperature or scene. |
+| `alice_control_room` | `iot:control` | Controls every device of a category in a room or the whole home, e.g. all lights off. |
+| `alice_trigger_scenario` | `iot:control` | Runs a scenario defined in Yandex Smart Home. |
+| `alice_set_volume` | `iot:control` | Sets speaker volume (1 to 10). |
+| `alice_media_control` | `iot:control` | Playback commands: play, pause, stop, next, previous. |
+| `alice_say_phrase` | `quasar` | Makes a speaker say arbitrary text (TTS). |
+| `alice_send_command` | `quasar` | Sends a text command as if spoken, e.g. "Включи джаз". |
 
+The read-only tools also accept a token with only `iot:control`. `quasar` tools need the Quasar connection described below.
+
+## How data flows
+
+```mermaid
+flowchart LR
+  C[AI client] -- "MCP + OAuth 2.1 token (iot:view / iot:control / quasar)" --> S[mctl-alice]
+  S -- "official Smart Home API, your Yandex OAuth token" --> Y[Yandex Smart Home]
+  S -. "unofficial Quasar API, your Yandex web session (optional)" .-> Q[Yandex Quasar]
+  Q -- "mctl-* scenario per speaker" --> SP[Your speakers]
+  Y --> D[Your devices]
+  S --- DB[(PostgreSQL: encrypted Yandex credentials, hashed client tokens)]
+```
+
+- **Official API.** Device listing, state and control use the documented Yandex Smart Home API with the OAuth token you grant at sign-in.
+- **Unofficial API.** Speech and text commands use Quasar, the internal API of the Yandex web interface, with your Yandex web session cookie. Yandex does not support it for third parties and may change it without notice, and the session grants broader access than OAuth. It is off until you connect it, and disconnecting removes the cookie and the `mctl-*` scenarios.
+- **What is stored, where and for how long** is listed on the [privacy page](https://alice.mctl.ai/privacy).
+
+## Not affiliated with Yandex
+
+mctl-alice is an independent project. It is not affiliated with, endorsed or supported by Yandex. Yandex, Alice (Алиса) and Yandex Station are trademarks of their respective owners.
 ---
 
 ## Security Architecture & Threat Model

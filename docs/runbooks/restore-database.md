@@ -210,6 +210,7 @@ credentials.
 | --- | --- | --- | --- | --- | --- | --- |
 | 2026-10-22 | Platform operator (agent session; owner approved each cluster step) | 2026-10-22T12:00:00Z (scratch cluster only, no switch-over) | Recovery 3m06s; dump 4s (7.4 MB); `pg_restore` 30s; check 35s; teardown under 2 min | `restore-check` exit 0, `failures: []`; 10/10 tables usable; rows: users 3, user_credentials 3, web_sessions 24, browser_transactions 3, oauth_clients 34, oauth_pending 5, oauth_codes 8, oauth_tokens 12, quasar_proxy_scenarios 0, telemetry_samples 1390974 (equal to the source); credentials 39, undecryptable 0, notUnderActiveKey 39; clear-text secrets 0, clear-text credentials 0 | Volume 10Gi instead of 40Gi; `pg_restore` exit 1 on the CNPG `user_search` function (now `TEMPLATE template0`); check pod needed `imagePullSecrets` and a 30 s NetworkPolicy settle delay; stop point read from the timeline history file | Yes: Cluster, PVC, PV and namespace deleted the same hour |
 
-Follow-up: all 39 credential rows are still encrypted under a previous key in
-`ENCRYPTION_KEYS`, not the active one. Do not remove that key until the rows
-are re-encrypted.
+Note: `notUnderActiveKey 39` means every credential row is still in the
+unversioned `v1` envelope of `ENCRYPTION_KEY`; production has not moved to
+named keys (`ENCRYPTION_KEYS` / `ENCRYPTION_KEY_ID`) yet. Expected, not a
+failure; it matters only once a rotation starts.

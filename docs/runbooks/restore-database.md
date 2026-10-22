@@ -4,6 +4,11 @@ Restores only the `labs-mctl-alice` database on the shared CloudNativePG
 cluster `shared-pg` to a chosen point in time, without rolling back any other
 tenant. Restoring `shared-pg` in place is not part of this procedure.
 
+The backups are physical, so the scratch recovery cluster holds a copy of
+**every** tenant database on `shared-pg`, not only alice's, on a temporary
+billed volume. Treat the scratch namespace as admin-only and tear it down the
+same day.
+
 Conventions: `<db-ns>` is the namespace of `shared-pg`, `<scratch-ns>` a
 temporary namespace, `<target-time>` a UTC time such as `2026-10-01T12:00:00Z`.
 Database sessions run as the local `postgres` user inside a pod, because
@@ -30,8 +35,10 @@ recoverable time must not be assumed; read it from this list.
 ## 2. Create the scratch recovery cluster
 
 Create `<scratch-ns>` (admin access only: it will hold a copy of every tenant
-database) and copy the object-store credentials secret referenced by
-`shared-pg` into it. Copy the `barmanObjectStore` block from the live
+database), give it a default-deny ingress NetworkPolicy that admits only the
+app namespace, the CNPG operator namespace and pods in `<scratch-ns>` itself,
+and copy the object-store credentials secret referenced by
+`shared-pg` into it without printing it. Copy the `barmanObjectStore` block from the live
 `shared-pg` Cluster spec (`kubectl get cluster shared-pg -n <db-ns> -o yaml`)
 into `externalClusters`; do not retype it.
 
@@ -45,7 +52,9 @@ spec:
   instances: 1
   imageName: <same image as shared-pg>
   storage:
-    size: <at least the size of shared-pg storage>
+    # Size by data, not by the shared-pg volume: sum(pg_database_size) plus
+    # WAL headroom. 10Gi (the provider minimum) was enough for ~2 GB of data.
+    size: <data size plus headroom>
   bootstrap:
     recovery:
       source: shared-pg-origin
@@ -63,8 +72,13 @@ Wait for the cluster to become healthy, then confirm the recovered point:
 
 ```sh
 kubectl get cluster alice-restore -n <scratch-ns>
-kubectl exec -n <scratch-ns> alice-restore-1 -- psql -U postgres -c "SELECT pg_last_xact_replay_timestamp()"
+kubectl exec -n <scratch-ns> alice-restore-1 -c postgres -- \
+  sh -c 'tail -1 "$(ls /var/lib/postgresql/data/pgdata/pg_wal/*.history | tail -1)"'
 ```
+
+The last history line must read `before <target-time>`. Once the cluster is
+promoted, `pg_last_xact_replay_timestamp()` returns NULL, so it cannot confirm
+the stop point.
 
 ## 3. Dump only the alice database
 
@@ -85,13 +99,15 @@ Target is `shared-pg` for a real restore, or the scratch cluster for an
 exercise. In the primary pod, as local `postgres`:
 
 ```sh
-psql -U postgres -c 'CREATE DATABASE "labs-mctl-alice-restore" OWNER "labs-mctl-alice"'
+psql -U postgres -c 'CREATE DATABASE "labs-mctl-alice-restore" OWNER "labs-mctl-alice" TEMPLATE template0'
 PGOPTIONS='-c statement_timeout=0' pg_restore -U postgres --no-owner --no-acl \
   --role=labs-mctl-alice -d labs-mctl-alice-restore /var/lib/postgresql/data/alice.dump
 ```
 
-`--role` makes every object owned by the app role. The live database is not
-touched. The new database is not declared in gitops.
+`--role` makes every object owned by the app role. `TEMPLATE template0` keeps
+out the `user_search` function CNPG adds to `template1` for PgBouncer;
+without it `pg_restore` exits 1 on that one duplicate object. The live
+database is not touched. The new database is not declared in gitops.
 
 ## 5. Switch over, then verify before serving
 
@@ -119,9 +135,7 @@ ALTER DATABASE "labs-mctl-alice-restore" RENAME TO "labs-mctl-alice";
 ```
 
 3. Run `restore-check` as the app role against the live name, from a one-off
-   pod from the app image (override the image entrypoint, e.g.
-   `kubectl run alice-restore-check -n labs --rm -it --restart=Never
-   --image=<app image> --command -- node dist/restore-check.js`), using the
+   Pod manifest in `labs` (see "One-off check pod" below), using the
    app's own secrets for `DATABASE_URL` and the encryption key. No `--as-role`
    and no superuser URL are needed; the tool refuses to run without
    `ENCRYPTION_KEY` or `ENCRYPTION_KEYS`. It is read-only and prints counts only.
@@ -144,7 +158,27 @@ reviewed gitops change.
 - A test account can open `/account` and list devices.
 - Re-run `restore-check` against `labs-mctl-alice`.
 
-## 8. Clean up
+## One-off check pod
+
+`kubectl run` has no `--env-from`, so apply a Pod manifest instead. It needs:
+
+- `envFrom` with `mctl-alice-secrets` and `labs-mctl-alice-db-creds`;
+- `imagePullSecrets: [{name: ghcr-credentials}]`, or the pull fails on a node
+  without the image cached;
+- the deployment's restricted `securityContext` (non-root, read-only root,
+  all capabilities dropped, `RuntimeDefault` seccomp) and
+  `automountServiceAccountToken: false`;
+- a wait of about 30 s before connecting: the cluster's NetworkPolicy
+  controller admits a new pod's IP only after its next sync, and until then
+  every connection is refused (`ECONNREFUSED`), even to `shared-pg`.
+
+The entrypoint is `node --input-type=module -e` with a short script that
+sleeps, then imports `dist/restore-check.js`. For an exercise against the
+scratch cluster, the same script rewrites the host and database in
+`DATABASE_URL` and refuses to run if the URL does not have the expected
+production shape. Delete the pod afterwards.
+
+## 7. Clean up
 
 Delete the scratch Cluster, its PVCs, the namespace and every dump file.
 Keep `labs-mctl-alice-pre-restore-<yyyymmdd>` for 7 days, then
@@ -169,10 +203,13 @@ back to `labs-mctl-alice`, then scale up.
 
 ## Exercise log
 
-No exercise has been recorded yet. The "restore a backup" item of the launch
-plan stays open until one entry below is filled in. Record counts only: no
-hostnames, bucket names, endpoints, secret paths or credentials.
+Record counts only: no hostnames, bucket names, endpoints, secret paths or
+credentials.
 
 | Date | Operator role | Target time | Phase durations | Check output (counts) | Deviations | Scratch target torn down |
 | --- | --- | --- | --- | --- | --- | --- |
-| | | | | | | |
+| 2026-10-22 | Platform operator (agent session; owner approved each cluster step) | 2026-10-22T12:00:00Z (scratch cluster only, no switch-over) | Recovery 3m06s; dump 4s (7.4 MB); `pg_restore` 30s; check 35s; teardown under 2 min | `restore-check` exit 0, `failures: []`; 10/10 tables usable; rows: users 3, user_credentials 3, web_sessions 24, browser_transactions 3, oauth_clients 34, oauth_pending 5, oauth_codes 8, oauth_tokens 12, quasar_proxy_scenarios 0, telemetry_samples 1390974 (equal to the source); credentials 39, undecryptable 0, notUnderActiveKey 39; clear-text secrets 0, clear-text credentials 0 | Volume 10Gi instead of 40Gi; `pg_restore` exit 1 on the CNPG `user_search` function (now `TEMPLATE template0`); check pod needed `imagePullSecrets` and a 30 s NetworkPolicy settle delay; stop point read from the timeline history file | Yes: Cluster, PVC, PV and namespace deleted the same hour |
+
+Follow-up: all 39 credential rows are still encrypted under a previous key in
+`ENCRYPTION_KEYS`, not the active one. Do not remove that key until the rows
+are re-encrypted.

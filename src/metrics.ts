@@ -6,6 +6,7 @@
  * string or a token would make the series count unbounded and leak secrets
  * into the time-series database.
  */
+import http from "node:http";
 import { VERSION } from "./version.js";
 
 type Labels = Record<string, string>;
@@ -19,7 +20,8 @@ function formatLabels(labels: Labels): string {
   return parts.length ? `{${parts.join(",")}}` : "";
 }
 
-const keyOf = (labels: Labels) => JSON.stringify(labels);
+// Sorted, so the same label set built in a different property order is the same series.
+const keyOf = (labels: Labels) => JSON.stringify(Object.entries(labels).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
 
 class Counter {
   private readonly series = new Map<string, { labels: Labels; value: number }>();
@@ -93,7 +95,7 @@ export const upstreamRequests = new Counter(
 );
 export const upstreamDuration = new Histogram(
   "mctl_alice_upstream_request_duration_seconds",
-  "Outbound Yandex call latency, including reading the response body.",
+  "Outbound Yandex call latency; includes reading the body when the caller reads it inside upstreamFetch.",
   [0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 15, 30],
 );
 
@@ -171,13 +173,28 @@ export function renderMetrics(): string {
   ].join("\n") + "\n";
 }
 
-/**
- * Headers a reverse proxy adds. /metrics is for the in-cluster scrape, which
- * connects to the pod directly; a request that came through the ingress
- * carries at least one of these and is refused, behind the edge deny route.
- */
-const PROXY_HEADERS = ["x-forwarded-for", "x-real-ip", "forwarded", "cf-connecting-ip", "x-forwarded-host"];
+/** METRICS_PORT, or null when unset or invalid: metrics are then not served at all. */
+export function metricsPortFromEnv(): number | null {
+  const n = Number.parseInt(process.env.METRICS_PORT || "", 10);
+  return Number.isInteger(n) && n > 0 && n < 65536 ? n : null;
+}
 
-export function cameThroughProxy(headers: Record<string, string | string[] | undefined>): boolean {
-  return PROXY_HEADERS.some((h) => headers[h] !== undefined);
+/**
+ * A listener of its own that serves only GET/HEAD /metrics. It is kept off the
+ * application port on purpose: the Service and ingress route that port to the
+ * public, so separating them makes /metrics unreachable from outside by
+ * construction rather than by a check on request headers.
+ */
+export function createMetricsServer(): http.Server {
+  return http.createServer((req, res) => {
+    let pathname = "";
+    try { pathname = new URL(req.url || "/", "http://localhost").pathname; } catch { /* answered 404 below */ }
+    if (pathname !== "/metrics" || (req.method !== "GET" && req.method !== "HEAD")) {
+      res.writeHead(404, { "Content-Type": "text/plain" });
+      res.end("Not found");
+      return;
+    }
+    res.writeHead(200, { "Content-Type": "text/plain; version=0.0.4; charset=utf-8", "Cache-Control": "no-store" });
+    res.end(req.method === "HEAD" ? undefined : renderMetrics());
+  });
 }

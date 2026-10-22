@@ -4,7 +4,8 @@ import { createHttpServer } from "../src/server/http-server.js";
 import { OAuthStorage } from "../src/storage/oauth-storage.js";
 import { UpstreamTimeoutError, upstreamFetch } from "../src/client/upstream.js";
 import {
-  authFailures, httpRequests, rateLimited, recordHttpRequest, renderMetrics, routeTemplate, upstreamDuration, upstreamRequests,
+  authFailures, createMetricsServer, httpRequests, metricsPortFromEnv, rateLimited, recordHttpRequest, renderMetrics, routeTemplate,
+  upstreamDuration, upstreamRequests,
 } from "../src/metrics.js";
 
 const realFetch = globalThis.fetch;
@@ -27,6 +28,13 @@ describe("label values stay bounded", () => {
     const text = renderMetrics();
     expect(text).not.toContain("SECRET");
     expect(text).not.toContain("BREW");
+  });
+
+  it("keys a series by its label set, not by property order", () => {
+    const before = httpRequests.get({ route: "/about", method: "GET", status_class: "2xx" });
+    httpRequests.inc({ status_class: "2xx", method: "GET", route: "/about" });
+    expect(httpRequests.get({ route: "/about", method: "GET", status_class: "2xx" })).toBe(before + 1);
+    expect(renderMetrics().split("\n").filter((l) => l.startsWith("mctl_alice_http_requests_total") && l.includes('route="/about"'))).toHaveLength(1);
   });
 
   it("counts a response closed before its headers as aborted", () => {
@@ -80,66 +88,97 @@ describe("upstream calls", () => {
   });
 });
 
-describe("/metrics over HTTP", () => {
-  const servers: { server: http.Server; storage: OAuthStorage }[] = [];
-
-  async function start(port: number, extra: Parameters<typeof createHttpServer>[1] = {}) {
-    const storage = new OAuthStorage(":memory:");
-    const server = createHttpServer(port, { publicBaseUrl: `http://127.0.0.1:${port}`, enableSampler: false, oauthStorage: storage, ...extra });
-    await new Promise<void>((resolve) => server.listen(port, "127.0.0.1", resolve));
-    servers.push({ server, storage });
-    return `http://127.0.0.1:${port}`;
-  }
-
-  /** Lets the response's close event, which does the counting, run. */
-  const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
-
-  beforeAll(() => {
-    vi.stubGlobal("fetch", (input: any, init?: any) => {
-      const url = String(input);
-      return url.startsWith("http://127.0.0.1") ? realFetch(input, init) : Promise.resolve(new Response("{}", { status: 500 }));
-    });
-  });
+describe("/metrics listener", () => {
+  const servers: http.Server[] = [];
   afterAll(async () => {
-    vi.unstubAllGlobals();
-    for (const { server, storage } of servers) {
-      await new Promise<void>((resolve) => server.close(() => resolve()));
-      storage.close();
-    }
+    for (const server of servers) await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("is off unless METRICS_PORT is a valid port", () => {
+    vi.stubEnv("METRICS_PORT", "");
+    expect(metricsPortFromEnv()).toBeNull();
+    vi.stubEnv("METRICS_PORT", "nope");
+    expect(metricsPortFromEnv()).toBeNull();
+    vi.stubEnv("METRICS_PORT", "70000");
+    expect(metricsPortFromEnv()).toBeNull();
+    vi.stubEnv("METRICS_PORT", "9464");
+    expect(metricsPortFromEnv()).toBe(9464);
   });
 
-  it("serves the exposition to a direct scrape and refuses anything that came through a proxy", async () => {
-    const base = await start(8700, { authRequired: true });
-    const direct = await fetch(`${base}/metrics`);
+  it("serves only GET/HEAD /metrics on its own port; the app port does not serve it", async () => {
+    const metrics = createMetricsServer();
+    await new Promise<void>((resolve) => metrics.listen(8704, "127.0.0.1", resolve));
+    const app = createHttpServer(8705, { publicBaseUrl: "http://127.0.0.1:8705", authRequired: true, enableSampler: false, oauthStorage: new OAuthStorage(":memory:") });
+    await new Promise<void>((resolve) => app.listen(8705, "127.0.0.1", resolve));
+    servers.push(metrics, app);
+
+    const direct = await realFetch("http://127.0.0.1:8704/metrics");
     expect(direct.status).toBe(200);
     expect(direct.headers.get("content-type")).toContain("text/plain");
     const body = await direct.text();
     expect(body).toMatch(/^mctl_alice_build_info\{version="[^"]+"\} 1$/m);
     expect(body).toContain("# TYPE mctl_alice_upstream_request_duration_seconds histogram");
+    expect((await realFetch("http://127.0.0.1:8704/metrics", { method: "HEAD" })).status).toBe(200);
+    expect((await realFetch("http://127.0.0.1:8704/metrics", { method: "POST", body: "" })).status).toBe(404);
+    expect((await realFetch("http://127.0.0.1:8704/healthz")).status).toBe(404);
 
-    for (const header of ["X-Forwarded-For", "X-Real-IP", "Forwarded", "CF-Connecting-IP", "X-Forwarded-Host"]) {
-      const proxied = await fetch(`${base}/metrics`, { headers: { [header]: "203.0.113.7" } });
-      expect(proxied.status, header).toBe(404);
-      expect(await proxied.text(), header).not.toContain("mctl_alice_");
+    const viaApp = await realFetch("http://127.0.0.1:8705/metrics");
+    expect(viaApp.status).toBe(404);
+    expect(await viaApp.text()).not.toContain("mctl_alice_");
+  });
+});
+
+describe("counting over HTTP", () => {
+  const servers: { server: http.Server; storage: OAuthStorage }[] = [];
+
+  async function start(port: number, extra: Parameters<typeof createHttpServer>[1] = {}, storage = new OAuthStorage(":memory:")) {
+    const server = createHttpServer(port, {
+      publicBaseUrl: `http://127.0.0.1:${port}`, enableSampler: false, oauthStorage: storage,
+      clientId: "test_client_id", clientSecret: "test_client_secret", ...extra,
+    });
+    await new Promise<void>((resolve) => server.listen(port, "127.0.0.1", resolve));
+    servers.push({ server, storage });
+    return `http://127.0.0.1:${port}`;
+  }
+
+  /** Waits for a counter to reach a value: the count happens on the response's close event, after the client has its answer. */
+  async function until(read: () => number, expected: number) {
+    for (let i = 0; i < 200 && read() !== expected; i++) await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(read()).toBe(expected);
+  }
+
+  // Outbound Yandex calls answer 500 unless a test says otherwise; the test servers get the real fetch.
+  let yandex: (url: string) => Response = () => new Response("{}", { status: 500 });
+  beforeAll(() => {
+    vi.stubGlobal("fetch", (input: any, init?: any) => {
+      const url = String(input instanceof Request ? input.url : input);
+      return url.startsWith("http://127.0.0.1") ? realFetch(input, init) : Promise.resolve(yandex(url));
+    });
+  });
+  afterAll(async () => {
+    vi.unstubAllGlobals();
+    for (const { server, storage } of servers) {
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      storage.close();
     }
-    expect((await fetch(`${base}/metrics`, { method: "POST", body: "" })).status).toBe(404);
   });
 
-  it("counts requests by route template and status class", async () => {
+  it("counts requests by route template and status class, never by raw path", async () => {
     const base = await start(8701, { authRequired: true });
     const healthz = httpRequests.get({ route: "/healthz", method: "GET", status_class: "2xx" });
     const other = httpRequests.get({ route: "other", method: "GET", status_class: "4xx" });
     await fetch(`${base}/healthz`);
     await fetch(`${base}/no/such/route/y0_secret?code=abc`);
-    await settle();
-    expect(httpRequests.get({ route: "/healthz", method: "GET", status_class: "2xx" })).toBe(healthz + 1);
-    expect(httpRequests.get({ route: "other", method: "GET", status_class: "4xx" })).toBe(other + 1);
-    const text = await (await fetch(`${base}/metrics`)).text();
+    await until(() => httpRequests.get({ route: "/healthz", method: "GET", status_class: "2xx" }), healthz + 1);
+    await until(() => httpRequests.get({ route: "other", method: "GET", status_class: "4xx" }), other + 1);
+    const text = renderMetrics();
     expect(text).not.toContain("y0_secret");
     expect(text).not.toContain("code=abc");
   });
 
-  it("counts bearer, token-endpoint and scope failures by reason", async () => {
+  it("counts bearer and token-endpoint failures by reason", async () => {
     const base = await start(8702, { authRequired: true });
     const reasons = ["missing_token", "malformed", "invalid_token", "cookie_header", "token_invalid_grant"];
     const before = Object.fromEntries(reasons.map((r) => [r, authFailures.get({ reason: r })]));
@@ -157,8 +196,56 @@ describe("/metrics over HTTP", () => {
     expect(token.status).toBe(400);
 
     for (const r of reasons) expect(authFailures.get({ reason: r }) - before[r], r).toBe(1);
-    const text = await (await fetch(`${base}/metrics`)).text();
-    expect(text).not.toContain("not-a-real-token");
+    expect(renderMetrics()).not.toContain("not-a-real-token");
+  });
+
+  it("counts insufficient_scope and session_mismatch for real grants", async () => {
+    const storage = new OAuthStorage(":memory:");
+    const now = Date.now();
+    for (const [id, scope] of [["alice", "iot:view iot:control quasar"], ["bob", "iot:view"]] as const) {
+      storage.saveUser({ id, yandexUid: id, createdAt: now, updatedAt: now });
+      storage.saveUserCredentials(id, { yandexAccessToken: `upstream-${id}`, quasarCookie: `Session_id=${id}` });
+      storage.saveToken({ accessToken: `mcp-${id}`, refreshToken: `rt-${id}`, userId: id, clientId: "client", scope, createdAt: now, expiresAt: now + 3600000 });
+    }
+    const base = await start(8706, { authRequired: true }, storage);
+    const scope = authFailures.get({ reason: "insufficient_scope" });
+    const mismatch = authFailures.get({ reason: "session_mismatch" });
+
+    // bob holds iot:view only; saying a phrase needs more.
+    const say = await fetch(`${base}/api/say`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer mcp-bob" }, body: JSON.stringify({ text: "hi" }) });
+    expect(say.status).toBe(403);
+    expect(authFailures.get({ reason: "insufficient_scope" })).toBe(scope + 1);
+
+    const abort = new AbortController();
+    const sse = await fetch(`${base}/sse`, { signal: abort.signal, headers: { Authorization: "Bearer mcp-alice", Accept: "text/event-stream" } });
+    const reader = sse.body!.getReader();
+    const session = /sessionId=([^\s]+)/.exec(new TextDecoder().decode((await reader.read()).value))![1];
+    const post = await fetch(`${base}/messages?sessionId=${session}`, {
+      method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer mcp-bob" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" }),
+    });
+    expect(post.status).toBe(401);
+    expect(authFailures.get({ reason: "session_mismatch" })).toBe(mismatch + 1);
+    abort.abort(); await reader.cancel().catch(() => {});
+  });
+
+  it("counts a forged sign-in state and a failed Yandex code exchange", async () => {
+    const base = await start(8707, { authRequired: true });
+    const state = authFailures.get({ reason: "login_state" });
+    const failed = authFailures.get({ reason: "login_failed" });
+
+    expect((await fetch(`${base}/auth/callback?code=abc&state=forged`, { redirect: "manual" })).status).toBe(400);
+    expect(authFailures.get({ reason: "login_state" })).toBe(state + 1);
+
+    // A real sign-in whose code exchange Yandex answers with 500.
+    yandex = () => new Response(JSON.stringify({ error: "server_error" }), { status: 500 });
+    const login = await fetch(`${base}/auth/login`, { redirect: "manual" });
+    const loginState = new URL(login.headers.get("location")!).searchParams.get("state");
+    const cookie = login.headers.get("set-cookie")!.split(";")[0];
+    const callback = await fetch(`${base}/auth/callback?code=abc&state=${loginState}`, { redirect: "manual", headers: { Cookie: cookie } });
+    expect(callback.status).toBe(500);
+    expect(authFailures.get({ reason: "login_failed" })).toBe(failed + 1);
+    expect(authFailures.get({ reason: "login_state" })).toBe(state + 1);
   });
 
   it("counts 429 answers by bucket", async () => {

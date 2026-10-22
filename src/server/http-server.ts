@@ -6,7 +6,7 @@ import { isLocalOrigin } from "./origin.js";
 import { FORM_BODY_LIMIT, MCP_BODY_LIMIT, PayloadTooLargeError, parseRequestBody, readRequestBody, sendPayloadTooLarge } from "./request-body.js";
 import { RateLimiter, clientAddress, rateLimitBucket, resolveRateLimits, trustProxyHopsFromEnv, clientIpHeaderFromEnv, type RateLimitBucket } from "./rate-limit.js";
 import { UpstreamError, UpstreamTimeoutError } from "../client/upstream.js";
-import { authFailures, cameThroughProxy, rateLimited, recordHttpRequest, renderMetrics } from "../metrics.js";
+import { authFailures, rateLimited, recordHttpRequest } from "../metrics.js";
 
 export { isLocalOrigin };
 import http from "node:http";
@@ -498,7 +498,6 @@ const TOKEN_ERROR_REASONS: Record<string, string> = {
   invalid_target: "token_invalid_target",
   invalid_redirect_uri: "token_invalid_redirect_uri",
   unsupported_grant_type: "token_unsupported_grant_type",
-  temporarily_unavailable: "token_unavailable",
 };
 
 export function createHttpServer(
@@ -732,20 +731,6 @@ export function createHttpServer(
     if (req.method === "OPTIONS") {
       res.writeHead(corsPath ? 204 : 405, corsPath ? {} : { Allow: "GET, POST, HEAD" });
       res.end();
-      return;
-    }
-
-    // For the in-cluster scrape only: it connects to the pod directly, while
-    // anything routed through the ingress carries proxy headers. The edge also
-    // denies /metrics in gitops; this is the second layer, not the only one.
-    if (url.pathname === "/metrics") {
-      if ((req.method !== "GET" && req.method !== "HEAD") || cameThroughProxy(req.headers)) {
-        res.writeHead(404, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Not found" }));
-        return;
-      }
-      res.writeHead(200, { "Content-Type": "text/plain; version=0.0.4; charset=utf-8", "Cache-Control": "no-store" });
-      res.end(req.method === "HEAD" ? undefined : renderMetrics());
       return;
     }
 
@@ -1081,8 +1066,12 @@ export function createHttpServer(
         // An unreadable stored grant is a server fault: answering invalid_grant would make
         // clients drop it and re-authorize over ciphertext a corrected key could still read.
         const unavailable = err instanceof StorageUnavailableError || err instanceof CredentialDecryptionError;
-        const code = unavailable ? "temporarily_unavailable" : err instanceof OAuthError ? err.code : "invalid_grant";
-        authFailures.inc({ reason: TOKEN_ERROR_REASONS[code] ?? "token_other" });
+        // handleToken rejects a bad grant with a plain Error; any other class
+        // (TypeError, ...) is a server fault. The response stays invalid_grant
+        // either way, but the label keeps the two apart.
+        authFailures.inc({ reason: unavailable ? "token_unavailable"
+          : err instanceof OAuthError ? TOKEN_ERROR_REASONS[err.code] ?? "token_other"
+          : err?.constructor === Error ? "token_invalid_grant" : "token_error" });
         res.writeHead(unavailable ? 503 : 400, {
           "Content-Type": "application/json; charset=utf-8",
           "Cache-Control": "no-store",

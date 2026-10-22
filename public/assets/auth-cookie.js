@@ -1,5 +1,6 @@
 // /auth/cookie: Quasar sign-in by QR code, with a manual cookie form as the
-// fallback. Server responses are rendered as text; the QR SVG is shown through
+// fallback. The QR session starts only when the user asks for it: it hands the
+// service a Yandex web session, which is broader than the OAuth grant. Server responses are rendered as text; the QR SVG is shown through
 // an <img>, where an SVG cannot run script.
 (function () {
   var qrFrame = document.getElementById("qr-frame");
@@ -7,7 +8,8 @@
   var qrMobileBtn = document.getElementById("qr-mobile-btn");
   var qrRefreshBtn = document.getElementById("qr-refresh-btn");
   var qrHomeBtn = document.getElementById("qr-home-btn");
-  if (!qrFrame || !qrStatus || !qrMobileBtn || !qrRefreshBtn || !qrHomeBtn) return;
+  var qrStartBtn = document.getElementById("qr-start-btn");
+  if (!qrFrame || !qrStatus || !qrMobileBtn || !qrRefreshBtn || !qrHomeBtn || !qrStartBtn) return;
 
   var pollTimer = null;
 
@@ -57,6 +59,9 @@
 
   async function loadQrCode() {
     if (pollTimer) clearInterval(pollTimer);
+    qrStartBtn.hidden = true;
+    qrFrame.hidden = false;
+    qrStatus.hidden = false;
     showSpinner();
     setAlert(qrStatus, "info");
     qrStatus.textContent = getI18nMsg("cookie_qr_waiting", "Ожидание сканирования QR-кода...");
@@ -119,7 +124,7 @@
   }
 
   qrRefreshBtn.addEventListener("click", loadQrCode);
-  loadQrCode();
+  qrStartBtn.addEventListener("click", loadQrCode);
 
   // Manual form flow
   var form = document.getElementById("cookieForm");

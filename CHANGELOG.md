@@ -3,6 +3,17 @@
 Versions follow semantic versioning; tags carry no `v` prefix. Full notes for
 every version are on the [Releases page](https://github.com/mctlhq/mctl-alice/releases).
 
+## 2.2.12 (2026-10-23)
+
+- Runs on Node 24 LTS (base image, CI and `@types/node`) (#107).
+- TypeScript 7 for builds; emitted JavaScript is unchanged (#88).
+- `/readyz` runs one storage check at a time with a 3 s deadline
+  (`readinessTimeoutMs`); a stalled check answers 503 instead of hanging (#108).
+- Cancelled upstream calls are counted as `cancelled`, not `timeout`, and
+  answer 504; Passport error bodies are always sanitised; Quasar error bodies
+  are read only up to 4 KiB (#108).
+- Tests never reach the network or write `./data/` (#108).
+
 ## 2.2.11 (2026-10-23)
 
 - Telemetry retention runs in every mode, hosted included, and prunes rows of

@@ -3,6 +3,24 @@
 Versions follow semantic versioning; tags carry no `v` prefix. Full notes for
 every version are on the [Releases page](https://github.com/mctlhq/mctl-alice/releases).
 
+## 2.2.11 (2026-10-23)
+
+- Telemetry retention runs in every mode, hosted included, and prunes rows of
+  all owners in small batches; device history answers with a clear error in
+  hosted mode (#98).
+- Review follow-ups (#99): a caller's deadline is reported as a cancellation,
+  not an upstream timeout; Yandex response bodies are read inside the request
+  deadline (504 on a stall); Smart Home API timeouts answer 504; `/account/*`
+  has its own rate-limit bucket (`RATE_LIMIT_ACCOUNT`); `/readyz` probes share
+  one storage check per second; a metrics listener bind failure no longer
+  stops the app and `METRICS_PORT` accepts digits only; public pages answer
+  HEAD and stay indexable without a canonical URL; font URLs carry a content
+  hash; hosted mode warns at startup when `PUBLIC_BASE_URL` is unset.
+- Tests use a private in-memory telemetry database (#105).
+- Dependencies: MCP SDK 1.32.1, zod 4.6.7, pg 8.23.1, dotenv 18.0.8,
+  hono 4.13.13, ip-address 10.7.4; Vitest 5 for tests; GitHub Actions bumps
+  and the reviewer workflow pin (#80-#89, #100-#104).
+
 ## 2.2.10 (2026-10-22)
 
 - The OAuth consent page names the Yandex account being connected, explains

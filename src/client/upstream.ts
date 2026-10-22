@@ -1,4 +1,5 @@
 /** Bounded outbound calls to Yandex, and error text that never carries a raw upstream body. */
+import { outcomeForStatus, recordUpstream } from "../metrics.js";
 
 export const DEFAULT_UPSTREAM_TIMEOUT_MS = 10_000;
 
@@ -37,14 +38,23 @@ export async function upstreamFetch<T = Response>(
 ): Promise<T> {
   const deadline = AbortSignal.timeout(timeoutMs);
   const combined = AbortSignal.any([deadline, ...(signal ? [signal] : []), ...(init.signal ? [init.signal] : [])]);
+  const started = performance.now();
+  const elapsed = () => (performance.now() - started) / 1000;
   try {
     const res = await fetch(url, { ...init, signal: combined });
-    return read ? await read(res) : (res as unknown as T);
+    const out = read ? await read(res) : (res as unknown as T);
+    recordUpstream(upstream, outcomeForStatus(res.status), elapsed());
+    return out;
   } catch (err) {
-    if (deadline.aborted && isAbort(err)) throw new UpstreamTimeoutError(upstream, timeoutMs);
-    if (!deadline.aborted && signal?.aborted && isAbort(err)) {
+    if (deadline.aborted && isAbort(err)) {
+      recordUpstream(upstream, "timeout", elapsed());
       throw new UpstreamTimeoutError(upstream, timeoutMs);
     }
+    if (!deadline.aborted && signal?.aborted && isAbort(err)) {
+      recordUpstream(upstream, "timeout", elapsed());
+      throw new UpstreamTimeoutError(upstream, timeoutMs);
+    }
+    recordUpstream(upstream, "error", elapsed());
     throw err;
   }
 }

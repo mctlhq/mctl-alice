@@ -8,6 +8,9 @@ export default defineConfig({
       // its schema setup ("database is locked"), and a test run must never
       // open a contributor's real history.
       TELEMETRY_DB_PATH: ":memory:",
+      // Same for the default OAuth store: no test writes ./data/oauth.db.
+      OAUTH_DB_PATH: ":memory:",
     },
+    setupFiles: ["./tests/setup/no-external-network.ts"],
   },
 });

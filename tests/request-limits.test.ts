@@ -185,9 +185,20 @@ describe("readBodyCapped", () => {
 });
 
 describe("single body reader", () => {
+  // Listeners on any receiver, not only `req`: a body read under another name would also skip the cap.
+  // Async iteration only over a request, so an unrelated `for await` (a storage cursor, a file) is not an offender.
+  const rawReader = /\.(?:on|once|addListener)\(\s*["'](?:data|readable)["']|for\s+await\s*\(\s*(?:const|let|var)\s+\w+\s+of\s+(?:req|request|incoming)\b/;
+
+  it("flags request-body iteration and listeners, not unrelated async iteration", () => {
+    for (const offender of ['req.on("data", f)', "stream.once('readable', f)", "for await (const chunk of req)", "for await (let c of request) {"]) {
+      expect(rawReader.test(offender), offender).toBe(true);
+    }
+    for (const benign of ["for await (const row of cursor)", "for await (const chunk of someFile)", "for await (const s of requestedScenarios())"]) {
+      expect(rawReader.test(benign), benign).toBe(false);
+    }
+  });
+
   it("leaves no other raw stream reader under src/", () => {
-    // Any receiver, not only `req`: a body read under another name would also skip the cap.
-    const rawReader = /\.(?:on|once|addListener)\(\s*["'](?:data|readable)["']|for\s+await\s*\(/;
     const offenders: string[] = [];
     const walk = (dir: string) => {
       for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {

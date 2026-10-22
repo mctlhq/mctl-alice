@@ -13,6 +13,8 @@ export class UpstreamTimeoutError extends Error {
 
 /** The caller's own signal (for example a cleanup deadline) stopped the call, not the upstream's deadline. */
 export class UpstreamCancelledError extends Error {
+  // A deadline ran out before the upstream answered: a gateway timeout to our client, like UpstreamTimeoutError.
+  readonly statusCode = 504;
   constructor(readonly upstream: string, reason: unknown) {
     super(`${upstream} call stopped: ${reason instanceof Error && reason.name === "TimeoutError" ? "the caller's deadline expired" : "cancelled by the caller"}`);
     this.name = "UpstreamCancelledError";
@@ -59,12 +61,39 @@ export async function upstreamFetch<T = Response>(
       throw new UpstreamTimeoutError(upstream, timeoutMs);
     }
     if (!deadline.aborted && signal?.aborted && isAbort(err)) {
-      recordUpstream(upstream, "timeout", elapsed());
+      recordUpstream(upstream, "cancelled", elapsed());
       throw new UpstreamCancelledError(upstream, signal.reason);
     }
     recordUpstream(upstream, "error", elapsed());
     throw err;
   }
+}
+
+/**
+ * At most `maxBytes` of a body as text, then the rest is cancelled unread. For bodies
+ * only ever turned into a short error message, so they are bounded by size and not
+ * only by the deadline.
+ */
+export async function readTextPrefix(res: Response, maxBytes: number): Promise<string> {
+  if (!res.body) return "";
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    while (size < maxBytes) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      size += value.byteLength;
+    }
+  } finally {
+    if (size >= maxBytes) await reader.cancel().catch(() => {});
+    reader.releaseLock();
+  }
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+  return new TextDecoder().decode(bytes.subarray(0, maxBytes));
 }
 
 const MAX_MESSAGE_CHARS = 120;

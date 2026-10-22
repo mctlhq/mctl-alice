@@ -86,12 +86,36 @@ describe("upstream deadlines", () => {
     expect(err.statusCode).toBe(504);
   });
 
+  it("reads only a bounded prefix of a Quasar error body, then stops pulling it", async () => {
+    let pulled = 0;
+    vi.stubGlobal("fetch", (input: any, init?: RequestInit) => {
+      if (String(input) === "https://yandex.ru/quasar") return Promise.resolve(new Response('"csrfToken2":"abc"', { status: 200 }));
+      const signal = init?.signal;
+      // A large error body that is never finished: buffering it whole can only end at the deadline.
+      const body = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          if (pulled >= 1024 * 1024) return new Promise<void>((_r, reject) => signal?.addEventListener("abort", () => reject(signal.reason), { once: true }));
+          pulled += 16 * 1024;
+          controller.enqueue(new Uint8Array(16 * 1024).fill(0x61));
+        },
+      }, { highWaterMark: 0 });
+      return Promise.resolve(new Response(body, { status: 500 }));
+    });
+    const started = Date.now();
+    const err = await new QuasarClient({ cookie: "Session_id=x", useKeychain: false, persistEnv: false, timeoutMs: 3000 }).getScenarios().catch((e) => e);
+    expect(err).toBeInstanceOf(UpstreamError);
+    expect(err.status).toBe(500);
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(pulled).toBeLessThanOrEqual(64 * 1024);
+  });
+
   it("does not report the caller's own deadline as an upstream timeout", async () => {
     vi.stubGlobal("fetch", hangingFetch);
     const err = await upstreamFetch("https://example.test/", {}, { upstream: "Yandex Quasar", timeoutMs: 10_000, signal: AbortSignal.timeout(20) }).catch((e) => e);
     expect(err).toBeInstanceOf(UpstreamCancelledError);
     expect(err).not.toBeInstanceOf(UpstreamTimeoutError);
     expect(err.message).toBe("Yandex Quasar call stopped: the caller's deadline expired");
+    expect(err.statusCode).toBe(504);
   });
 
   it("reports a Smart Home API timeout as 504, not 408", async () => {

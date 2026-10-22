@@ -1,3 +1,4 @@
+import { upstreamFetch } from "../client/upstream.js";
 import { IStorage, StorageUnavailableError } from "../storage/storage-interface.js";
 import QRCode from "qrcode";
 
@@ -80,12 +81,13 @@ class CookieJar {
 const PASSPORT_USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
-export async function initQrAuth(storage?: IStorage): Promise<{ sessionId: string; link: string; qrSvg: string }> {
+export async function initQrAuth(storage?: IStorage, timeoutMs?: number): Promise<{ sessionId: string; link: string; qrSvg: string }> {
+  const passportFetch = (url: string, init?: RequestInit) => upstreamFetch(url, init ?? {}, { upstream: "Yandex Passport", timeoutMs });
   cleanExpiredSessions();
   const jar = new CookieJar();
 
   // 1. Initial request to passport to obtain page CSRF and initial session cookies
-  const r1 = await fetch("https://passport.yandex.ru/pwl-yandex", {
+  const r1 = await passportFetch("https://passport.yandex.ru/pwl-yandex", {
     headers: {
       "User-Agent": PASSPORT_USER_AGENT,
     },
@@ -105,7 +107,7 @@ export async function initQrAuth(storage?: IStorage): Promise<{ sessionId: strin
   const pageCsrf = csrfMatch[1];
 
   // 2. Submit password/auth intent to generate track ID
-  const r2 = await fetch(
+  const r2 = await passportFetch(
     "https://passport.yandex.ru/pwl-yandex/api/passport/auth/password/submit",
     {
       method: "POST",
@@ -133,7 +135,7 @@ export async function initQrAuth(storage?: IStorage): Promise<{ sessionId: strin
   const trackId: string = data2.track_id;
 
   // 3. Request magic code link for QR code using the same page CSRF and accumulated cookies
-  const r3 = await fetch(
+  const r3 = await passportFetch(
     "https://passport.yandex.ru/pwl-yandex/api/passport/auth/magic/code",
     {
       method: "POST",
@@ -198,6 +200,7 @@ export async function checkQrAuthStatus(sessionId: string, storage?: IStorage): 
   message?: string;
 }> {
   cleanExpiredSessions();
+  const passportFetch = (url: string, init?: RequestInit) => upstreamFetch(url, init ?? {}, { upstream: "Yandex Passport" });
 
   const payload = storage ? await storage.getBrowserTransaction(`qr-state:${sessionId}`) : null;
   const session: QrAuthSession | undefined = storage ? (payload ? JSON.parse(payload) : undefined) : sessions.get(sessionId);
@@ -212,7 +215,7 @@ export async function checkQrAuthStatus(sessionId: string, storage?: IStorage): 
     const jar = new CookieJar(session.cookies);
 
     // 1. Check status of magic code approval
-    const rStatus = await fetch(
+    const rStatus = await passportFetch(
       "https://passport.yandex.ru/pwl-yandex/api/passport/auth/magic/code/status",
       {
         method: "POST",
@@ -254,7 +257,7 @@ export async function checkQrAuthStatus(sessionId: string, storage?: IStorage): 
     const finalTrackId = dataStatus.trackId || session.trackId;
 
     // 2. Obtain authenticated session cookies
-    const rSession = await fetch(
+    const rSession = await passportFetch(
       "https://passport.yandex.ru/pwl-yandex/api/passport/sessions/get_session",
       {
         method: "POST",

@@ -1,5 +1,6 @@
 import { saveEnvVariable, saveTokenToKeychain, getTokenFromKeychain } from "../auth/token-storage.js";
 import { IStorage } from "../storage/storage-interface.js";
+import { sanitizeUpstreamMessage, upstreamError, upstreamFetch } from "./upstream.js";
 
 const MASK_EN = "0123456789abcdef-";
 const MASK_RU = "оеаинтсрвлкмдпуяы";
@@ -113,6 +114,10 @@ export interface QuasarClientOptions {
   envFilePath?: string;
   userId?: string;
   storage?: IStorage;
+  /** Deadline for the whole client, for example account cleanup. */
+  signal?: AbortSignal;
+  /** Per-call upstream timeout (default 10 s). */
+  timeoutMs?: number;
 }
 
 // Hosted mode builds a QuasarClient per request, so per-device serialization
@@ -131,6 +136,8 @@ export class QuasarClient {
 
   private userId?: string;
   private storage?: IStorage;
+  private signal?: AbortSignal;
+  private timeoutMs?: number;
 
   constructor(options: QuasarClientOptions = {}) {
     this.onCookieRefresh = options.onCookieRefresh;
@@ -140,6 +147,8 @@ export class QuasarClient {
     this.envFilePath = options.envFilePath;
     this.userId = options.userId;
     this.storage = options.storage;
+    this.signal = options.signal;
+    this.timeoutMs = options.timeoutMs;
 
     const cookie =
       options.cookie ||
@@ -229,15 +238,18 @@ export class QuasarClient {
    */
   async getAccountUid(): Promise<string | null> {
     if (!this.cookie) return null;
-    const res = await fetch("https://yandex.ru/iot?storage=1", {
+    const res = await this.fetchQuasar("https://yandex.ru/iot?storage=1", {
       headers: { Cookie: this.cookie, "User-Agent": USER_AGENT, Accept: "application/json" },
       redirect: "manual",
-      signal: AbortSignal.timeout(10000),
     });
     if (res.status !== 200) return null;
     const data = (await res.json().catch(() => null)) as { storage?: { user?: { uid?: unknown } } } | null;
     const uid = data?.storage?.user?.uid;
     return (typeof uid === "string" || typeof uid === "number") && /^\d+$/.test(String(uid)) ? String(uid) : null;
+  }
+
+  private fetchQuasar(url: string, init: RequestInit): Promise<Response> {
+    return upstreamFetch(url, init, { upstream: "Yandex Quasar", timeoutMs: this.timeoutMs, signal: this.signal });
   }
 
   async getCsrfToken(): Promise<string> {
@@ -249,7 +261,7 @@ export class QuasarClient {
       throw new Error("Yandex cookie not configured. Set YANDEX_COOKIE in .env or via /auth/cookie.");
     }
 
-    const res = await fetch("https://yandex.ru/quasar", {
+    const res = await this.fetchQuasar("https://yandex.ru/quasar", {
       headers: {
         Cookie: this.cookie,
         "User-Agent": USER_AGENT,
@@ -296,7 +308,7 @@ export class QuasarClient {
       ...(options.headers as Record<string, string>),
     };
 
-    let res = await fetch(url, { ...options, headers });
+    let res = await this.fetchQuasar(url, { ...options, headers });
 
     if (res.status === 403) {
       // CSRF token may have expired, refresh once
@@ -304,12 +316,12 @@ export class QuasarClient {
       const newCsrf = await this.getCsrfToken();
       headers["x-csrf-token"] = newCsrf;
       headers["Cookie"] = this.cookie || "";
-      res = await fetch(url, { ...options, headers });
+      res = await this.fetchQuasar(url, { ...options, headers });
     }
 
     if (!res.ok) {
       const text = await res.text();
-      throw new Error(`Quasar API error (${res.status}): ${text}`);
+      throw upstreamError("Yandex Quasar", res.status, text);
     }
 
     return res.json();
@@ -390,7 +402,7 @@ export class QuasarClient {
     });
 
     if (res.status !== "ok" || !res.scenario_id) {
-      throw new Error(`Failed to create proxy scenario: ${JSON.stringify(res)}`);
+      throw new Error(`Failed to create proxy scenario: ${sanitizeUpstreamMessage(JSON.stringify(res))}`);
     }
 
     await this.recordOwnership(deviceId, res.scenario_id, name);
@@ -422,7 +434,7 @@ export class QuasarClient {
       );
 
       if (updateRes.status !== "ok") {
-        throw new Error(`Failed to update scenario for TTS: ${JSON.stringify(updateRes)}`);
+        throw new Error(`Failed to update scenario for TTS: ${sanitizeUpstreamMessage(JSON.stringify(updateRes))}`);
       }
 
       if (triggerCallback) {
@@ -457,7 +469,7 @@ export class QuasarClient {
       );
 
       if (updateRes.status !== "ok") {
-        throw new Error(`Failed to update scenario for command: ${JSON.stringify(updateRes)}`);
+        throw new Error(`Failed to update scenario for command: ${sanitizeUpstreamMessage(JSON.stringify(updateRes))}`);
       }
 
       if (triggerCallback) {
@@ -499,6 +511,7 @@ export class QuasarClient {
     let deleted = 0;
     let failed = 0;
     for (const sc of scenarios) {
+      if (this.signal?.aborted) throw new Error("Proxy scenario cleanup deadline exceeded");
       if (!recordedIds.has(sc.id) && !(sc.name && sc.name.startsWith(prefix))) continue;
       try {
         await this.request(`https://iot.quasar.yandex.ru/m/v4/user/scenarios/${encodeURIComponent(sc.id)}`, {

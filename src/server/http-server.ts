@@ -3,6 +3,9 @@ import { CredentialDecryptionError } from "../storage/storage-interface.js";
 import { getKeyring } from "../storage/crypto.js";
 import { VERSION } from "../version.js";
 import { isLocalOrigin } from "./origin.js";
+import { FORM_BODY_LIMIT, MCP_BODY_LIMIT, PayloadTooLargeError, parseRequestBody, readRequestBody, sendPayloadTooLarge } from "./request-body.js";
+import { RateLimiter, clientAddress, rateLimitBucket, resolveRateLimits, trustProxyHopsFromEnv, type RateLimitBucket } from "./rate-limit.js";
+import { UpstreamError, UpstreamTimeoutError } from "../client/upstream.js";
 
 export { isLocalOrigin };
 import http from "node:http";
@@ -42,6 +45,9 @@ import { fetchYandexProfile } from "../auth/oauth-helper.js";
 import { renderAboutPage, renderPrivacyPage, renderTermsPage, renderSecurityPage } from "./pages.js";
 import { renderAccountPage } from "./account-page.js";
 import { UserRecord, guardedStorage, StorageUnavailableError } from "../storage/storage-interface.js";
+
+/** Maximum JSON-RPC batch length accepted per request. */
+const MAX_RPC_BATCH = 20;
 
 const DEFAULT_CLIENT_ID = "c0ebe342af7d48fbbbfcf2d2eedb8f9e";
 
@@ -128,41 +134,6 @@ function serveStaticFile(
     return false;
   }
 }
-
-function parseRequestBody(req: http.IncomingMessage): Promise<any> {
-  return new Promise((resolve, reject) => {
-    let body = "";
-    req.on("data", (chunk) => (body += chunk));
-    req.on("end", () => {
-      if (!body.trim()) return resolve({});
-      const contentType = req.headers["content-type"] || "";
-      if (contentType.includes("application/x-www-form-urlencoded")) {
-        try {
-          const params = new URLSearchParams(body);
-          return resolve(Object.fromEntries(params.entries()));
-        } catch {
-          return reject(new Error("Invalid form-urlencoded body"));
-        }
-      }
-      try {
-        resolve(JSON.parse(body));
-      } catch {
-        try {
-          const params = new URLSearchParams(body);
-          if (Array.from(params.keys()).length > 0) {
-            return resolve(Object.fromEntries(params.entries()));
-          }
-        } catch {
-          // ignore
-        }
-        reject(new Error("Invalid JSON body"));
-      }
-    });
-    req.on("error", reject);
-  });
-}
-
-const parseJsonBody = parseRequestBody;
 
 function escapeHtml(str: string): string {
   return String(str)
@@ -475,6 +446,11 @@ export function createMcpServer(
   return server;
 }
 
+/** 504/502 for a failed Yandex call, otherwise `fallback`. */
+function upstreamStatus(err: unknown, fallback: number): number {
+  return err instanceof UpstreamTimeoutError || err instanceof UpstreamError ? err.statusCode : fallback;
+}
+
 export interface HttpServerOptions {
   clientId?: string;
   clientSecret?: string;
@@ -484,7 +460,15 @@ export interface HttpServerOptions {
   oauthStorage?: IStorage;
   yandexCallbackUri?: string;
   authRequired?: boolean;
+  /** Per-bucket requests per minute, over RATE_LIMIT_<BUCKET> and the defaults. */
+  rateLimits?: Partial<Record<RateLimitBucket, number>>;
+  /** Number of trusted proxy hops in X-Forwarded-For; defaults to TRUST_PROXY_HOPS or 0. */
+  trustProxyHops?: number;
+  /** Overall deadline for Quasar scenario cleanup on account deletion/disconnect (default 20 s). */
+  cleanupDeadlineMs?: number;
 }
+
+const CLEANUP_DEADLINE_MS = 20_000;
 
 export function createHttpServer(
   port = 8080,
@@ -550,6 +534,11 @@ export function createHttpServer(
   const browserId = (req: http.IncomingMessage) => parseCookies(req).mctl_session || "";
   const sseOwners = new Map<string, { userId?: string; clientId?: string; fingerprint: string }>();
   const fingerprint = (req: http.IncomingMessage) => createHash("sha256").update((req.headers.authorization || "").replace(/^Bearer +/i, "")).digest("hex");
+  const limits = resolveRateLimits(options.rateLimits);
+  const limiters = Object.fromEntries(
+    (Object.keys(limits) as RateLimitBucket[]).map((bucket) => [bucket, new RateLimiter({ limit: limits[bucket], windowMs: 60_000 })]),
+  ) as Record<RateLimitBucket, RateLimiter>;
+  const proxyHops = options.trustProxyHops ?? trustProxyHopsFromEnv();
   const clearSessionCookie = `mctl_session=; Path=/; HttpOnly; SameSite=Lax; ${authRequired ? "Secure; " : ""}Max-Age=0`;
   async function closeSessions(userId: string, clientId?: string) {
     for (const [id, owner] of sseOwners) {
@@ -713,6 +702,29 @@ export function createHttpServer(
       return;
     }
 
+    const bucket = rateLimitBucket(url.pathname, req.method, String(req.headers.accept || ""));
+    if (bucket) {
+      // Always charge the address bucket: a token is unvalidated here, so it may only add a dimension.
+      let verdict = limiters[bucket].hit(`ip:${clientAddress(req, proxyHops)}`);
+      if (verdict.allowed && bucket === "mcp" && req.headers.authorization) verdict = limiters[bucket].hit(`token:${fingerprint(req)}`);
+      if (!verdict.allowed) {
+        res.writeHead(429, { "Content-Type": "application/json; charset=utf-8", "Retry-After": String(verdict.retryAfterSec), "Cache-Control": "no-store" });
+        res.end(JSON.stringify(
+          bucket === "mcp" && req.method === "POST" && !url.searchParams.has("sessionId")
+            ? { jsonrpc: "2.0", id: null, error: { code: -32029, message: "Rate limit exceeded" } }
+            : { error: "too_many_requests" },
+        ));
+        return;
+      }
+    }
+
+    // A declared oversize body is refused before anything reads it.
+    if (req.method === "POST") {
+      const declared = req.headers["content-length"];
+      const limit = bucket === "mcp" ? MCP_BODY_LIMIT : FORM_BODY_LIMIT;
+      if (declared !== undefined && Number(declared) > limit) { sendPayloadTooLarge(res); return; }
+    }
+
     if (url.pathname === "/readyz") {
       try {
         await oauthStorage.getUser("__readiness_probe__");
@@ -794,6 +806,7 @@ export function createHttpServer(
         res.writeHead(201, { "Content-Type": "application/json; charset=utf-8" });
         res.end(JSON.stringify(clientInfo));
       } catch (err: any) {
+        if (err instanceof PayloadTooLargeError) throw err;
         res.writeHead(400, { "Content-Type": "application/json; charset=utf-8" });
         res.end(JSON.stringify({ error: err instanceof OAuthError ? err.code : "invalid_request", error_description: err.message }));
       }
@@ -958,6 +971,7 @@ export function createHttpServer(
         res.end();
         return;
       } catch (err: any) {
+        if (err instanceof PayloadTooLargeError) throw err;
         res.writeHead(400, { "Content-Type": "text/html; charset=utf-8" });
         res.end(renderAuthPage({
           title: "mctl-alice — Ошибка сессии",
@@ -1015,6 +1029,7 @@ export function createHttpServer(
         });
         res.end(JSON.stringify(tokens));
       } catch (err: any) {
+        if (err instanceof PayloadTooLargeError) throw err;
         // An unreadable stored grant is a server fault: answering invalid_grant would make
         // clients drop it and re-authorize over ciphertext a corrected key could still read.
         const unavailable = err instanceof StorageUnavailableError || err instanceof CredentialDecryptionError;
@@ -1039,7 +1054,8 @@ export function createHttpServer(
         if (record?.userId) await closeSessions(record.userId, record.clientId);
         res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
         res.end(JSON.stringify({ status: "ok" }));
-      } catch {
+      } catch (bodyErr) {
+        if (bodyErr instanceof PayloadTooLargeError) throw bodyErr;
         res.writeHead(503, { "Content-Type": "application/json; charset=utf-8" });
         res.end(JSON.stringify({ error: "temporarily_unavailable" }));
       }
@@ -1072,9 +1088,8 @@ export function createHttpServer(
       }
       const activeSvc = auth.service;
 
-      let body = "";
-      req.on("data", (chunk) => (body += chunk));
-      req.on("end", async () => {
+      const body = await readRequestBody(req, { limit: MCP_BODY_LIMIT });
+      {
         try {
           if (!body.trim()) {
             sendMcpResponse(req, res, null, 204);
@@ -1082,6 +1097,19 @@ export function createHttpServer(
           }
           const rpcData = JSON.parse(body);
           if (Array.isArray(rpcData)) {
+            if (rpcData.length > MAX_RPC_BATCH) {
+              sendMcpResponse(
+                req,
+                res,
+                {
+                  jsonrpc: "2.0",
+                  id: null,
+                  error: { code: -32600, message: `Invalid Request: batch exceeds ${MAX_RPC_BATCH} elements` },
+                },
+                400
+              );
+              return;
+            }
             const results = [];
             for (const item of rpcData) {
               const resItem = await handleSingleRpc(item, req, activeSvc, auth.scope);
@@ -1113,7 +1141,7 @@ export function createHttpServer(
             400
           );
         }
-      });
+      }
       return;
     }
 
@@ -1206,8 +1234,11 @@ export function createHttpServer(
       if (!owner || owner.userId !== auth.userId || owner.clientId !== auth.clientId || owner.fingerprint !== fingerprint(req)) {
         sendUnauthorized("invalid_token", "Session owner mismatch"); return;
       }
+      const raw = await readRequestBody(req, { limit: MCP_BODY_LIMIT });
+      let parsed: unknown = raw;
+      try { parsed = JSON.parse(raw); } catch { /* the transport answers 400 for an unparsable body */ }
       try {
-        await transport.handlePostMessage(req, res);
+        await transport.handlePostMessage(req, res, parsed ?? raw);
       } catch (err: any) {
         if (!res.headersSent) {
           res.writeHead(err instanceof StorageUnavailableError ? 503 : 500, { "Content-Type": "application/json" });
@@ -1263,7 +1294,7 @@ export function createHttpServer(
     // REST API: Speak Phrase (TTS)
     if (url.pathname === "/api/say" && req.method === "POST") {
       try {
-        const body = await parseJsonBody(req);
+        const body = await parseRequestBody(req, { limit: MCP_BODY_LIMIT });
         const phrase = String(body?.phrase || "").trim();
         if (!phrase) {
           res.writeHead(400, { "Content-Type": "application/json" });
@@ -1275,6 +1306,7 @@ export function createHttpServer(
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ...result }));
       } catch (err: any) {
+        if (err instanceof PayloadTooLargeError) throw err;
         const status = err.statusCode || 500;
         res.writeHead(status, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ status: "error", message: err.message }));
@@ -1285,7 +1317,7 @@ export function createHttpServer(
     // REST API: Send Voice Command
     if (url.pathname === "/api/command" && req.method === "POST") {
       try {
-        const body = await parseJsonBody(req);
+        const body = await parseRequestBody(req, { limit: MCP_BODY_LIMIT });
         const command = String(body?.command || "").trim();
         if (!command) {
           res.writeHead(400, { "Content-Type": "application/json" });
@@ -1297,6 +1329,7 @@ export function createHttpServer(
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ...result }));
       } catch (err: any) {
+        if (err instanceof PayloadTooLargeError) throw err;
         const status = err.statusCode || 500;
         res.writeHead(status, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ status: "error", message: err.message }));
@@ -1307,7 +1340,7 @@ export function createHttpServer(
     // REST API: Set Volume
     if (url.pathname === "/api/volume" && req.method === "POST") {
       try {
-        const body = await parseJsonBody(req);
+        const body = await parseRequestBody(req, { limit: MCP_BODY_LIMIT });
         const level = Number(body?.level);
         if (isNaN(level) || level < 1 || level > 10) {
           res.writeHead(400, { "Content-Type": "application/json" });
@@ -1324,6 +1357,7 @@ export function createHttpServer(
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ...result }));
       } catch (err: any) {
+        if (err instanceof PayloadTooLargeError) throw err;
         const status = err.statusCode || 500;
         res.writeHead(status, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ status: "error", message: err.message }));
@@ -1334,7 +1368,7 @@ export function createHttpServer(
     // REST API: Media Control
     if (url.pathname === "/api/media" && req.method === "POST") {
       try {
-        const body = await parseJsonBody(req);
+        const body = await parseRequestBody(req, { limit: MCP_BODY_LIMIT });
         const action = body?.action as any;
         if (!action || !["play", "pause", "stop", "next", "prev"].includes(action)) {
           res.writeHead(400, { "Content-Type": "application/json" });
@@ -1351,6 +1385,7 @@ export function createHttpServer(
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ...result }));
       } catch (err: any) {
+        if (err instanceof PayloadTooLargeError) throw err;
         const status = err.statusCode || 500;
         res.writeHead(status, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ status: "error", message: err.message }));
@@ -1361,7 +1396,7 @@ export function createHttpServer(
     // REST API: Trigger Scenario
     if (url.pathname === "/api/scenarios/trigger" && req.method === "POST") {
       try {
-        const body = await parseJsonBody(req);
+        const body = await parseRequestBody(req, { limit: MCP_BODY_LIMIT });
         const scenario = String(body?.scenario || "").trim();
         if (!scenario) {
           res.writeHead(400, { "Content-Type": "application/json" });
@@ -1373,6 +1408,7 @@ export function createHttpServer(
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ...result }));
       } catch (err: any) {
+        if (err instanceof PayloadTooLargeError) throw err;
         const status = err.statusCode || 500;
         res.writeHead(status, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ status: "error", message: err.message }));
@@ -1466,7 +1502,7 @@ export function createHttpServer(
       catch (error) { if (!(error instanceof CredentialDecryptionError)) throw error; }
       if (!cookie) return (await oauthStorage.listQuasarScenarios(userId)).length === 0;
       try {
-        await new QuasarClient({ credentialsMode: authRequired ? "hosted" : "local", cookie, userId, storage: oauthStorage, useKeychain: false, persistEnv: false }).cleanupAllProxyScenarios();
+        await new QuasarClient({ credentialsMode: authRequired ? "hosted" : "local", cookie, userId, storage: oauthStorage, useKeychain: false, persistEnv: false, signal: AbortSignal.timeout(options.cleanupDeadlineMs ?? CLEANUP_DEADLINE_MS) }).cleanupAllProxyScenarios();
         return true;
       } catch (error) {
         if (error instanceof StorageUnavailableError) throw error;
@@ -1728,9 +1764,8 @@ export function createHttpServer(
 
     // Save token endpoint
     if (url.pathname === "/auth/save-token" && req.method === "POST") {
-      let body = "";
-      req.on("data", (chunk) => (body += chunk));
-      req.on("end", async () => {
+      const body = await readRequestBody(req, { limit: FORM_BODY_LIMIT });
+      {
         try {
           const data = JSON.parse(body);
           const token = data.token?.trim();
@@ -1802,10 +1837,10 @@ export function createHttpServer(
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ status: "ok", speakers: speakerNames }));
         } catch (err: any) {
-          res.writeHead(err instanceof StorageUnavailableError ? 503 : 500, { "Content-Type": "application/json" });
+          res.writeHead(err instanceof StorageUnavailableError ? 503 : upstreamStatus(err, 500), { "Content-Type": "application/json" });
           res.end(JSON.stringify({ status: "error", message: err.message }));
         }
-      });
+      }
       return;
     }
 
@@ -1898,7 +1933,7 @@ export function createHttpServer(
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ status: "ok", ...qrData }));
       } catch (err: any) {
-        res.writeHead(err instanceof StorageUnavailableError ? 503 : 500, { "Content-Type": "application/json" });
+        res.writeHead(err instanceof StorageUnavailableError ? 503 : upstreamStatus(err, 500), { "Content-Type": "application/json" });
         res.end(JSON.stringify({ status: "error", message: err.message }));
       }
       return;
@@ -1948,7 +1983,7 @@ export function createHttpServer(
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify(safeResult));
       } catch (err: any) {
-        res.writeHead(err instanceof StorageUnavailableError ? 503 : err instanceof CookieAccountMismatchError ? 403 : 500, { "Content-Type": "application/json" });
+        res.writeHead(err instanceof StorageUnavailableError ? 503 : err instanceof CookieAccountMismatchError ? 403 : upstreamStatus(err, 500), { "Content-Type": "application/json" });
         res.end(JSON.stringify({ status: "error", message: err.message }));
       }
       return;
@@ -1956,9 +1991,8 @@ export function createHttpServer(
 
     // Save Quasar Cookie Endpoint
     if (url.pathname === "/auth/save-cookie" && req.method === "POST") {
-      let body = "";
-      req.on("data", (chunk) => (body += chunk));
-      req.on("end", async () => {
+      const body = await readRequestBody(req, { limit: FORM_BODY_LIMIT });
+      {
         try {
           const user = await getSessionUser(req, oauthStorage);
           if (authRequired && !user) {
@@ -2000,10 +2034,10 @@ export function createHttpServer(
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ status: "ok", message: "Cookie saved and verified successfully" }));
         } catch (err: any) {
-          res.writeHead(err instanceof StorageUnavailableError ? 503 : err instanceof CookieAccountMismatchError ? 403 : 500, { "Content-Type": "application/json" });
+          res.writeHead(err instanceof StorageUnavailableError ? 503 : err instanceof CookieAccountMismatchError ? 403 : upstreamStatus(err, 500), { "Content-Type": "application/json" });
           res.end(JSON.stringify({ status: "error", message: err.message }));
         }
-      });
+      }
       return;
     }
 
@@ -2052,7 +2086,13 @@ export function createHttpServer(
     // 404 Not Found for any unmatched route
     res.writeHead(404, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: "not_found", message: "Route not found" }));
-    } catch {
+    } catch (err) {
+      if (err instanceof PayloadTooLargeError) { sendPayloadTooLarge(res); return; }
+      if (err instanceof UpstreamTimeoutError || err instanceof UpstreamError) {
+        if (!res.headersSent) { res.writeHead(err.statusCode, { "Content-Type": "application/json" }); res.end(JSON.stringify({ error: "upstream_error", message: err.message })); }
+        else res.end();
+        return;
+      }
       if (!res.headersSent) { res.writeHead(503, { "Content-Type": "application/json" }); res.end(JSON.stringify({ error: "temporarily_unavailable" })); }
       else res.end();
     }

@@ -1,3 +1,4 @@
+import { UpstreamTimeoutError, upstreamFetch } from "./upstream.js";
 import {
   getMacKeychain,
   saveTokenToKeychain,
@@ -101,18 +102,17 @@ export class YandexIoTClient {
       Accept: "application/json",
     };
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15000);
-
     try {
-      const response = await fetch(url, {
-        method: options.method || "GET",
-        headers,
-        body: options.body ? JSON.stringify(options.body) : undefined,
-        signal: controller.signal,
-      });
-
-      const responseText = await response.text();
+      const { response, responseText } = await upstreamFetch(
+        url,
+        {
+          method: options.method || "GET",
+          headers,
+          body: options.body ? JSON.stringify(options.body) : undefined,
+        },
+        { upstream: "Yandex IoT", timeoutMs: 15000 },
+        async (r) => ({ response: r, responseText: await r.text() }),
+      );
       let responseData: any;
       try {
         responseData = responseText ? JSON.parse(responseText) : {};
@@ -196,15 +196,13 @@ export class YandexIoTClient {
 
       return responseData as T;
     } catch (err: any) {
-      if (err.name === "AbortError") {
+      if (err instanceof UpstreamTimeoutError || err.name === "AbortError") {
         throw new YandexApiError("Request timed out after 15 seconds", 408);
       }
       if (err instanceof YandexApiError) {
         throw err;
       }
       throw new YandexApiError(`Network or request error: ${err.message}`);
-    } finally {
-      clearTimeout(timeout);
     }
   }
 

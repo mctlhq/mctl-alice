@@ -75,10 +75,15 @@ const STATIC_MIME_TYPES: Record<string, string> = {
 /**
  * Static HTML names its asset suffix `?v=__VERSION__` and its absolute URLs
  * (canonical, og:url, og:image) `__BASE_URL__`, both filled in at serve time
- * so a self-hosted instance does not point crawlers at alice.mctl.ai.
+ * so a self-hosted instance does not point crawlers at alice.mctl.ai. Without
+ * a configured public origin the lines naming `__BASE_URL__` are dropped:
+ * a canonical guessed as localhost would de-index the page.
  */
 function withAssetVersion(html: string, siteUrl = ""): string {
-  return html.replaceAll("?v=__VERSION__", `?v=${VERSION}`).replaceAll("__BASE_URL__", escapeHtml(siteUrl));
+  const versioned = html.replaceAll("?v=__VERSION__", `?v=${VERSION}`);
+  return siteUrl
+    ? versioned.replaceAll("__BASE_URL__", escapeHtml(siteUrl))
+    : versioned.replace(/^.*__BASE_URL__.*\n/gm, "");
 }
 
 function serveStaticFile(
@@ -130,9 +135,12 @@ function serveStaticFile(
     const contentType = STATIC_MIME_TYPES[ext] || fallbackContentType;
     const content = ext === ".html" ? withAssetVersion(fs.readFileSync(filePath, "utf8"), siteUrl) : fs.readFileSync(filePath);
 
+    // Font files never change in place (a new font gets a new file name), so
+    // they are cached for a week instead of revalidated every minute.
+    const isFont = ext === ".woff2";
     res.writeHead(200, {
       "Content-Type": contentType,
-      "Cache-Control": "public, max-age=60, stale-while-revalidate=300",
+      "Cache-Control": isFont ? "public, max-age=604800" : "public, max-age=60, stale-while-revalidate=300",
     });
     res.end(content);
     return true;
@@ -155,22 +163,23 @@ function renderAuthPage({
   titleKey,
   contentHtml,
   scriptHtml = "",
-  canonicalUrl,
+  canonical,
 }: {
   title: string;
   titleKey?: string;
   contentHtml: string;
   scriptHtml?: string;
   /** Public pages pass their absolute URL; pages without one are not indexed. */
-  canonicalUrl?: string;
+  canonical?: { siteUrl: string; path: string };
 }): string {
-  const indexing = canonicalUrl
+  const canonicalUrl = canonical ? canonical.siteUrl + canonical.path : "";
+  const indexing = canonical
     ? `<link rel="canonical" href="${escapeHtml(canonicalUrl)}">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="mctl-alice">
 <meta property="og:title" content="${escapeHtml(title)}">
 <meta property="og:url" content="${escapeHtml(canonicalUrl)}">
-<meta property="og:image" content="${escapeHtml(new URL("/og-image.png", canonicalUrl).href)}">
+<meta property="og:image" content="${escapeHtml(canonical.siteUrl + "/og-image.png")}">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta name="twitter:card" content="summary_large_image">`
@@ -328,7 +337,7 @@ const MACHINE_PATHS = /^\/(?:mcp|sse|messages|api|oauth|\.well-known|openapi)(?:
 
 /** Whether an unmatched request should get the HTML 404 page instead of JSON. */
 export function wantsHtmlNotFound(req: http.IncomingMessage, pathname: string): boolean {
-  if (req.method !== "GET" && req.method !== "HEAD") return false;
+  if (req.method !== "GET") return false;
   if (MACHINE_PATHS.test(pathname)) return false;
   return String(req.headers.accept || "").includes("text/html");
 }
@@ -544,6 +553,10 @@ export function createHttpServer(
     options.authRequired ?? (process.env.AUTH_REQUIRED === "true");
   const baseUrl = options.publicBaseUrl || process.env.PUBLIC_BASE_URL || `http://localhost:${port}`;
   const siteUrl = baseUrl.replace(/\/+$/, "");
+  // Canonical URLs, og:* and the sitemap need the real public origin; the
+  // localhost fallback above is not one.
+  const publicSiteUrl = options.publicBaseUrl || process.env.PUBLIC_BASE_URL ? siteUrl : "";
+  const canonicalFor = (pagePath: string) => (publicSiteUrl ? { siteUrl: publicSiteUrl, path: pagePath } : undefined);
   const clientId =
     options.clientId ||
     process.env.YANDEX_CLIENT_ID ||
@@ -833,13 +846,13 @@ export function createHttpServer(
     // the configured public origin rather than shipped as static files.
     if (url.pathname === "/robots.txt" && req.method === "GET") {
       res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "public, max-age=3600" });
-      res.end(renderRobotsTxt(siteUrl));
+      res.end(renderRobotsTxt(publicSiteUrl));
       return;
     }
 
-    if (url.pathname === "/sitemap.xml" && req.method === "GET") {
+    if (url.pathname === "/sitemap.xml" && req.method === "GET" && publicSiteUrl) {
       res.writeHead(200, { "Content-Type": "application/xml; charset=utf-8", "Cache-Control": "public, max-age=3600" });
-      res.end(renderSitemapXml(siteUrl));
+      res.end(renderSitemapXml(publicSiteUrl));
       return;
     }
 
@@ -1522,7 +1535,7 @@ export function createHttpServer(
           title: "mctl-alice — Подключение ассистента",
           titleKey: "setup_page_title",
           contentHtml: renderSetupPage(siteUrl),
-          canonicalUrl: `${siteUrl}/setup`,
+          canonical: canonicalFor("/setup"),
         })
       );
       return;
@@ -1535,7 +1548,7 @@ export function createHttpServer(
           title: "mctl-alice — О сервисе",
           titleKey: "about_title",
           contentHtml: renderAboutPage(baseUrl),
-          canonicalUrl: `${siteUrl}/about`,
+          canonical: canonicalFor("/about"),
         })
       );
       return;
@@ -1548,7 +1561,7 @@ export function createHttpServer(
           title: "mctl-alice — Политика конфиденциальности",
           titleKey: "privacy_title",
           contentHtml: renderPrivacyPage(baseUrl),
-          canonicalUrl: `${siteUrl}/privacy`,
+          canonical: canonicalFor("/privacy"),
         })
       );
       return;
@@ -1561,7 +1574,7 @@ export function createHttpServer(
           title: "mctl-alice — Условия использования",
           titleKey: "terms_title",
           contentHtml: renderTermsPage(baseUrl),
-          canonicalUrl: `${siteUrl}/terms`,
+          canonical: canonicalFor("/terms"),
         })
       );
       return;
@@ -1574,7 +1587,7 @@ export function createHttpServer(
           title: "mctl-alice — Безопасность",
           titleKey: "security_title",
           contentHtml: renderSecurityPage(baseUrl),
-          canonicalUrl: `${siteUrl}/security`,
+          canonical: canonicalFor("/security"),
         })
       );
       return;
@@ -2166,7 +2179,7 @@ export function createHttpServer(
       const accept = req.headers.accept || "";
       const prefersJson = accept.includes("application/json") && !accept.includes("text/html");
       if (!prefersJson) {
-        const served = serveStaticFile("index.html", res, undefined, siteUrl);
+        const served = serveStaticFile("index.html", res, undefined, publicSiteUrl);
         if (served) return;
       }
     }

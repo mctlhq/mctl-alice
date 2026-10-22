@@ -44,6 +44,20 @@ describe("Public site basics: /setup, 404 page, sitemap, fonts, social preview",
     expect(body).toContain(`<link rel="canonical" href="${PUBLIC_ORIGIN}/setup">`);
     expect(body).toContain(`<meta property="og:image" content="${PUBLIC_ORIGIN}/og-image.png">`);
     expect(body).not.toContain('name="robots"');
+    // The snippets follow the host the page is opened on, like the copy button.
+    expect(body).toContain(`alice <span class="mcp-url-slot">${PUBLIC_ORIGIN}/mcp</span>`);
+  });
+
+  it("keeps private pages out of search results", async () => {
+    for (const page of ["/account", "/auth/login", "/auth/cookie", "/auth/callback"]) {
+      const res = await fetch(base + page, { headers: html, redirect: "manual" });
+      if (res.status !== 200) continue;
+      const body = await res.text();
+      expect(body, page).toContain('<meta name="robots" content="noindex">');
+      expect(body, page).not.toContain('rel="canonical"');
+    }
+    const account = await (await fetch(base + "/account", { headers: html })).text();
+    expect(account).toContain('<meta name="robots" content="noindex">');
   });
 
   it("links every internal page from the public pages to something that exists", async () => {
@@ -55,7 +69,7 @@ describe("Public site basics: /setup, 404 page, sitemap, fonts, social preview",
     expect(seen).toContain("/setup");
     for (const href of seen) {
       const res = await fetch(base + href, { headers: html, redirect: "manual" });
-      expect(res.status, href).not.toBe(404);
+      expect(res.status, href).toBeLessThan(400);
     }
   });
 
@@ -72,6 +86,7 @@ describe("Public site basics: /setup, 404 page, sitemap, fonts, social preview",
 
   it("keeps JSON 404s for API, MCP and OAuth clients", async () => {
     const cases: Array<[string, RequestInit]> = [
+      ["/no-such-page", { method: "HEAD", headers: html }],
       ["/no-such-page", { headers: { Accept: "application/json" } }],
       ["/no-such-page", {}],
       ["/no-such-page", { method: "POST", headers: html }],
@@ -86,7 +101,7 @@ describe("Public site basics: /setup, 404 page, sitemap, fonts, social preview",
       const label = `${init.method || "GET"} ${p} ${JSON.stringify(init.headers || {})}`;
       expect(res.status, label).toBe(404);
       expect(res.headers.get("content-type"), label).toContain("application/json");
-      expect(await res.json(), label).toEqual({ error: "not_found", message: "Route not found" });
+      if (init.method !== "HEAD") expect(await res.json(), label).toEqual({ error: "not_found", message: "Route not found" });
     }
   });
 
@@ -142,10 +157,51 @@ describe("Public site basics: /setup, 404 page, sitemap, fonts, social preview",
     }
   });
 
+  it("sends long cache headers for the font files", async () => {
+    const res = await fetch(base + "/assets/fonts/onest-latin-wght-normal.woff2");
+    expect(res.headers.get("cache-control")).toBe("public, max-age=604800");
+  });
+
   it("does not describe the Yandex refresh token as permanent", () => {
     for (const file of ["public/assets/site.js", "src/server/http-server.ts", "src/auth/oauth-helper.ts", "src/auth/cli.ts"]) {
       const text = fs.readFileSync(path.join(rootDir, file), "utf8");
       expect(text, file).not.toMatch(/permanent refresh|постоянн\S* refresh/i);
     }
+  });
+});
+
+describe("Public site without a configured public origin", () => {
+  let server: http.Server;
+  let storage: OAuthStorage;
+  let history: TelemetryStorage;
+  let base: string;
+  const saved = process.env.PUBLIC_BASE_URL;
+
+  beforeAll(async () => {
+    delete process.env.PUBLIC_BASE_URL;
+    storage = new OAuthStorage(":memory:");
+    history = new TelemetryStorage(":memory:");
+    server = createHttpServer(0, { authRequired: false, oauthStorage: storage, storage: history, enableSampler: false });
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    base = `http://127.0.0.1:${(server.address() as import("node:net").AddressInfo).port}`;
+  });
+
+  afterAll(async () => {
+    if (saved !== undefined) process.env.PUBLIC_BASE_URL = saved;
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    storage.close();
+    history.close();
+  });
+
+  it("does not claim a localhost canonical, og:url or sitemap", async () => {
+    for (const page of ["/", "/setup", "/about"]) {
+      const body = await (await fetch(base + page, { headers: { Accept: "text/html" } })).text();
+      expect(body, page).not.toContain('rel="canonical"');
+      expect(body, page).not.toContain("og:url");
+      expect(body, page).not.toContain("__BASE_URL__");
+      expect(body, page).not.toContain("og:image\" content=\"http");
+    }
+    expect(await (await fetch(base + "/robots.txt")).text()).not.toContain("Sitemap:");
+    expect((await fetch(base + "/sitemap.xml")).status).toBe(404);
   });
 });

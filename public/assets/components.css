@@ -17,13 +17,13 @@
 :root[data-theme="light"] {
   --surface-fg-subtle: #5c6169;
   --accent: var(--mctl-color-lilac-deep);
-  --accent-highlight: var(--mctl-color-lilac-deep);
+  --accent-highlight: var(--mctl-color-lilac-deeper);
 }
 @media (prefers-color-scheme: light) {
   :root:not([data-theme="dark"]) {
     --surface-fg-subtle: #5c6169;
     --accent: var(--mctl-color-lilac-deep);
-    --accent-highlight: var(--mctl-color-lilac-deep);
+    --accent-highlight: var(--mctl-color-lilac-deeper);
   }
 }
 

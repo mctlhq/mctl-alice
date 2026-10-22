@@ -167,6 +167,7 @@ export function renderSecurityPage(baseUrl: string): string {
 /** Pages listed in the sitemap; everything else is either private or not a page. */
 export const PUBLIC_PAGE_PATHS = ["/", "/setup", "/about", "/privacy", "/terms", "/security"];
 
+/** `siteUrl` is empty when no public origin is configured: no Sitemap line then. */
 export function renderRobotsTxt(siteUrl: string): string {
   return [
     "User-agent: *",
@@ -174,8 +175,7 @@ export function renderRobotsTxt(siteUrl: string): string {
     "Disallow: /oauth/",
     "Disallow: /account",
     "Allow: /",
-    "",
-    `Sitemap: ${siteUrl}/sitemap.xml`,
+    ...(siteUrl ? ["", `Sitemap: ${siteUrl}/sitemap.xml`] : []),
     "",
   ].join("\n");
 }
@@ -232,10 +232,10 @@ export function renderSetupPage(siteUrl: string): string {
       <section class="s-8f4f37" aria-labelledby="setup-other">
         <h2 class="section-title s-96cfba" id="setup-other" data-i18n="setup_other_title">Другие MCP-клиенты</h2>
         <p class="s-2a0ca8" data-i18n="setup_other_desc">Подойдёт любой клиент, который подключает удалённые MCP-серверы с авторизацией OAuth 2.1, например Claude Code или Cursor. Мы их сами не проверяли, поэтому напишите нам, если что-то не работает.</p>
-        <pre><code>claude mcp add --transport http alice ${mcpUrl}</code></pre>
+        <pre><code>claude mcp add --transport http alice <span class="mcp-url-slot">${mcpUrl}</span></code></pre>
         <pre><code>{
   "mcpServers": {
-    "alice": { "url": "${mcpUrl}" }
+    "alice": { "url": "<span class="mcp-url-slot">${mcpUrl}</span>" }
   }
 }</code></pre>
       </section>

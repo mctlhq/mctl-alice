@@ -223,6 +223,34 @@ ${scriptHtml}
 </html>`;
 }
 
+// Literal markup, so the i18n coverage test sees every key.
+const CONSENT_SCOPES: Record<string, string> = {
+  "iot:view": '<span data-i18n="oauth_scope_view">Просмотр списка комнат, устройств, датчиков и их состояния</span>',
+  "iot:control": '<span data-i18n="oauth_scope_control">Управление устройствами: включение и выключение, свет, громкость, медиа, запуск сценариев</span>',
+  "quasar": '<span data-i18n="oauth_scope_quasar">Колонки: произнести фразу или выполнить голосовую команду (нужна подключённая cookie Quasar)</span>',
+};
+
+// One checkbox per requested scope, described in plain language; the raw
+// scope name stays visible for users who compare it with the client's request.
+function renderConsentScope(scope: string): string {
+  const safeScope = escapeHtml(scope);
+  const description = Object.hasOwn(CONSENT_SCOPES, scope) ? CONSENT_SCOPES[scope] + " " : "";
+  return `<li><label><input form="consent" type="checkbox" name="scope_${safeScope}" value="yes" checked> ${description}<code>${safeScope}</code></label></li>`;
+}
+
+// The Yandex account the signed-in browser session belongs to, as Yandex
+// reported it at login, so the user can tell which home they are granting.
+function renderConsentAccount(user: UserRecord): string {
+  const name = user.displayName || user.login || `Yandex ID ${user.yandexUid}`;
+  const login = user.login && user.login !== name ? ` <span class="consent-account-login">${escapeHtml(user.login)}</span>` : "";
+  return `
+        <div class="card s-874b5b consent-account">
+          <div class="s-818cd7" data-i18n="oauth_account_label">Аккаунт Яндекса (умный дом, к которому выдаётся доступ):</div>
+          <div class="consent-account-name"><span class="s-e694bb">${escapeHtml(name)}</span>${login}</div>
+          <div class="consent-account-hint" data-i18n-html="oauth_account_switch">Не тот аккаунт? Выйдите в <a href="/account" target="_blank" rel="noopener">личном кабинете</a> и начните подключение в ИИ-клиенте заново.</div>
+        </div>`;
+}
+
 // Pages ship no inline script or style: scripts and styles are files under
 // /assets (inline style attributes became classes in pages.css).
 export function contentSecurityPolicy(formActionExtra?: string): string {
@@ -917,13 +945,29 @@ export function createHttpServer(
           </div>
         </div>
 
+        ${consentUser ? renderConsentAccount(consentUser) : ""}
+
         <div class="s-eb4739">
           <div class="s-cd2ba0" data-i18n="oauth_scopes_title">Запрашиваемые права доступа:</div>
-          <ul>${result.scope.split(/\s+/).map(scope => `<li><label><input form="consent" type="checkbox" name="scope_${escapeHtml(scope)}" value="yes" checked> ${escapeHtml(scope)}</label></li>`).join("")}</ul>
+          <ul class="consent-scopes">${result.scope.split(/\s+/).map(renderConsentScope).join("")}</ul>
         </div>
 
-        <div class="alert alert-info s-63b8a5">
-          <span data-i18n="oauth_status_connected">Подключение к умному дому Яндекс Алисы активно.</span>
+        <div class="alert alert-warning s-63b8a5">
+          <span data-i18n="oauth_whole_home">Доступ выдаётся ко всему дому: ко всем устройствам, комнатам, сценариям и колонкам этого аккаунта Яндекса, включая добавленные позже. Выбрать отдельные устройства нельзя.</span>
+        </div>
+
+        <div class="consent-retention">
+          <div class="s-cd2ba0" data-i18n="oauth_retention_title">Что сохраняется</div>
+          <ul class="s-a0190f">
+            <li data-i18n="oauth_retention_tokens">Приложение получит токен MCP на 30 дней; мы храним только его SHA-256 хеш.</li>
+            <li data-i18n="oauth_retention_yandex">Ваши токены Яндекса (и cookie Quasar, если вы её подключили) хранятся зашифрованными AES-256-GCM, пока вы не удалите аккаунт.</li>
+            <li data-i18n="oauth_retention_revoke">Отозвать доступ приложения или удалить аккаунт можно в любой момент в личном кабинете; резервные копии хранятся не дольше 14 дней.</li>
+          </ul>
+          <p class="consent-links">
+            <a href="/privacy" target="_blank" rel="noopener" data-i18n="footer_privacy">Конфиденциальность</a> ·
+            <a href="/terms" target="_blank" rel="noopener" data-i18n="footer_terms">Условия</a> ·
+            <a href="/account" target="_blank" rel="noopener" data-i18n="footer_account">Личный кабинет</a>
+          </p>
         </div>
 
         <form class="s-a8904c" id="consent" method="POST" action="/oauth/authorize">
@@ -1870,10 +1914,15 @@ export function createHttpServer(
           <p class="s-855e12" data-i18n="cookie_qr_desc">
             Отсканируйте QR-код камерой телефона или приложением Яндекс. Сессия будет настроена автоматически без ручного поиска кук.
           </p>
-          <div class="qr-frame" id="qr-frame">
+          <div class="alert alert-warning s-15aa3d qr-scope-note">
+            <strong data-i18n="cookie_qr_scope_title">Вход по QR даёт больше прав, чем вход через OAuth</strong><br>
+            <span data-i18n="cookie_qr_scope_desc">OAuth даёт сервису доступ только к API умного дома. При входе по QR сервис получает cookie веб-сессии вашего аккаунта Яндекса (Session_id) и использует её для неофициального Quasar API: синтез речи и команды на колонках. Cookie хранится зашифрованной, пока вы не отключите Quasar или не удалите аккаунт.</span>
+          </div>
+          <button id="qr-start-btn" type="button" class="btn btn-primary" data-i18n="cookie_qr_start">Показать QR-код для входа</button>
+          <div class="qr-frame" id="qr-frame" hidden>
             <div class="qr-spinner" id="qr-spinner"></div>
           </div>
-          <div id="qr-status" class="alert alert-info s-15aa3d" data-i18n="cookie_qr_waiting">
+          <div id="qr-status" class="alert alert-info s-15aa3d" data-i18n="cookie_qr_waiting" hidden>
             Ожидание сканирования QR-кода...
           </div>
           <div class="s-8cb777">

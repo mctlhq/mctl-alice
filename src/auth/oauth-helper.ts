@@ -1,3 +1,5 @@
+import { FORM_BODY_LIMIT, PayloadTooLargeError, readRequestBody, sendPayloadTooLarge } from "../server/request-body.js";
+import { UpstreamTimeoutError, upstreamFetch } from "../client/upstream.js";
 import http from "node:http";
 import crypto from "node:crypto";
 import { YandexIoTClient } from "../client/yandex-api.js";
@@ -250,9 +252,13 @@ export function startAuthServer(options: AuthServerOptions): Promise<{
         if (origin === undefined || !isLocalOrigin(origin, `http://localhost:${port}`)) {
           res.writeHead(403); res.end("Invalid origin"); return;
         }
-        let body = "";
-        req.on("data", (chunk) => (body += chunk));
-        req.on("end", async () => {
+        let body: string;
+        try { body = await readRequestBody(req, { limit: FORM_BODY_LIMIT }); }
+        catch (err) {
+          if (err instanceof PayloadTooLargeError) { sendPayloadTooLarge(res); return; }
+          res.writeHead(400); res.end(); return;
+        }
+        {
           try {
             const data = JSON.parse(body);
             if (data.state !== state) {
@@ -300,7 +306,7 @@ export function startAuthServer(options: AuthServerOptions): Promise<{
             res.writeHead(500, { "Content-Type": "application/json" });
             res.end(JSON.stringify({ status: "error", message: err.message }));
           }
-        });
+        }
         return;
       }
 
@@ -327,13 +333,15 @@ export interface YandexProfile {
   displayName: string;
 }
 
-export async function fetchYandexProfile(accessToken: string, requireVerifiedIdentity = false): Promise<YandexProfile> {
+export async function fetchYandexProfile(accessToken: string, requireVerifiedIdentity = false, timeoutMs?: number): Promise<YandexProfile> {
   try {
-    const res = await fetch("https://login.yandex.ru/info?format=json", {
-      headers: { Authorization: `OAuth ${accessToken}` },
-    });
+    const { res, data } = await upstreamFetch(
+      "https://login.yandex.ru/info?format=json",
+      { headers: { Authorization: `OAuth ${accessToken}` } },
+      { upstream: "Yandex login", timeoutMs },
+      async (r) => ({ res: r, data: r.ok ? ((await r.json()) as any) : undefined }),
+    );
     if (res.ok) {
-      const data = (await res.json()) as any;
       if (data && data.id) {
         return {
           id: `usr_${data.id}`,
@@ -344,6 +352,7 @@ export async function fetchYandexProfile(accessToken: string, requireVerifiedIde
       }
     }
   } catch (err: any) {
+    if (requireVerifiedIdentity && err instanceof UpstreamTimeoutError) throw err;
     console.warn("[OAuth] Failed to fetch profile from login.yandex.ru:", err.message);
   }
 
@@ -351,11 +360,13 @@ export async function fetchYandexProfile(accessToken: string, requireVerifiedIde
 
   // Fallback: smart home API user info
   try {
-    const res = await fetch("https://api.iot.yandex.net/v1.0/user/info", {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
+    const { res, data } = await upstreamFetch(
+      "https://api.iot.yandex.net/v1.0/user/info",
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+      { upstream: "Yandex IoT", timeoutMs },
+      async (r) => ({ res: r, data: r.ok ? ((await r.json()) as any) : undefined }),
+    );
     if (res.ok) {
-      const data = (await res.json()) as any;
       const householdId = data.households?.[0]?.id || "default";
       const hash = crypto.createHash("sha256").update(accessToken).digest("hex").slice(0, 12);
       return {

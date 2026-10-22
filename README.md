@@ -36,6 +36,10 @@ docker run -d \
 
 Set `PUBLIC_BASE_URL` to the exact origin browsers use to reach the server. With `AUTH_REQUIRED=true`, the account pages, the consent form and the credential forms accept a `POST` only from that origin. Without auth, they and browser requests to `/mcp` and `/api/*` are accepted only from that origin or from a loopback host (`localhost`, `127.0.0.1`, `[::1]`). Pages still load from any name, but a server reached as `http://nas.local:3000` without a matching `PUBLIC_BASE_URL` rejects its own forms and requests with 403.
 
+### Request limits
+
+Bodies are capped at 64 KiB (forms) and 1 MiB (MCP/REST JSON, `MAX_MCP_BODY_BYTES`), and OAuth, sign-in and MCP routes are rate limited per client (`RATE_LIMIT_REGISTER|TOKEN|AUTHORIZE|LOGIN|QR|MCP`, requests per minute). Behind a reverse proxy set `TRUST_PROXY_HOPS` to the number of trusted proxies so the client address is taken from `X-Forwarded-For`; set it only behind a proxy you control, since otherwise clients can spoof their rate-limit key. See `SECURITY.md` for the defaults.
+
 ---
 
 ## Available MCP Tools

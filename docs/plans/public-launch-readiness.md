@@ -327,7 +327,11 @@ login, refresh, simultaneous requests, Quasar use, history and restarts.
   granted scope cannot exceed the user's consent or upstream capability.
   Filter advertised tools where appropriate and always enforce at dispatch.
 - Protect browser sessions with Secure, HttpOnly, SameSite cookies; add
-  request size limits, endpoint-specific rate limits, upstream timeouts,
+  request size limits, endpoint-specific rate limits, upstream timeouts
+  (request size limits, in-process per-endpoint rate limits and Yandex upstream
+  timeouts with sanitized upstream errors are implemented in issue #74;
+  `TRUST_PROXY_HOPS` still has to be set in mctl-gitops once the ingress's
+  `X-Forwarded-For` behaviour is confirmed),
   session expiry, safe CORS and security headers. Use nonce/hash-based CSP,
   frame-ancestors protection, no-referrer and no-store on authentication pages.
 - Log route templates and redacted outcomes, not codes, cookies, tokens,

@@ -1,6 +1,13 @@
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { sanitizeUpstreamMessage, upstreamFetch } from "../client/upstream.js";
+
+/** The short sanitized error Yandex reported, or "" when it sent none we recognise. */
+function oauthErrorDetail(data: any): string {
+  const detail = sanitizeUpstreamMessage(JSON.stringify(data ?? {}));
+  return detail === "unexpected response" ? "" : detail;
+}
 
 export interface OAuthTokenResponse {
   access_token: string;
@@ -118,6 +125,7 @@ export async function exchangeCodeForToken(options: {
   clientId: string;
   clientSecret: string;
   redirectUri?: string;
+  timeoutMs?: number;
 }): Promise<OAuthTokenResponse> {
   const bodyParams = new URLSearchParams({
     grant_type: "authorization_code",
@@ -129,18 +137,21 @@ export async function exchangeCodeForToken(options: {
     bodyParams.set("redirect_uri", options.redirectUri);
   }
 
-  const res = await fetch("https://oauth.yandex.ru/token", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
+  const { res, data } = await upstreamFetch(
+    "https://oauth.yandex.ru/token",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: bodyParams.toString(),
     },
-    body: bodyParams.toString(),
-  });
-
-  const data = (await res.json()) as any;
+    { upstream: "Yandex OAuth", timeoutMs: options.timeoutMs },
+    async (r) => ({ res: r, data: (await r.json().catch(() => ({}))) as any }),
+  );
   if (!res.ok) {
     throw new Error(
-      data.error_description || data.error || `Token exchange failed with HTTP ${res.status}`
+      oauthErrorDetail(data) || `Token exchange failed with HTTP ${res.status}`
     );
   }
   return data as OAuthTokenResponse;
@@ -150,6 +161,7 @@ export async function refreshAccessToken(options: {
   refreshToken: string;
   clientId: string;
   clientSecret: string;
+  timeoutMs?: number;
 }): Promise<OAuthTokenResponse> {
   const bodyParams = new URLSearchParams({
     grant_type: "refresh_token",
@@ -158,18 +170,21 @@ export async function refreshAccessToken(options: {
     client_secret: options.clientSecret,
   });
 
-  const res = await fetch("https://oauth.yandex.ru/token", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
+  const { res, data } = await upstreamFetch(
+    "https://oauth.yandex.ru/token",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: bodyParams.toString(),
     },
-    body: bodyParams.toString(),
-  });
-
-  const data = (await res.json()) as any;
+    { upstream: "Yandex OAuth", timeoutMs: options.timeoutMs },
+    async (r) => ({ res: r, data: (await r.json().catch(() => ({}))) as any }),
+  );
   if (!res.ok) {
     throw new Error(
-      data.error_description || data.error || `Token refresh failed with HTTP ${res.status}`
+      oauthErrorDetail(data) || `Token refresh failed with HTTP ${res.status}`
     );
   }
   return data as OAuthTokenResponse;

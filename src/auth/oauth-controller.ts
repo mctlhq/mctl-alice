@@ -1,3 +1,4 @@
+import { readBodyCapped } from "../server/request-body.js";
 import { validScope } from "../tools/handlers.js";
 import crypto from "node:crypto";
 import dns from "node:dns";
@@ -129,16 +130,8 @@ export function publicOnlyLookup(
 }
 
 /** Concatenates a body stream, failing as soon as it exceeds the limit. */
-export async function readCapped(stream: AsyncIterable<Buffer | string>, limit: number): Promise<string> {
-  const chunks: Buffer[] = [];
-  let size = 0;
-  for await (const chunk of stream) {
-    const buf = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
-    size += buf.byteLength;
-    if (size > limit) throw new Error("Client metadata document is too large");
-    chunks.push(buf);
-  }
-  return Buffer.concat(chunks).toString("utf8");
+export async function readCapped(stream: NodeJS.ReadableStream, limit: number): Promise<string> {
+  return (await readBodyCapped(stream, limit, "Client metadata document is too large")).toString("utf8");
 }
 
 /** GET a metadata document: no redirects, public addresses only, 4 s, size-capped. */

@@ -1074,19 +1074,10 @@ export class StationService {
 
     let scope = "Весь дом";
     if (roomQuery && !["all", "все", "весь дом"].includes(roomQuery.trim().toLowerCase())) {
-      const q = roomQuery.trim().toLowerCase();
-      const matchedRoom = (info.rooms || []).find(
-        (r) => r.id === roomQuery || r.name.toLowerCase() === q || r.name.toLowerCase().includes(q)
-      );
-      if (matchedRoom) {
-        scope = matchedRoom.name;
-        devices = devices.filter((d) => d.room === matchedRoom.id);
-      } else {
-        const available = (info.rooms || []).map((r) => r.name).join(", ");
-        throw new YandexApiError(
-          `Room "${roomQuery}" not found. Available rooms: ${available || "none"}`
-        );
-      }
+      // Same id / exact / substring tiers and ambiguity rule as the other tools.
+      const matchedRoom = resolveRoom(info.rooms || [], roomQuery);
+      scope = matchedRoom.name;
+      devices = devices.filter((d) => d.room === matchedRoom.id);
     }
 
     // 1. Climate aggregation by room

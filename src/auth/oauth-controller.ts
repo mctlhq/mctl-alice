@@ -56,6 +56,17 @@ const MAX_REDIRECT_URIS = 10;
 const MAX_URI_LENGTH = 2048;
 const MAX_CLIENT_NAME_LENGTH = 100;
 const MAX_METADATA_BYTES = 16 * 1024;
+/** Bounds the whole metadata exchange; the 4 s idle timeout alone resets on every byte. */
+export const METADATA_DEADLINE_MS = 5000;
+/** How long a redeemed authorization code is remembered to detect its reuse. */
+const SPENT_CODE_TTL_MS = 24 * 60 * 60 * 1000;
+/**
+ * A rotated refresh token presented again within this window is refused
+ * without revoking its grant: a client retrying a refresh whose response it
+ * lost, or a duplicate request in flight, is not evidence of theft. Requests
+ * that lose a simultaneous refresh never reach the reuse check at all.
+ */
+export const REFRESH_REUSE_GRACE_MS = 10 * 1000;
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
 const FORBIDDEN_REDIRECT_SCHEMES = new Set(["javascript:", "data:", "file:", "vbscript:", "blob:", "about:"]);
 
@@ -134,10 +145,16 @@ export async function readCapped(stream: NodeJS.ReadableStream, limit: number): 
   return (await readBodyCapped(stream, limit, "Client metadata document is too large")).toString("utf8");
 }
 
-/** GET a metadata document: no redirects, public addresses only, 4 s, size-capped. */
+/** GET a metadata document: no redirects, public addresses only, 4 s idle and 5 s overall, size-capped. */
 export function fetchMetadataDocument(url: string): Promise<MetadataResponse> {
-  return new Promise((resolve, reject) => {
-    const req = https.get(url, { lookup: publicOnlyLookup as any, headers: { Accept: "application/json", "User-Agent": "mctl-alice" } }, (res) => {
+  return new Promise<MetadataResponse>((resolveFetch, rejectFetch) => {
+    const deadline = new AbortController();
+    const timer = setTimeout(() => deadline.abort(), METADATA_DEADLINE_MS);
+    const resolve = (value: MetadataResponse) => { clearTimeout(timer); resolveFetch(value); };
+    const reject = (err: unknown) => { clearTimeout(timer); rejectFetch(err); };
+    let response: import("node:http").IncomingMessage | undefined;
+    const req = https.get(url, { lookup: publicOnlyLookup as any, signal: deadline.signal, headers: { Accept: "application/json", "User-Agent": "mctl-alice" } }, (res) => {
+      response = res;
       const declared = Number(res.headers["content-length"]);
       if (Number.isFinite(declared) && declared > MAX_METADATA_BYTES) {
         res.destroy();
@@ -150,6 +167,12 @@ export function fetchMetadataDocument(url: string): Promise<MetadataResponse> {
       );
     });
     req.setTimeout(4000, () => req.destroy(new Error("Client metadata request timed out")));
+    deadline.signal.addEventListener("abort", () => {
+      const err = new Error("Client metadata request exceeded its deadline");
+      response?.destroy();
+      req.destroy(err);
+      reject(err);
+    });
     req.on("error", reject);
   });
 }
@@ -705,8 +728,13 @@ export class OAuthController {
         throw new Error("Parameter 'code' is required for authorization_code grant");
       }
 
-      const authCode = await this.storage.consumeAuthCode(body.code);
+      // RFC 9700 section 4.14 / OAuth 2.1: a code presented again revokes the
+      // tokens already issued from it.
+      const grantId = crypto.randomUUID();
+      const authCode = await this.storage.consumeAuthCode(body.code, { grantId, keepUntil: Date.now() + SPENT_CODE_TTL_MS });
       if (!authCode) {
+        const spent = await this.storage.flagSpentSecretReuse(body.code);
+        if (spent?.kind === "code") await this.storage.revokeGrantFamily(spent.grantId);
         throw new Error("Invalid or expired authorization code");
       }
 
@@ -746,7 +774,14 @@ export class OAuthController {
         scope: authCode.scope,
         createdAt: Date.now(),
         expiresAt: Date.now() + expiresIn * 1000,
+        grantId,
       });
+      // A replay that arrived while these tokens were being issued flagged the
+      // code before revoking, so either it revoked them or this check sees it.
+      if ((await this.storage.getSpentSecret(body.code))?.reusedAt) {
+        await this.storage.revokeGrantFamily(grantId);
+        throw new Error("Authorization code was reused");
+      }
 
       return {
         access_token: accessToken,
@@ -764,6 +799,10 @@ export class OAuthController {
 
       const existing = await this.storage.getTokenByRefreshToken(body.refresh_token);
       if (!existing) {
+        // Already rotated when presented: reuse revokes the grant, past a short
+        // grace for retries (see REFRESH_REUSE_GRACE_MS).
+        const spent = await this.storage.getSpentSecret(body.refresh_token);
+        if (spent?.kind === "refresh" && Date.now() - spent.spentAt > REFRESH_REUSE_GRACE_MS) await this.storage.revokeGrantFamily(spent.grantId);
         throw new Error("Invalid refresh_token");
       }
 
@@ -800,7 +839,12 @@ export class OAuthController {
       // Rotate tokens
       // Revoke by the presented refresh token: storage only knows the access
       // token as a digest, so existing.accessToken is an opaque handle here.
+      // Losing this race to a simultaneous refresh is not reuse: no revocation.
       if (!await this.storage.revokeToken(body.refresh_token)) throw new Error("Grant already revoked or rotated");
+      const grantId = existing.grantId ?? crypto.randomUUID();
+      await this.storage.recordSpentSecret(body.refresh_token, {
+        kind: "refresh", grantId, clientId: existing.clientId, userId: existing.userId, spentAt: Date.now(), expiresAt: existing.expiresAt,
+      });
       const newAccessToken = `mctl_at_${crypto.randomUUID().replace(/-/g, "")}`;
       const newRefreshToken = `mctl_rt_${crypto.randomUUID().replace(/-/g, "")}`;
       const expiresIn = 2592000;
@@ -816,6 +860,7 @@ export class OAuthController {
         scope: body.scope ?? existing.scope,
         createdAt: Date.now(),
         expiresAt: Date.now() + expiresIn * 1000,
+        grantId,
       });
 
       return {

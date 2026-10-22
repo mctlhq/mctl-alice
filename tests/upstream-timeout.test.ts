@@ -104,15 +104,16 @@ describe("upstream error sanitization", () => {
 });
 
 describe("account cleanup deadline", () => {
-  const PORT = 8321;
-  const baseUrl = `http://127.0.0.1:${PORT}`;
+  // Assigned once the server listens on an ephemeral port.
+  let baseUrl = "";
   let server: http.Server;
   let storage: OAuthStorage;
 
   async function setup() {
     storage = new OAuthStorage(":memory:");
-    server = createHttpServer(PORT, { publicBaseUrl: baseUrl, authRequired: false, enableSampler: false, oauthStorage: storage, cleanupDeadlineMs: 300 });
-    await new Promise<void>((resolve) => server.listen(PORT, "127.0.0.1", resolve));
+    server = createHttpServer(0, { publicBaseUrl: "http://127.0.0.1", authRequired: false, enableSampler: false, oauthStorage: storage, cleanupDeadlineMs: 300 });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    baseUrl = `http://127.0.0.1:${(server.address() as import("node:net").AddressInfo).port}`;
     vi.stubGlobal("fetch", (input: any, init?: RequestInit) => (String(input).startsWith(baseUrl) ? realFetch(input, init) : hangingFetch(input, init)));
   }
   async function teardown() {

@@ -6,25 +6,59 @@ import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { createHttpServer } from "../src/server/http-server.js";
 import { OAuthStorage } from "../src/storage/oauth-storage.js";
 
-const PORT = 8301;
-const baseUrl = `http://127.0.0.1:${PORT}`;
+// Assigned once the server listens on an ephemeral port, so parallel runs cannot collide.
+let PORT = 0;
+let baseUrl = "";
 const KiB = 1024;
 
-/** POSTs `chunks` with no Content-Length (chunked), resolving with the status once answered. */
-function chunkedPost(pathname: string, headers: Record<string, string>, chunks: Buffer[]): Promise<{ status: number; connection?: string; body: string }> {
+type Answer = { status: number; connection?: string; body: string; reset?: boolean };
+
+/**
+ * POSTs `chunks` with no Content-Length (chunked), resolving with the status
+ * once answered. The server answers 413 and closes the connection while the
+ * upload may still be in flight; the unread bytes can turn that close into a
+ * reset that reaches the client before the 413 does. That is reported as
+ * `reset` rather than failing the test.
+ */
+function chunkedPost(pathname: string, headers: Record<string, string>, chunks: Buffer[]): Promise<Answer> {
   return new Promise((resolve, reject) => {
+    let answered = false;
     const req = http.request({ host: "127.0.0.1", port: PORT, path: pathname, method: "POST", headers: { "Transfer-Encoding": "chunked", ...headers } }, (res) => {
+      answered = true;
       let body = "";
+      const done = () => resolve({ status: res.statusCode || 0, connection: res.headers.connection as string | undefined, body });
       res.on("data", (c) => (body += c));
-      res.on("end", () => resolve({ status: res.statusCode || 0, connection: res.headers.connection as string | undefined, body }));
+      res.on("end", done);
+      res.on("error", done);
     });
-    req.on("error", (err) => {
-      // The server may close the socket once it has answered 413.
-      reject(err);
+    req.on("error", (err: NodeJS.ErrnoException) => {
+      if (answered) return;
+      if (err.code === "ECONNRESET" || err.code === "EPIPE") resolve({ status: 0, body: "", reset: true });
+      else reject(err);
     });
     for (const chunk of chunks) req.write(chunk);
     req.end();
   });
+}
+
+/** Declares `length` bytes but sends none, so only the declared size can trigger the answer. */
+function declaredPost(pathname: string, headers: Record<string, string>, length: number): Promise<Answer> {
+  return new Promise((resolve, reject) => {
+    const req = http.request({ host: "127.0.0.1", port: PORT, path: pathname, method: "POST", headers: { ...headers, "Content-Length": String(length) } }, (res) => {
+      let body = "";
+      res.on("data", (c) => (body += c));
+      res.on("end", () => { req.destroy(); resolve({ status: res.statusCode || 0, connection: res.headers.connection as string | undefined, body }); });
+    });
+    req.on("error", reject);
+    req.flushHeaders();
+  });
+}
+
+/** A streamed oversize body is refused: 413 with Connection: close, or a reset mid-upload. */
+function expectRefused(res: Answer) {
+  if (res.reset) return;
+  expect(res.status).toBe(413);
+  expect(res.connection).toBe("close");
 }
 
 describe("request body limits", () => {
@@ -33,8 +67,10 @@ describe("request body limits", () => {
 
   beforeAll(async () => {
     storage = new OAuthStorage(":memory:");
-    server = createHttpServer(PORT, { publicBaseUrl: baseUrl, authRequired: false, enableSampler: false, oauthStorage: storage, rateLimits: { register: 1000, token: 1000, authorize: 1000, mcp: 1000 } });
-    await new Promise<void>((resolve) => server.listen(PORT, "127.0.0.1", resolve));
+    server = createHttpServer(0, { publicBaseUrl: "http://127.0.0.1", authRequired: false, enableSampler: false, oauthStorage: storage, rateLimits: { register: 1000, token: 1000, authorize: 1000, mcp: 1000 } });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    PORT = (server.address() as import("node:net").AddressInfo).port;
+    baseUrl = `http://127.0.0.1:${PORT}`;
   });
 
   afterAll(async () => {
@@ -46,19 +82,13 @@ describe("request body limits", () => {
 
   for (const route of formRoutes) {
     it(`rejects a declared oversize body on ${route} with 413`, async () => {
-      const res = await fetch(`${baseUrl}${route}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Origin: baseUrl },
-        body: JSON.stringify({ pad: "x".repeat(65 * KiB) }),
-      });
+      const res = await declaredPost(route, { "Content-Type": "application/json", Origin: baseUrl }, 65 * KiB);
       expect(res.status).toBe(413);
     });
 
     it(`rejects a streamed oversize body on ${route} with 413 and closes the connection`, async () => {
       const chunk = Buffer.alloc(16 * KiB, "a");
-      const res = await chunkedPost(route, { "Content-Type": "application/json", Origin: baseUrl }, [chunk, chunk, chunk, chunk, chunk]);
-      expect(res.status).toBe(413);
-      expect(res.connection).toBe("close");
+      expectRefused(await chunkedPost(route, { "Content-Type": "application/json", Origin: baseUrl }, [chunk, chunk, chunk, chunk, chunk]));
     });
 
     it(`still parses an in-limit JSON body on ${route}`, async () => {
@@ -83,10 +113,9 @@ describe("request body limits", () => {
   });
 
   it("rejects an MCP body above 1 MiB with 413 and accepts one below", async () => {
-    const big = await fetch(`${baseUrl}/mcp`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "x".repeat(1024 * KiB + 1) });
+    const big = await declaredPost("/mcp", { "Content-Type": "application/json" }, 1024 * KiB + 1);
     expect(big.status).toBe(413);
-    const streamed = await chunkedPost("/mcp", { "Content-Type": "application/json" }, [Buffer.alloc(1024 * KiB, "a"), Buffer.from("a")]);
-    expect(streamed.status).toBe(413);
+    expectRefused(await chunkedPost("/mcp", { "Content-Type": "application/json" }, [Buffer.alloc(1024 * KiB, "a"), Buffer.from("a")]));
     const ok = await fetch(`${baseUrl}/mcp`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" }) });
     expect(ok.status).toBe(200);
   });
@@ -117,8 +146,7 @@ describe("request body limits", () => {
         setTimeout(() => reject(new Error("no SSE session")), 3000);
       });
 
-      const over = await chunkedPost(`/messages?sessionId=${sessionId}`, { "Content-Type": "application/json" }, [Buffer.alloc(1024 * KiB, "a"), Buffer.from("a")]);
-      expect(over.status).toBe(413);
+      expectRefused(await chunkedPost(`/messages?sessionId=${sessionId}`, { "Content-Type": "application/json" }, [Buffer.alloc(1024 * KiB, "a"), Buffer.from("a")]));
       expect(handle).not.toHaveBeenCalled();
 
       const ok = await fetch(`${baseUrl}/messages?sessionId=${sessionId}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" }) });

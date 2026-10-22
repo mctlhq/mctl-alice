@@ -3,7 +3,7 @@ import dns from "node:dns";
 import https from "node:https";
 import { PassThrough } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { OAuthController, fetchMetadataDocument, publicOnlyLookup } from "../src/auth/oauth-controller.js";
+import { METADATA_DEADLINE_MS, OAuthController, fetchMetadataDocument, publicOnlyLookup } from "../src/auth/oauth-controller.js";
 import { OAuthStorage } from "../src/storage/oauth-storage.js";
 
 const metadataUrl = "https://client.example/oauth/client.json";
@@ -73,6 +73,37 @@ describe("client metadata document fetch guards", () => {
     requests[0].onTimeout!();
     await expect(pending).rejects.toThrow("timed out");
     expect(requests[0].destroyed).toBe(true);
+  });
+});
+
+describe("client metadata document overall deadline", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
+
+  it("aborts a server that keeps trickling bytes once the deadline passes", async () => {
+    const { calls, requests, response } = fakeHttpsGet();
+    const pending = fetchMetadataDocument(metadataUrl);
+    const outcome = pending.then(() => "resolved", (err: Error) => err.message);
+    const res = response(200, { "content-type": "application/json" });
+    // Each byte arrives well inside the 4 s idle timeout.
+    for (let elapsed = 0; elapsed < METADATA_DEADLINE_MS - 1000; elapsed += 1000) {
+      res.write("{");
+      await vi.advanceTimersByTimeAsync(1000);
+    }
+    expect(calls[0].options.signal.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(await outcome).toContain("deadline");
+    expect(calls[0].options.signal.aborted).toBe(true);
+    expect(requests[0].destroyed).toBe(true);
+    expect(res.destroyed).toBe(true);
+  });
+
+  it("clears the deadline once the document has arrived", async () => {
+    const { response } = fakeHttpsGet();
+    const pending = fetchMetadataDocument(metadataUrl);
+    response(200, { "content-type": "application/json" }).end("{}");
+    expect(await pending).toMatchObject({ status: 200, body: "{}" });
+    expect(vi.getTimerCount()).toBe(0);
   });
 });
 

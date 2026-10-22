@@ -63,6 +63,36 @@ export interface OAuthTokenRecord {
   scope: string;
   createdAt: number;
   expiresAt: number;
+  /** Shared by every token descended from one authorization code. */
+  grantId?: string;
+}
+
+/**
+ * A redeemed authorization code or a rotated refresh token, kept by digest so
+ * that presenting it again can be recognized as reuse of the grant it started.
+ */
+export interface SpentSecret {
+  kind: "code" | "refresh";
+  grantId: string;
+  clientId: string;
+  userId?: string;
+  spentAt: number;
+  expiresAt: number;
+  /** Set once the secret has been presented again after it was spent. */
+  reusedAt?: number;
+}
+
+/** Maps an oauth_spent_secrets row (SQLite or PostgreSQL) to a SpentSecret. */
+export function spentSecretFromRow(row: any): SpentSecret {
+  return {
+    kind: row.kind,
+    grantId: row.grant_id,
+    clientId: row.client_id,
+    userId: row.user_id ?? undefined,
+    spentAt: Number(row.spent_at),
+    expiresAt: Number(row.expires_at),
+    reusedAt: row.reused_at == null ? undefined : Number(row.reused_at),
+  };
 }
 
 export interface UserGrant {
@@ -108,7 +138,9 @@ export interface IStorage {
 
   // Auth Codes
   saveAuthCode(code: AuthCode): Promise<void> | void;
-  consumeAuthCode(code: string): Promise<AuthCode | null> | (AuthCode | null);
+  // With `spend`, a valid code is atomically replaced by a SpentSecret of kind
+  // "code" for that grant, kept until `spend.keepUntil`.
+  consumeAuthCode(code: string, spend?: { grantId: string; keepUntil: number }): Promise<AuthCode | null> | (AuthCode | null);
 
   // Tokens
   saveToken(token: OAuthTokenRecord): Promise<void> | void;
@@ -118,6 +150,14 @@ export interface IStorage {
   getToken(accessToken: string): Promise<OAuthTokenRecord | null> | (OAuthTokenRecord | null);
   getTokenByRefreshToken(refreshToken: string): Promise<OAuthTokenRecord | null> | (OAuthTokenRecord | null);
   revokeToken(token: string): Promise<boolean> | boolean;
+
+  // Reuse detection
+  recordSpentSecret(secret: string, spent: SpentSecret): Promise<void> | void;
+  getSpentSecret(secret: string): Promise<SpentSecret | null> | (SpentSecret | null);
+  /** Marks a live spent secret as presented again and returns it; null when it is unknown or expired. */
+  flagSpentSecretReuse(secret: string): Promise<SpentSecret | null> | (SpentSecret | null);
+  /** Revokes every token of one grant; true when any was revoked. */
+  revokeGrantFamily(grantId: string): Promise<boolean> | boolean;
 
   // Token update & grants
   updateYandexTokens?(

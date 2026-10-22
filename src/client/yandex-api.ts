@@ -197,7 +197,8 @@ export class YandexIoTClient {
       return responseData as T;
     } catch (err: any) {
       if (err instanceof UpstreamTimeoutError || err.name === "AbortError") {
-        throw new YandexApiError("Request timed out after 15 seconds", 408);
+        // 504 like every other Yandex deadline (SECURITY.md); 408 would blame the client.
+        throw new YandexApiError("Yandex IoT did not respond within 15s", 504);
       }
       if (err instanceof YandexApiError) {
         throw err;

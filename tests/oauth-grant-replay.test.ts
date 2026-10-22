@@ -137,6 +137,27 @@ describe.each(backends)("hosted grant replay and rotation (%s)", (_name, makeBac
       expect(await storage.getToken(first.access_token)).toMatchObject({ userId: "alice" });
     });
 
+    it("a code replayed for another client while its first exchange is still saving does not revoke it", async () => {
+      await storage.saveClient({ clientId: "other", clientSecret: "", clientName: "Other", redirectUris: [redirectUri], createdAt: Date.now() });
+      const code = await issueCode();
+      const save = storage.saveToken.bind(storage);
+      vi.spyOn(storage, "saveToken").mockImplementationOnce(async (token) => {
+        await expect(controller.handleToken({ grant_type: "authorization_code", client_id: "other", redirect_uri: redirectUri, code, code_verifier: verifier }))
+          .rejects.toThrow("Invalid or expired authorization code");
+        return save(token);
+      });
+      const first = await exchange(code);
+      expect(await storage.getToken(first.access_token)).toMatchObject({ userId: "alice", clientId: "web" });
+    });
+
+    it("without auth, a replay that omits client_id still revokes the grant", async () => {
+      const local = new OAuthController({ baseUrl, yandexClientId: "app", storage, authRequired: false });
+      const code = await issueCode();
+      const first = await exchange(code);
+      await expect(local.handleToken({ grant_type: "authorization_code", code, code_verifier: verifier })).rejects.toThrow("Invalid or expired authorization code");
+      expect(await storage.getToken(first.access_token)).toBeNull();
+    });
+
     it("a code replayed while its first exchange is still saving revokes the new tokens", async () => {
       const code = await issueCode();
       const save = storage.saveToken.bind(storage);

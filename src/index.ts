@@ -14,7 +14,7 @@ import { handleToolCall } from "./tools/handlers.js";
 import { StationService } from "./services/station-service.js";
 import { YandexIoTClient } from "./client/yandex-api.js";
 import { createHttpServer } from "./server/http-server.js";
-import { createMetricsServer, metricsPortFromEnv } from "./metrics.js";
+import { listenMetrics, metricsPortFromEnv } from "./metrics.js";
 
 async function runStdioServer() {
   const token = process.env.YANDEX_OAUTH_TOKEN;
@@ -75,9 +75,7 @@ async function runHttpServer(port: number) {
   });
   const metricsPort = metricsPortFromEnv();
   if (metricsPort !== null) {
-    createMetricsServer().listen(metricsPort, "0.0.0.0", () => {
-      console.log(`   - Metrics:      GET /metrics on port ${metricsPort}`);
-    });
+    listenMetrics(metricsPort);
   }
 }
 

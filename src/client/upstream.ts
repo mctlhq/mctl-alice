@@ -11,6 +11,14 @@ export class UpstreamTimeoutError extends Error {
   }
 }
 
+/** The caller's own signal (for example a cleanup deadline) stopped the call, not the upstream's deadline. */
+export class UpstreamCancelledError extends Error {
+  constructor(readonly upstream: string, reason: unknown) {
+    super(`${upstream} call stopped: ${reason instanceof Error && reason.name === "TimeoutError" ? "the caller's deadline expired" : "cancelled by the caller"}`);
+    this.name = "UpstreamCancelledError";
+  }
+}
+
 export class UpstreamError extends Error {
   readonly statusCode = 502;
   constructor(message: string, readonly upstream: string, readonly status?: number) {
@@ -52,7 +60,7 @@ export async function upstreamFetch<T = Response>(
     }
     if (!deadline.aborted && signal?.aborted && isAbort(err)) {
       recordUpstream(upstream, "timeout", elapsed());
-      throw new UpstreamTimeoutError(upstream, timeoutMs);
+      throw new UpstreamCancelledError(upstream, signal.reason);
     }
     recordUpstream(upstream, "error", elapsed());
     throw err;

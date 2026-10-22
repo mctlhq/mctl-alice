@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import http from "node:http";
 import { createHttpServer } from "../src/server/http-server.js";
 import { OAuthStorage } from "../src/storage/oauth-storage.js";
@@ -22,11 +22,16 @@ describe("RateLimiter", () => {
     expect(limiter.size).toBeLessThanOrEqual(100);
   });
 
-  it("evicts expired entries first", () => {
-    const limiter = new RateLimiter({ limit: 5, windowMs: 1000, maxKeys: 3 });
-    limiter.hit("old", 0);
-    limiter.hit("x", 5000); limiter.hit("y", 5000); limiter.hit("z", 5000);
-    expect(limiter.size).toBeLessThanOrEqual(3);
+  it("evicts expired entries before the least recently used live one", () => {
+    const limiter = new RateLimiter({ limit: 5, windowMs: 1000, maxKeys: 2 });
+    // "expired" was used more recently than "live", but its window started 2+ windows ago.
+    limiter.hit("expired", 0);
+    limiter.hit("live", 500);
+    limiter.hit("expired", 900);
+    limiter.hit("new", 2100);
+    expect(limiter.has("live")).toBe(true);
+    expect(limiter.has("expired")).toBe(false);
+    expect(limiter.size).toBe(2);
   });
 });
 
@@ -37,6 +42,8 @@ describe("route buckets and client address", () => {
     expect(rateLimitBucket("/oauth/register", "POST")).toBe("register");
     expect(rateLimitBucket("/auth/qr-code", "GET")).toBe("qr");
     expect(rateLimitBucket("/auth/save-cookie", "POST")).toBe("login");
+    expect(rateLimitBucket("/account/delete", "POST")).toBe("account");
+    expect(rateLimitBucket("/account", "GET")).toBeNull();
     expect(rateLimitBucket("/api/say", "POST")).toBe("mcp");
     expect(rateLimitBucket("/mcp/messages", "POST")).toBe("mcp");
     expect(rateLimitBucket("/", "GET")).toBeNull();
@@ -65,12 +72,13 @@ describe("rate limits over HTTP", () => {
   const realFetch = globalThis.fetch;
   const servers: { server: http.Server; storage: OAuthStorage }[] = [];
 
-  async function start(port: number, extra: Parameters<typeof createHttpServer>[1] = {}) {
+  // Ephemeral ports, so parallel test files cannot collide.
+  async function start(extra: Parameters<typeof createHttpServer>[1] = {}) {
     const storage = new OAuthStorage(":memory:");
-    const server = createHttpServer(port, { publicBaseUrl: `http://127.0.0.1:${port}`, authRequired: false, enableSampler: false, oauthStorage: storage, ...extra });
-    await new Promise<void>((resolve) => server.listen(port, "127.0.0.1", resolve));
+    const server = createHttpServer(0, { publicBaseUrl: "http://127.0.0.1", authRequired: false, enableSampler: false, oauthStorage: storage, ...extra });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     servers.push({ server, storage });
-    return `http://127.0.0.1:${port}`;
+    return `http://127.0.0.1:${(server.address() as import("node:net").AddressInfo).port}`;
   }
 
   beforeAll(() => {
@@ -89,7 +97,7 @@ describe("rate limits over HTTP", () => {
   });
 
   it("answers 429 with Retry-After once a bucket is over budget", async () => {
-    const base = await start(8311, { rateLimits: { register: 2, token: 2, authorize: 2, login: 2, qr: 2, qrstatus: 2, mcp: 2 } });
+    const base = await start({ rateLimits: { register: 2, token: 2, authorize: 2, login: 2, qr: 2, qrstatus: 2, account: 2, mcp: 2 } });
     const post = (p: string) => fetch(base + p, { method: "POST", headers: { "Content-Type": "application/json", Origin: base }, body: "{}", redirect: "manual" });
     const get = (p: string) => fetch(base + p, { redirect: "manual" });
     const cases: [string, () => Promise<Response>][] = [
@@ -99,6 +107,7 @@ describe("rate limits over HTTP", () => {
       ["/oauth/authorize GET", () => get("/oauth/authorize")],
       ["/auth/login", () => get("/auth/login")],
       ["/auth/qr-code", () => get("/auth/qr-code")],
+      ["/account/revoke-grant", () => post("/account/revoke-grant")],
       ["/mcp", () => post("/mcp")],
       ["/api/say", () => post("/api/say")],
     ];
@@ -117,6 +126,8 @@ describe("rate limits over HTTP", () => {
     }
     // /oauth/revoke shares the token bucket, which /oauth/token already exhausted.
     expect((await post("/oauth/revoke")).status).toBe(429);
+    // Every account action shares one bucket, which /account/revoke-grant already exhausted.
+    expect((await post("/account/delete")).status).toBe(429);
     // /api/* shares the MCP bucket, which is already exhausted.
     expect((await post("/api/say")).status).toBe(429);
     // The shared authorize bucket also limits the other method.
@@ -126,44 +137,53 @@ describe("rate limits over HTTP", () => {
   });
 
   it("never limits /healthz or /readyz", async () => {
-    const base = await start(8312, { rateLimits: { register: 1, token: 1, authorize: 1, login: 1, qr: 1, qrstatus: 1, mcp: 1 } });
+    const base = await start({ rateLimits: { register: 1, token: 1, authorize: 1, login: 1, qr: 1, qrstatus: 1, account: 1, mcp: 1 } });
     for (let i = 0; i < 20; i++) expect((await fetch(`${base}/healthz`)).status).toBe(200);
     for (let i = 0; i < 20; i++) expect((await fetch(`${base}/readyz`)).status).toBe(200);
   });
 
+  it("lets back-to-back /readyz probes share one storage round-trip", async () => {
+    const base = await start();
+    const getUser = vi.spyOn(servers[servers.length - 1].storage, "getUser");
+    const answers = await Promise.all(Array.from({ length: 20 }, () => fetch(`${base}/readyz`)));
+    for (let i = 0; i < 20; i++) answers.push(await fetch(`${base}/readyz`));
+    expect(answers.every((r) => r.status === 200)).toBe(true);
+    expect(getUser.mock.calls.length).toBeLessThanOrEqual(2);
+  });
+
   it("cannot be bypassed by rotating bearer tokens", async () => {
-    const base = await start(8313, { rateLimits: { mcp: 2 } });
+    const base = await start({ rateLimits: { mcp: 2 } });
     const call = (token: string) => fetch(`${base}/mcp`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: "{}" });
     await call("token-a"); await call("token-b");
     expect((await call("token-c")).status).toBe(429);
   });
 
   it("polling /auth/qr-status does not exhaust the login bucket", async () => {
-    const base = await start(8316, { rateLimits: { login: 2, qrstatus: 50 } });
+    const base = await start({ rateLimits: { login: 2, qrstatus: 50 } });
     for (let i = 0; i < 30; i++) await fetch(`${base}/auth/qr-status`);
     expect((await fetch(`${base}/auth/callback`)).status).not.toBe(429);
   });
 
   it("separates clients by X-Forwarded-For only when TRUST_PROXY_HOPS is set", async () => {
-    const trusted = await start(8314, { rateLimits: { register: 1 }, trustProxyHops: 1 });
+    const trusted = await start({ rateLimits: { register: 1 }, trustProxyHops: 1 });
     const register = (base: string, ip: string) => fetch(`${base}/oauth/register`, { method: "POST", headers: { "Content-Type": "application/json", "X-Forwarded-For": ip }, body: "{}" });
     await register(trusted, "10.0.0.1");
     expect((await register(trusted, "10.0.0.1")).status).toBe(429);
     expect((await register(trusted, "10.0.0.2")).status).not.toBe(429);
 
-    const untrusted = await start(8315, { rateLimits: { register: 1 }, trustProxyHops: 0 });
+    const untrusted = await start({ rateLimits: { register: 1 }, trustProxyHops: 0 });
     await register(untrusted, "10.0.0.1");
     expect((await register(untrusted, "10.0.0.2")).status).toBe(429);
   });
 
   it("separates clients by CLIENT_IP_HEADER only when it is configured", async () => {
     const register = (base: string, ip: string) => fetch(`${base}/oauth/register`, { method: "POST", headers: { "Content-Type": "application/json", "CF-Connecting-IP": ip }, body: "{}" });
-    const keyed = await start(8317, { rateLimits: { register: 1 }, clientIpHeader: "CF-Connecting-IP" });
+    const keyed = await start({ rateLimits: { register: 1 }, clientIpHeader: "CF-Connecting-IP" });
     await register(keyed, "198.51.100.1");
     expect((await register(keyed, "198.51.100.1")).status).toBe(429);
     expect((await register(keyed, "198.51.100.2")).status).not.toBe(429);
 
-    const unkeyed = await start(8318, { rateLimits: { register: 1 } });
+    const unkeyed = await start({ rateLimits: { register: 1 } });
     await register(unkeyed, "198.51.100.1");
     expect((await register(unkeyed, "198.51.100.2")).status).toBe(429);
   });

@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
+import crypto from "node:crypto";
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
@@ -49,15 +50,30 @@ describe("Public site basics: /setup, 404 page, sitemap, fonts, social preview",
   });
 
   it("keeps private pages out of search results", async () => {
+    // Every page is checked or fails: a status change cannot silently drop one.
+    const checked: string[] = [];
     for (const page of ["/account", "/auth/login", "/auth/cookie", "/auth/callback"]) {
       const res = await fetch(base + page, { headers: html, redirect: "manual" });
-      if (res.status !== 200) continue;
+      if (page === "/auth/login") {
+        // Redirects to Yandex ID; it has no page of its own to index.
+        expect(res.status, page).toBe(302);
+        continue;
+      }
+      expect(res.status, page).toBe(200);
       const body = await res.text();
       expect(body, page).toContain('<meta name="robots" content="noindex">');
       expect(body, page).not.toContain('rel="canonical"');
+      checked.push(page);
     }
-    const account = await (await fetch(base + "/account", { headers: html })).text();
-    expect(account).toContain('<meta name="robots" content="noindex">');
+    expect(checked).toEqual(["/account", "/auth/cookie", "/auth/callback"]);
+  });
+
+  it("answers HEAD like GET on every page the sitemap lists", async () => {
+    for (const page of ["/", "/setup", "/about", "/privacy", "/terms", "/security"]) {
+      const res = await fetch(base + page, { method: "HEAD", headers: html });
+      expect(res.status, page).toBe(200);
+      expect(res.headers.get("content-type"), page).toContain("text/html");
+    }
   });
 
   it("links every internal page from the public pages to something that exists", async () => {
@@ -148,12 +164,15 @@ describe("Public site basics: /setup, 404 page, sitemap, fonts, social preview",
     }
 
     const css = await (await fetch(base + "/assets/fonts.css")).text();
-    const fonts = Array.from(css.matchAll(/url\((\/assets\/fonts\/[^)]+\.woff2)\)/g), m => m[1]);
+    const fonts = Array.from(css.matchAll(/url\((\/assets\/fonts\/[^)?]+\.woff2)(\?v=[0-9a-f]+)?\)/g), m => [m[1], m[2] ?? ""]);
     expect(fonts.length).toBe(4);
-    for (const font of fonts) {
-      const res = await fetch(base + font);
+    for (const [font, version] of fonts) {
+      const res = await fetch(base + font + version);
       expect(res.status, font).toBe(200);
       expect(res.headers.get("content-type"), font).toBe("font/woff2");
+      // Fonts are cached for a week: a changed file must change its URL too.
+      const hash = crypto.createHash("sha256").update(fs.readFileSync(path.join(rootDir, "public", font))).digest("hex").slice(0, 8);
+      expect(version, font).toBe(`?v=${hash}`);
     }
   });
 
@@ -199,9 +218,55 @@ describe("Public site without a configured public origin", () => {
       expect(body, page).not.toContain('rel="canonical"');
       expect(body, page).not.toContain("og:url");
       expect(body, page).not.toContain("__BASE_URL__");
-      expect(body, page).not.toContain("og:image\" content=\"http");
+      expect(body, page).not.toContain("og:image");
+      expect(body, page).not.toContain("twitter:card");
     }
     expect(await (await fetch(base + "/robots.txt")).text()).not.toContain("Sitemap:");
     expect((await fetch(base + "/sitemap.xml")).status).toBe(404);
+  });
+
+  it("keeps the public pages indexable, like the landing page, and private ones not", async () => {
+    for (const page of ["/", "/setup", "/about", "/privacy", "/terms", "/security"]) {
+      const body = await (await fetch(base + page, { headers: { Accept: "text/html" } })).text();
+      expect(body, page).not.toContain('name="robots"');
+    }
+    const account = await (await fetch(base + "/account", { headers: { Accept: "text/html" } })).text();
+    expect(account).toContain('<meta name="robots" content="noindex">');
+  });
+});
+
+describe("Public origin edge cases", () => {
+  it("inserts a PUBLIC_BASE_URL with $ patterns literally", async () => {
+    const storage = new OAuthStorage(":memory:");
+    const history = new TelemetryStorage(":memory:");
+    const origin = "https://alice.example.test/$&$'";
+    const server = createHttpServer(0, { publicBaseUrl: origin, authRequired: false, oauthStorage: storage, storage: history, enableSampler: false });
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const body = await (await fetch(`http://127.0.0.1:${(server.address() as import("node:net").AddressInfo).port}/`, { headers: { Accept: "text/html" } })).text();
+      expect(body).toContain(`<link rel="canonical" href="https://alice.example.test/$&amp;$&#039;/">`);
+    } finally {
+      await new Promise<void>(resolve => server.close(() => resolve()));
+      storage.close();
+      history.close();
+    }
+  });
+
+  it("warns at startup when a hosted server has no public origin", () => {
+    const saved = process.env.PUBLIC_BASE_URL;
+    delete process.env.PUBLIC_BASE_URL;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const storage = new OAuthStorage(":memory:");
+    try {
+      createHttpServer(0, { authRequired: true, oauthStorage: storage, enableSampler: false });
+      expect(warn.mock.calls.some(args => String(args[0]).includes("PUBLIC_BASE_URL is not set"))).toBe(true);
+      warn.mockClear();
+      createHttpServer(0, { publicBaseUrl: "https://alice.example.test", authRequired: true, oauthStorage: storage, enableSampler: false });
+      expect(warn.mock.calls.some(args => String(args[0]).includes("PUBLIC_BASE_URL is not set"))).toBe(false);
+    } finally {
+      warn.mockRestore();
+      storage.close();
+      if (saved !== undefined) process.env.PUBLIC_BASE_URL = saved;
+    }
   });
 });

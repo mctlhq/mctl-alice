@@ -1,6 +1,6 @@
 import type http from "node:http";
 
-export type RateLimitBucket = "register" | "token" | "authorize" | "login" | "qr" | "qrstatus" | "mcp";
+export type RateLimitBucket = "register" | "token" | "authorize" | "login" | "qr" | "qrstatus" | "account" | "mcp";
 
 export type RateLimitResult = { allowed: true } | { allowed: false; retryAfterSec: number };
 
@@ -23,6 +23,10 @@ export class RateLimiter {
 
   get size(): number {
     return this.entries.size;
+  }
+
+  has(key: string): boolean {
+    return this.entries.has(key);
   }
 
   hit(key: string, now = Date.now()): RateLimitResult {
@@ -108,6 +112,8 @@ export function rateLimitBucket(pathname: string, method: string | undefined, ac
   if (pathname === "/auth/qr-code") return "qr";
   if (pathname === "/auth/qr-status") return "qrstatus";
   if (["/auth/login", "/auth/callback", "/auth/save-cookie", "/auth/save-token"].includes(pathname)) return "login";
+  // Account actions; delete and Quasar disconnect each run a scenario cleanup upstream.
+  if (pathname.startsWith("/account/") && method === "POST") return "account";
   if (["/mcp", "/sse", "/mcp/sse", "/messages", "/mcp/messages"].includes(pathname)) return "mcp";
   // GET / is the landing page unless the client asks for an event stream.
   if (pathname === "/") return (method === "GET" || method === "HEAD") && !accept.includes("text/event-stream") ? null : "mcp";
@@ -122,6 +128,7 @@ export const DEFAULT_RATE_LIMITS: Record<RateLimitBucket, number> = {
   login: 30,
   qr: 10,
   qrstatus: 90,
+  account: 30,
   mcp: 300,
 };
 

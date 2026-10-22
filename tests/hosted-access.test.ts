@@ -327,6 +327,9 @@ describe("hosted access boundary", () => {
   it("readiness fails when storage cannot be read", async () => {
     await start(); expect((await realFetch(base + "/readyz")).status).toBe(200);
     vi.spyOn(db, "getUser").mockImplementation(() => { throw new Error("offline"); });
+    // Past the one-second window in which probes share a storage round-trip.
+    const now = Date.now();
+    vi.spyOn(Date, "now").mockReturnValue(now + 1500);
     expect((await realFetch(base + "/readyz")).status).toBe(503);
   });
 

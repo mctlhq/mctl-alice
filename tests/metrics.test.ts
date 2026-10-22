@@ -4,8 +4,8 @@ import { createHttpServer } from "../src/server/http-server.js";
 import { OAuthStorage } from "../src/storage/oauth-storage.js";
 import { UpstreamTimeoutError, upstreamFetch } from "../src/client/upstream.js";
 import {
-  authFailures, createMetricsServer, httpRequests, metricsPortFromEnv, rateLimited, recordHttpRequest, renderMetrics, routeTemplate,
-  upstreamDuration, upstreamRequests,
+  authFailures, createMetricsServer, httpRequests, listenMetrics, metricsPortFromEnv, rateLimited, recordHttpRequest, renderMetrics, routeTemplate,
+  upstreamDuration, upstreamLabel, upstreamRequests,
 } from "../src/metrics.js";
 
 const realFetch = globalThis.fetch;
@@ -17,6 +17,12 @@ describe("label values stay bounded", () => {
     expect(routeTemplate("/assets/app.3f9c.js")).toBe("/assets/*");
     expect(routeTemplate("/api/devices/secret-device-id")).toBe("other");
     expect(routeTemplate("/y0_AgAAAAB-looks-like-a-token")).toBe("other");
+  });
+
+  it("never resolves an inherited property as an upstream label", () => {
+    expect(upstreamLabel("Yandex Quasar")).toBe("quasar");
+    for (const name of ["constructor", "toString", "__proto__", "hasOwnProperty"]) expect(upstreamLabel(name), name).toBe("other");
+    expect(() => renderMetrics()).not.toThrow();
   });
 
   it("drops the query string and never renders a raw path", () => {
@@ -104,6 +110,27 @@ describe("/metrics listener", () => {
     expect(metricsPortFromEnv()).toBeNull();
     vi.stubEnv("METRICS_PORT", "9464");
     expect(metricsPortFromEnv()).toBe(9464);
+    vi.stubEnv("METRICS_PORT", " 9464 ");
+    expect(metricsPortFromEnv()).toBe(9464);
+    for (const junk of ["9464x", "9464 # scrape", "94.5", "0x24e8"]) {
+      vi.stubEnv("METRICS_PORT", junk);
+      expect(metricsPortFromEnv(), junk).toBeNull();
+    }
+  });
+
+  it("logs a bind failure instead of crashing the process", async () => {
+    const taken = http.createServer();
+    await new Promise<void>((resolve) => taken.listen(0, "127.0.0.1", resolve));
+    servers.push(taken);
+    const port = (taken.address() as import("node:net").AddressInfo).port;
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const metrics = listenMetrics(port, "127.0.0.1");
+      await new Promise<void>((resolve) => metrics.once("error", () => resolve()));
+      expect(logged.mock.calls.some((args) => String(args[0]).includes(`metrics listener on port ${port} failed`))).toBe(true);
+    } finally {
+      logged.mockRestore();
+    }
   });
 
   it("serves only GET/HEAD /metrics on its own port; the app port does not serve it", async () => {

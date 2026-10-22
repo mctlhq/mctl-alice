@@ -82,6 +82,15 @@ const PASSPORT_USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
 /** One Passport call; the body is read inside the same deadline (and latency metric) as the request. */
+/** Parses a Passport body; a non-JSON body becomes a short sanitized error, never a fragment of the raw text. */
+function parsePassportJson(text: string, what: string): any {
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(`${what}: ${sanitizeUpstreamMessage(text)}`);
+  }
+}
+
 const passportFetch = (url: string, init: RequestInit, timeoutMs?: number) =>
   upstreamFetch(url, init, { upstream: "Yandex Passport", timeoutMs }, async (res) => ({ res, text: await res.text() }));
 
@@ -131,7 +140,7 @@ export async function initQrAuth(storage?: IStorage, timeoutMs?: number): Promis
   }
 
   jar.addFromResponse(r2);
-  const data2 = JSON.parse(text2) as any;
+  const data2 = parsePassportJson(text2, "Yandex returned an unreadable auth track");
   if (!data2.track_id) {
     throw new Error("Yandex did not return track_id for magic code");
   }
@@ -164,7 +173,7 @@ export async function initQrAuth(storage?: IStorage, timeoutMs?: number): Promis
   }
 
   jar.addFromResponse(r3);
-  const data3 = JSON.parse(text3) as any;
+  const data3 = parsePassportJson(text3, "Yandex returned an unreadable magic code link");
   if (!data3.link) {
     throw new Error("Yandex did not return QR authentication link");
   }
@@ -241,7 +250,7 @@ export async function checkQrAuthStatus(sessionId: string, storage?: IStorage): 
     }
 
     jar.addFromResponse(rStatus);
-    const dataStatus = JSON.parse(statusText) as any;
+    const dataStatus = parsePassportJson(statusText, "Yandex returned an unreadable QR status");
     if (dataStatus.errors && dataStatus.errors.length > 0) {
       const errMsg = Array.isArray(dataStatus.errors)
         ? dataStatus.errors.join(", ")

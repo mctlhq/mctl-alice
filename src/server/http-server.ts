@@ -5,7 +5,7 @@ import { VERSION } from "../version.js";
 import { isLocalOrigin } from "./origin.js";
 import { FORM_BODY_LIMIT, MCP_BODY_LIMIT, PayloadTooLargeError, parseRequestBody, readRequestBody, sendPayloadTooLarge } from "./request-body.js";
 import { RateLimiter, clientAddress, rateLimitBucket, resolveRateLimits, trustProxyHopsFromEnv, clientIpHeaderFromEnv, type RateLimitBucket } from "./rate-limit.js";
-import { UpstreamError, UpstreamTimeoutError } from "../client/upstream.js";
+import { UpstreamCancelledError, UpstreamError, UpstreamTimeoutError } from "../client/upstream.js";
 import { authFailures, rateLimited, recordHttpRequest } from "../metrics.js";
 
 export { isLocalOrigin };
@@ -543,9 +543,13 @@ export function createMcpServer(
   return server;
 }
 
+function isUpstreamFailure(err: unknown): err is UpstreamTimeoutError | UpstreamCancelledError | UpstreamError {
+  return err instanceof UpstreamTimeoutError || err instanceof UpstreamCancelledError || err instanceof UpstreamError;
+}
+
 /** 504/502 for a failed Yandex call, otherwise `fallback`. */
 function upstreamStatus(err: unknown, fallback: number): number {
-  return err instanceof UpstreamTimeoutError || err instanceof UpstreamError ? err.statusCode : fallback;
+  return isUpstreamFailure(err) ? err.statusCode : fallback;
 }
 
 export interface HttpServerOptions {
@@ -673,12 +677,14 @@ export function createHttpServer(
   const ipHeader = (options.clientIpHeader ?? clientIpHeaderFromEnv()).toLowerCase();
   const clearSessionCookie = `mctl_session=; Path=/; HttpOnly; SameSite=Lax; ${authRequired ? "Secure; " : ""}Max-Age=0`;
   // /readyz is never rate limited (probes), so concurrent and back-to-back
-  // probes share one storage round-trip per second instead of one each.
+  // probes share one storage round-trip: at most one in flight, and a settled
+  // answer is reused for a second. `at` is stamped when the check settles, so
+  // slow storage cannot make probes pile up behind it.
   let readiness: { at: number; ok: Promise<boolean> } | undefined;
   const storageReady = (): Promise<boolean> => {
     if (!readiness || Date.now() - readiness.at >= 1000) {
-      readiness = {
-        at: Date.now(),
+      const check = {
+        at: Number.POSITIVE_INFINITY,
         ok: (async () => {
           try {
             await oauthStorage.getUser("__readiness_probe__");
@@ -689,6 +695,8 @@ export function createHttpServer(
           }
         })(),
       };
+      void check.ok.then(() => { check.at = Date.now(); });
+      readiness = check;
     }
     return readiness.ok;
   };
@@ -2311,7 +2319,7 @@ export function createHttpServer(
     res.end(JSON.stringify({ error: "not_found", message: "Route not found" }));
     } catch (err) {
       if (err instanceof PayloadTooLargeError) { sendPayloadTooLarge(res); return; }
-      if (err instanceof UpstreamTimeoutError || err instanceof UpstreamError) {
+      if (isUpstreamFailure(err)) {
         if (!res.headersSent) { res.writeHead(err.statusCode, { "Content-Type": "application/json" }); res.end(JSON.stringify({ error: "upstream_error", message: err.message })); }
         else res.end();
         return;

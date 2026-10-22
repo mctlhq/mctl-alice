@@ -91,7 +91,7 @@ export const rateLimited = new Counter(
 );
 export const upstreamRequests = new Counter(
   "mctl_alice_upstream_requests_total",
-  "Outbound Yandex calls by upstream and outcome (ok, 3xx, 4xx, 5xx, timeout, error).",
+  "Outbound Yandex calls by upstream and outcome (ok, 3xx, 4xx, 5xx, timeout, cancelled, error).",
 );
 export const upstreamDuration = new Histogram(
   "mctl_alice_upstream_request_duration_seconds",
@@ -145,7 +145,7 @@ export function upstreamLabel(upstream: string): string {
   return Object.hasOwn(UPSTREAMS, upstream) ? UPSTREAMS[upstream] : "other";
 }
 
-export type UpstreamOutcome = "ok" | "3xx" | "4xx" | "5xx" | "timeout" | "error";
+export type UpstreamOutcome = "ok" | "3xx" | "4xx" | "5xx" | "timeout" | "cancelled" | "error";
 
 export function outcomeForStatus(status: number): UpstreamOutcome {
   if (status >= 200 && status < 300) return "ok";

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { createTelemetryStorage } from "../src/storage/index.js";
+import { OAuthStorage } from "../src/storage/oauth-storage.js";
 
 describe("test environment", () => {
   it("gives every default telemetry store its own in-memory database", async () => {
@@ -17,5 +18,24 @@ describe("test environment", () => {
       await first.close();
       await second.close();
     }
+  });
+
+  it("gives every default OAuth store its own in-memory database", () => {
+    // With the default file (./data/oauth.db) the second store would see the first one's user.
+    const id = `probe-${randomUUID()}`;
+    const first = new OAuthStorage();
+    const second = new OAuthStorage();
+    try {
+      first.saveUser({ id, yandexUid: "1", displayName: "probe", createdAt: Date.now(), updatedAt: Date.now() });
+      expect(first.getUser(id)).not.toBeNull();
+      expect(second.getUser(id)).toBeNull();
+    } finally {
+      first.close();
+      second.close();
+    }
+  });
+
+  it("refuses fetches that leave loopback", async () => {
+    await expect(fetch("https://yandex.ru/quasar")).rejects.toThrow("tests may not reach yandex.ru");
   });
 });

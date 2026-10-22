@@ -193,4 +193,35 @@ describe("Yandex QR Auth", () => {
       globalThis.fetch = originalFetch;
     }
   });
+
+  it.each([
+    ["/api/passport/auth/password/submit", "init"],
+    ["/api/passport/auth/magic/code", "init"],
+    ["/api/passport/auth/magic/code/status", "status"],
+  ])("never surfaces a raw non-JSON Passport body from %s", async (path, stage) => {
+    const originalFetch = globalThis.fetch;
+    const mock = createMockFetch();
+    const html = "<!DOCTYPE html><html><body>secret-passport-fragment</body></html>";
+    const status = stage === "status";
+    globalThis.fetch = vi.fn().mockImplementation(async (url: any, opts: any) => {
+      const u = new URL(String(url));
+      if (u.pathname.endsWith(path)) {
+        return { ok: true, status: 200, text: async () => html, headers: { getSetCookie: () => [], get: () => null } };
+      }
+      return mock(url, opts);
+    }) as any;
+    try {
+      let message: string;
+      if (status) {
+        const res = await initQrAuth();
+        message = String((await checkQrAuthStatus(res.sessionId)).message);
+      } else {
+        message = String((await initQrAuth().catch((e) => e)).message);
+      }
+      expect(message).toContain("unexpected response");
+      expect(message).not.toMatch(/DOCTYPE|secret-passport-fragment|</);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });

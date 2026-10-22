@@ -151,6 +151,21 @@ describe("rate limits over HTTP", () => {
     expect(getUser.mock.calls.length).toBeLessThanOrEqual(2);
   });
 
+  it("keeps one /readyz storage check in flight while storage is slower than the reuse window", async () => {
+    const base = await start();
+    const storage = servers[servers.length - 1].storage;
+    const realGetUser = storage.getUser.bind(storage);
+    const getUser = vi.spyOn(storage, "getUser").mockImplementation(async (id) => {
+      await new Promise((r) => setTimeout(r, 1500));
+      return realGetUser(id);
+    });
+    const first = fetch(`${base}/readyz`);
+    await new Promise((r) => setTimeout(r, 1100));
+    const second = fetch(`${base}/readyz`);
+    expect([(await first).status, (await second).status]).toEqual([200, 200]);
+    expect(getUser).toHaveBeenCalledTimes(1);
+  });
+
   it("cannot be bypassed by rotating bearer tokens", async () => {
     const base = await start({ rateLimits: { mcp: 2 } });
     const call = (token: string) => fetch(`${base}/mcp`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: "{}" });

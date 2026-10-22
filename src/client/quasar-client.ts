@@ -1,6 +1,6 @@
 import { saveEnvVariable, saveTokenToKeychain, getTokenFromKeychain } from "../auth/token-storage.js";
 import { IStorage } from "../storage/storage-interface.js";
-import { sanitizeUpstreamMessage, upstreamError, upstreamFetch } from "./upstream.js";
+import { readTextPrefix, sanitizeUpstreamMessage, upstreamError, upstreamFetch } from "./upstream.js";
 
 const MASK_EN = "0123456789abcdef-";
 const MASK_RU = "оеаинтсрвлкмдпуяы";
@@ -104,6 +104,8 @@ export function buildCommandScenarioPayload(
 
 const USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+// sanitizeUpstreamMessage keeps 120 chars of a known JSON field; a few KiB covers any real error body.
+const ERROR_BODY_MAX_BYTES = 4 * 1024;
 
 export interface QuasarClientOptions {
   onCookieRefresh?: (cookie: string) => Promise<void>;
@@ -249,9 +251,14 @@ export class QuasarClient {
     return (typeof uid === "string" || typeof uid === "number") && /^\d+$/.test(String(uid)) ? String(uid) : null;
   }
 
-  /** One Quasar call, with the body read inside the same deadline as the request. */
+  /**
+   * One Quasar call, with the body read inside the same deadline as the request.
+   * Callers use only a short message from a non-2xx body (or drop it), so that one
+   * is read up to a small cap rather than buffered whole.
+   */
   private fetchQuasar(url: string, init: RequestInit): Promise<{ res: Response; text: string }> {
-    return upstreamFetch(url, init, { upstream: "Yandex Quasar", timeoutMs: this.timeoutMs, signal: this.signal }, async (res) => ({ res, text: await res.text() }));
+    return upstreamFetch(url, init, { upstream: "Yandex Quasar", timeoutMs: this.timeoutMs, signal: this.signal },
+      async (res) => ({ res, text: res.ok ? await res.text() : await readTextPrefix(res, ERROR_BODY_MAX_BYTES) }));
   }
 
   async getCsrfToken(): Promise<string> {

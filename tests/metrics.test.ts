@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import http from "node:http";
 import { createHttpServer } from "../src/server/http-server.js";
 import { OAuthStorage } from "../src/storage/oauth-storage.js";
-import { UpstreamTimeoutError, upstreamFetch } from "../src/client/upstream.js";
+import { UpstreamCancelledError, UpstreamTimeoutError, upstreamFetch } from "../src/client/upstream.js";
 import {
   authFailures, createMetricsServer, httpRequests, listenMetrics, metricsPortFromEnv, rateLimited, recordHttpRequest, renderMetrics, routeTemplate,
   upstreamDuration, upstreamLabel, upstreamRequests,
@@ -75,6 +75,17 @@ describe("upstream calls", () => {
     expect([count("ok") - ok, count("5xx") - s5, count("4xx") - s4, count("error") - err, count("timeout") - timeout])
       .toEqual([1, 1, 1, 1, 1]);
     expect(upstreamDuration.count({ upstream: "quasar" })).toBe(observed + 5);
+  });
+
+  it("counts a call stopped by the caller's own signal as cancelled, not as an upstream timeout", async () => {
+    const count = (outcome: string) => upstreamRequests.get({ upstream: "quasar", outcome });
+    const timeout = count("timeout"), cancelled = count("cancelled");
+    vi.stubGlobal("fetch", (_i: unknown, init?: RequestInit) => new Promise<Response>((_r, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(init.signal!.reason), { once: true });
+    }));
+    await expect(upstreamFetch("https://example.test/", {}, { upstream: "Yandex Quasar", timeoutMs: 10_000, signal: AbortSignal.timeout(20) }))
+      .rejects.toBeInstanceOf(UpstreamCancelledError);
+    expect([count("timeout") - timeout, count("cancelled") - cancelled]).toEqual([0, 1]);
   });
 
   it("counts a body that fails to parse as an error, not as ok", async () => {

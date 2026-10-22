@@ -135,7 +135,8 @@ describe.skipIf(!connectionString)("checkRestoredDatabase against PostgreSQL", (
   });
 
   it("passes a healthy database, detects a wrong key, and never writes", async () => {
-    vi.stubEnv("ENCRYPTION_KEY", KEY_A);
+    vi.stubEnv("ENCRYPTION_KEYS", `k1:${KEY_A}`);
+    vi.stubEnv("ENCRYPTION_KEY_ID", "k1");
     const { pool, storage } = await fresh();
     await storage.saveUser({ id: "u1", yandexUid: "y1", createdAt: 0, updatedAt: 0 });
     await storage.saveUserCredentials("u1", { yandexAccessToken: "access-1", yandexRefreshToken: "refresh-1" });
@@ -149,12 +150,11 @@ describe.skipIf(!connectionString)("checkRestoredDatabase against PostgreSQL", (
     const after = await pool.query("SELECT user_id, xmin::text AS x FROM user_credentials ORDER BY user_id");
     expect(after.rows).toEqual(before.rows);
 
-    vi.stubEnv("ENCRYPTION_KEY", "");
     vi.stubEnv("ENCRYPTION_KEYS", `other:${KEY_B}`);
     vi.stubEnv("ENCRYPTION_KEY_ID", "other");
     const wrong = await checkRestoredDatabase(pool);
     expect(wrong.ok).toBe(false);
-    expect(wrong.credentials.undecryptable).toBeGreaterThan(0);
+    expect(wrong.credentials.undecryptable).toBe(2);
     expect(wrong.failures).toContain("credentials-undecryptable");
   });
 

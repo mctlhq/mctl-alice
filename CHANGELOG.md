@@ -3,6 +3,23 @@
 Versions follow semantic versioning; tags carry no `v` prefix. Full notes for
 every version are on the [Releases page](https://github.com/mctlhq/mctl-alice/releases).
 
+## 2.2.10 (2026-10-22)
+
+- The OAuth consent page names the Yandex account being connected, explains
+  each permission in plain language, warns that access covers the whole home
+  and summarises retention; QR sign-in starts only on request and explains the
+  broader session it grants (#92).
+- Reusing a spent authorization code or a rotated refresh token revokes the
+  tokens issued from that grant; client metadata fetches have an overall
+  deadline; an ambiguous room in the home summary is an error (#96).
+- Prometheus metrics on a separate listener (`METRICS_PORT`): HTTP status
+  classes, auth failures, rate-limit hits and Yandex upstream outcomes (#93).
+- Site: `/setup` guide, tested clients, data export and revocation steps,
+  self-hosted fonts, og:image, sitemap, canonical links, HTML 404 for
+  browsers and an accessibility pass (#95).
+- Tests for code and refresh replay, concurrent refresh, client metadata
+  fetch guards, ambiguous names and concurrent users (#94).
+
 ## 2.2.9 (2026-10-22)
 
 - `CLIENT_IP_HEADER` keys rate limits by a single-valued header the proxy

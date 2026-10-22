@@ -40,6 +40,10 @@ Set `PUBLIC_BASE_URL` to the exact origin browsers use to reach the server. With
 
 Bodies are capped at 64 KiB (forms) and 1 MiB (MCP/REST JSON, `MAX_MCP_BODY_BYTES`), and OAuth, sign-in and MCP routes are rate limited per client (`RATE_LIMIT_REGISTER|TOKEN|AUTHORIZE|LOGIN|QR|MCP`, requests per minute). Behind a reverse proxy set `CLIENT_IP_HEADER` to a header the proxy overwrites with the client address (`cf-connecting-ip` behind Cloudflare), or `TRUST_PROXY_HOPS` to the number of trusted proxies so the address is taken from `X-Forwarded-For`; set either only behind a proxy you control, since otherwise clients can spoof their rate-limit key. See `SECURITY.md` for the defaults.
 
+### Telemetry retention
+
+Telemetry samples older than `TELEMETRY_RETENTION_DAYS` (default `30`) are deleted in every mode, whether or not this instance samples: one minute after start and then every 6 hours, in batches of 5,000 rows. Each run logs one line with the number of rows deleted and the duration.
+
 ### Metrics
 
 Set `METRICS_PORT` (for example `9464`) to serve Prometheus metrics at `GET /metrics` on a separate listener; unset, no metrics are served. The application port never answers `/metrics`, so expose only the application port through your proxy and scrape the metrics port from inside your network. Metrics: `mctl_alice_http_requests_total` (route template, method, status class), `mctl_alice_auth_failures_total` (reason), `mctl_alice_rate_limited_total` (bucket), `mctl_alice_upstream_requests_total` and `mctl_alice_upstream_request_duration_seconds` (Yandex upstream and outcome), and `mctl_alice_build_info`. Label values come from fixed sets; no path, query string or token reaches a label.
@@ -53,7 +57,7 @@ Set `METRICS_PORT` (for example `9464`) to serve Prometheus metrics at `GET /met
 | `alice_list_devices` | `iot:view` | Lists speakers, rooms, smart home devices and scenarios. |
 | `alice_get_device_state` | `iot:view` | Returns the current state, capabilities and sensor values of a device. |
 | `alice_get_home_summary` | `iot:view` | Returns a readable overview of rooms and devices. |
-| `alice_get_device_history` | `iot:view` | Returns stored telemetry samples. The hosted service does not sample telemetry, so it returns no new data there. |
+| `alice_get_device_history` | `iot:view` | Returns stored telemetry samples. The hosted service does not sample telemetry and answers that no history is recorded. |
 | `alice_control_device` | `iot:control` | Turns a device on or off and sets temperature, mode or brightness. |
 | `alice_set_light` | `iot:control` | Sets a light's power, brightness, color temperature or scene. |
 | `alice_control_room` | `iot:control` | Controls every device of a category in a room or the whole home, e.g. all lights off. |

@@ -10,6 +10,11 @@ import {
 import { ITelemetryStorage, TelemetryHistoryResult } from "../storage/telemetry-storage.js";
 import { createTelemetryStorage } from "../storage/index.js";
 
+/** The hosted service runs no sampler (2.2.2), so it has no history to serve. */
+export const HOSTED_HISTORY_UNAVAILABLE =
+  "Device history is not recorded in the hosted service, so there is no history to return. " +
+  "Use alice_get_device_state for current readings.";
+
 export interface LightControlOptions {
   device: string;
   room?: string;
@@ -171,7 +176,7 @@ export class StationService {
 
   getStorage(): ITelemetryStorage {
     if (!this.storage) {
-      if (this.credentialsMode === "hosted") throw new Error("Personal history collection is not enabled yet.");
+      if (this.credentialsMode === "hosted") throw new Error(HOSTED_HISTORY_UNAVAILABLE);
       this.storage = createTelemetryStorage();
     }
     return this.storage;
@@ -1376,7 +1381,7 @@ export class StationService {
     to?: string;
     resolution?: "max" | "1m" | "5m" | "15m" | "1h";
   }): Promise<TelemetryHistoryResult> {
-    if (this.credentialsMode === "hosted") throw new Error("Personal history collection is not enabled yet.");
+    if (this.credentialsMode === "hosted") throw new Error(HOSTED_HISTORY_UNAVAILABLE);
     const { device, roomName } = await this.resolveDevice(options.device, options.room);
 
     // Parse time range

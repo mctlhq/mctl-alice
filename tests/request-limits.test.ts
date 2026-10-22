@@ -5,6 +5,7 @@ import path from "node:path";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { createHttpServer } from "../src/server/http-server.js";
 import { OAuthStorage } from "../src/storage/oauth-storage.js";
+import { readBodyCapped } from "../src/server/request-body.js";
 
 // Assigned once the server listens on an ephemeral port, so parallel runs cannot collide.
 let PORT = 0;
@@ -160,14 +161,39 @@ describe("request body limits", () => {
   });
 });
 
+describe("readBodyCapped", () => {
+  it("settles when the client aborts mid-body", async () => {
+    let settled!: Promise<string>;
+    const server = http.createServer((req) => {
+      settled = readBodyCapped(req, 1024 * KiB).then(() => "resolved", (err: Error) => `rejected: ${err.message}`);
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const port = (server.address() as import("node:net").AddressInfo).port;
+      const req = http.request({ host: "127.0.0.1", port, method: "POST", path: "/", headers: { "Content-Length": String(64 * KiB) } });
+      req.on("error", () => {});
+      req.write(Buffer.alloc(KiB, "a"));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      req.destroy();
+      const outcome = await Promise.race([settled, new Promise<string>((resolve) => setTimeout(() => resolve("pending"), 2000))]);
+      expect(outcome).toMatch(/^rejected/);
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+});
+
 describe("single body reader", () => {
-  it("leaves no raw req.on(\"data\") reader under src/", () => {
+  it("leaves no other raw stream reader under src/", () => {
+    // Any receiver, not only `req`: a body read under another name would also skip the cap.
+    const rawReader = /\.(?:on|once|addListener)\(\s*["'](?:data|readable)["']|for\s+await\s*\(/;
     const offenders: string[] = [];
     const walk = (dir: string) => {
       for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
         const full = path.join(dir, entry.name);
         if (entry.isDirectory()) walk(full);
-        else if (full.endsWith(".ts") && !full.endsWith(path.join("server", "request-body.ts")) && /\breq\.on\(\s*["']data["']/.test(fs.readFileSync(full, "utf8"))) offenders.push(full);
+        else if (full.endsWith(".ts") && !full.endsWith(path.join("server", "request-body.ts")) && rawReader.test(fs.readFileSync(full, "utf8"))) offenders.push(full);
       }
     };
     walk(path.join(__dirname, "..", "src"));

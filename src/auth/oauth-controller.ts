@@ -734,11 +734,18 @@ export class OAuthController {
       // RFC 9700 section 4.14 / OAuth 2.1: a code presented again revokes the
       // tokens already issued from it. Deliberately keyed on the code alone, as
       // the spec prescribes; only a presentation for another client is ignored.
+      // That client check runs before the reuse flag, so the post-save check
+      // below cannot revoke for a replay this branch would ignore. Without auth
+      // a client may omit client_id; that still counts as the same client.
       const grantId = crypto.randomUUID();
       const authCode = await this.storage.consumeAuthCode(body.code, { grantId, keepUntil: Date.now() + SPENT_CODE_TTL_MS });
       if (!authCode) {
-        const spent = await this.storage.flagSpentSecretReuse(body.code);
-        if (spent?.kind === "code" && spent.clientId === body.client_id) await this.storage.revokeGrantFamily(spent.grantId);
+        const spent = await this.storage.getSpentSecret(body.code);
+        const sameClient = spent?.clientId === body.client_id || (!this.authRequired && body.client_id === undefined);
+        if (spent?.kind === "code" && sameClient) {
+          const flagged = await this.storage.flagSpentSecretReuse(body.code);
+          if (flagged) await this.storage.revokeGrantFamily(flagged.grantId);
+        }
         throw new Error("Invalid or expired authorization code");
       }
 

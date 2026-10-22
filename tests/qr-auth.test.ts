@@ -2,9 +2,16 @@ import { OAuthStorage } from "../src/storage/oauth-storage.js";
 import { describe, it, expect, vi } from "vitest";
 import { initQrAuth, checkQrAuthStatus } from "../src/auth/yandex-qr-auth.js";
 
+/** The code reads every Passport body as text inside the deadline; give JSON-only stubs a text(). */
+const withText = (res: any) => (res.text ? res : { ...res, text: async () => (res.json ? JSON.stringify(await res.json()) : "") });
+
 describe("Yandex QR Auth", () => {
   function createMockFetch(state = "magic_code_waiting") {
-    return vi.fn().mockImplementation(async (url: any) => {
+    return vi.fn().mockImplementation(async (url: any) => withText(await passportStub(url, state))) as any;
+  }
+
+  async function passportStub(url: any, state: string): Promise<any> {
+    {
       const urlStr = String(url);
       if (urlStr === "https://passport.yandex.ru/pwl-yandex") {
         return {
@@ -69,7 +76,7 @@ describe("Yandex QR Auth", () => {
         };
       }
       return { ok: false, status: 404, text: async () => "not found", headers: { getSetCookie: () => [] } };
-    }) as any;
+    }
   }
 
   it("should initialize QR auth and return SVG and trackId", async () => {
@@ -164,7 +171,7 @@ describe("Yandex QR Auth", () => {
     globalThis.fetch = vi.fn().mockImplementation(async (url: any, opts: any) => {
       const urlStr = String(url);
       if (urlStr.includes("/api/passport/auth/magic/code/status")) {
-        return {
+        return withText({
           ok: true,
           status: 200,
           json: async () => ({
@@ -172,7 +179,7 @@ describe("Yandex QR Auth", () => {
             errors: ["csrf_token.invalid"],
           }),
           headers: { getSetCookie: () => [] },
-        };
+        });
       }
       return mock(url, opts);
     }) as any;

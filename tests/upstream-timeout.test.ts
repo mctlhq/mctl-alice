@@ -4,7 +4,8 @@ import { QuasarClient } from "../src/client/quasar-client.js";
 import { exchangeCodeForToken, refreshAccessToken } from "../src/auth/token-storage.js";
 import { fetchYandexProfile } from "../src/auth/oauth-helper.js";
 import { initQrAuth } from "../src/auth/yandex-qr-auth.js";
-import { UpstreamError, UpstreamTimeoutError, sanitizeUpstreamMessage, upstreamFetch } from "../src/client/upstream.js";
+import { UpstreamCancelledError, UpstreamError, UpstreamTimeoutError, sanitizeUpstreamMessage, upstreamFetch } from "../src/client/upstream.js";
+import { YandexApiError, YandexIoTClient } from "../src/client/yandex-api.js";
 import { createHttpServer } from "../src/server/http-server.js";
 import { OAuthStorage } from "../src/storage/oauth-storage.js";
 
@@ -21,6 +22,18 @@ const hangingFetch = (_input: any, init?: RequestInit) =>
   });
 
 afterEach(() => vi.unstubAllGlobals());
+
+/** Answers headers at once, then a body that never ends until the signal aborts. */
+const hangingBodyFetch = (status: number) => (_input: any, init?: RequestInit) => {
+  const signal = init?.signal;
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode("{"));
+      signal?.addEventListener("abort", () => controller.error(signal.reason), { once: true });
+    },
+  });
+  return Promise.resolve(new Response(body, { status }));
+};
 
 describe("upstream deadlines", () => {
   it("upstreamFetch maps a deadline to UpstreamTimeoutError naming the upstream", async () => {
@@ -56,6 +69,36 @@ describe("upstream deadlines", () => {
   it("initQrAuth times out", async () => {
     vi.stubGlobal("fetch", hangingFetch);
     await expect(initQrAuth(undefined, 20)).rejects.toThrow(/Yandex Passport did not respond/);
+  });
+
+  it("initQrAuth bounds the Passport body read by the same deadline", async () => {
+    vi.stubGlobal("fetch", hangingBodyFetch(200));
+    await expect(initQrAuth(undefined, 50)).rejects.toBeInstanceOf(UpstreamTimeoutError);
+  });
+
+  it("bounds a Quasar error body read by the deadline and reports it as a timeout", async () => {
+    vi.stubGlobal("fetch", (input: any, init?: RequestInit) =>
+      String(input) === "https://yandex.ru/quasar"
+        ? Promise.resolve(new Response('"csrfToken2":"abc"', { status: 200 }))
+        : hangingBodyFetch(500)(input, init));
+    const err = await new QuasarClient({ cookie: "Session_id=x", useKeychain: false, persistEnv: false, timeoutMs: 50 }).getScenarios().catch((e) => e);
+    expect(err).toBeInstanceOf(UpstreamTimeoutError);
+    expect(err.statusCode).toBe(504);
+  });
+
+  it("does not report the caller's own deadline as an upstream timeout", async () => {
+    vi.stubGlobal("fetch", hangingFetch);
+    const err = await upstreamFetch("https://example.test/", {}, { upstream: "Yandex Quasar", timeoutMs: 10_000, signal: AbortSignal.timeout(20) }).catch((e) => e);
+    expect(err).toBeInstanceOf(UpstreamCancelledError);
+    expect(err).not.toBeInstanceOf(UpstreamTimeoutError);
+    expect(err.message).toBe("Yandex Quasar call stopped: the caller's deadline expired");
+  });
+
+  it("reports a Smart Home API timeout as 504, not 408", async () => {
+    vi.stubGlobal("fetch", () => Promise.reject(new DOMException("aborted", "AbortError")));
+    const err = await new YandexIoTClient("tok", { useKeychain: false, persistEnv: false, autoRefresh: false }).getUserInfo().catch((e) => e);
+    expect(err).toBeInstanceOf(YandexApiError);
+    expect(err.statusCode).toBe(504);
   });
 });
 

@@ -77,14 +77,16 @@ const STATIC_MIME_TYPES: Record<string, string> = {
  * Static HTML names its asset suffix `?v=__VERSION__` and its absolute URLs
  * (canonical, og:url, og:image) `__BASE_URL__`, both filled in at serve time
  * so a self-hosted instance does not point crawlers at alice.mctl.ai. Without
- * a configured public origin the lines naming `__BASE_URL__` are dropped:
- * a canonical guessed as localhost would de-index the page.
+ * a configured public origin the <link>/<meta> tags naming `__BASE_URL__` are
+ * dropped (a canonical guessed as localhost would de-index the page), with the
+ * og:image details and twitter:card that describe the dropped image. The strip
+ * is by tag, so a placeholder anywhere else is left visible, not silently cut.
  */
 function withAssetVersion(html: string, siteUrl = ""): string {
   const versioned = html.replaceAll("?v=__VERSION__", `?v=${VERSION}`);
-  return siteUrl
-    ? versioned.replaceAll("__BASE_URL__", escapeHtml(siteUrl))
-    : versioned.replace(/^.*__BASE_URL__.*\n/gm, "");
+  // A function replacement: "$&" in an operator's PUBLIC_BASE_URL stays literal.
+  if (siteUrl) return versioned.replaceAll("__BASE_URL__", () => escapeHtml(siteUrl));
+  return versioned.replace(/^[ \t]*<(?:link|meta)\b[^>]*(?:__BASE_URL__|property="og:image:|name="twitter:card")[^>]*>[ \t]*\n?/gm, "");
 }
 
 function serveStaticFile(
@@ -165,13 +167,16 @@ function renderAuthPage({
   contentHtml,
   scriptHtml = "",
   canonical,
+  indexable = false,
 }: {
   title: string;
   titleKey?: string;
   contentHtml: string;
   scriptHtml?: string;
-  /** Public pages pass their absolute URL; pages without one are not indexed. */
+  /** The page's absolute URL, given only when a public origin is configured. */
   canonical?: { siteUrl: string; path: string };
+  /** Public pages: indexable even without a canonical; everything else is noindex. */
+  indexable?: boolean;
 }): string {
   const canonicalUrl = canonical ? canonical.siteUrl + canonical.path : "";
   const indexing = canonical
@@ -184,7 +189,7 @@ function renderAuthPage({
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta name="twitter:card" content="summary_large_image">`
-    : `<meta name="robots" content="noindex">`;
+    : indexable ? "" : `<meta name="robots" content="noindex">`;
   return `<!doctype html>
 <html lang="ru"${titleKey ? ` data-page-title-key="${escapeHtml(titleKey)}"` : ""}>
 <head>
@@ -585,6 +590,11 @@ export function createHttpServer(
   // localhost fallback above is not one.
   const publicSiteUrl = options.publicBaseUrl || process.env.PUBLIC_BASE_URL ? siteUrl : "";
   const canonicalFor = (pagePath: string) => (publicSiteUrl ? { siteUrl: publicSiteUrl, path: pagePath } : undefined);
+  if (authRequired && !publicSiteUrl) {
+    // Hosted without an origin: no canonical or sitemap, and the account forms'
+    // Origin check fails. Say so at startup rather than only in user reports.
+    console.warn(`⚠️  [mctl-alice] PUBLIC_BASE_URL is not set: pages carry no canonical URL, /sitemap.xml is off, and form posts are only accepted from ${new URL(baseUrl).origin}`);
+  }
   const clientId =
     options.clientId ||
     process.env.YANDEX_CLIENT_ID ||
@@ -649,6 +659,26 @@ export function createHttpServer(
   const proxyHops = options.trustProxyHops ?? trustProxyHopsFromEnv();
   const ipHeader = (options.clientIpHeader ?? clientIpHeaderFromEnv()).toLowerCase();
   const clearSessionCookie = `mctl_session=; Path=/; HttpOnly; SameSite=Lax; ${authRequired ? "Secure; " : ""}Max-Age=0`;
+  // /readyz is never rate limited (probes), so concurrent and back-to-back
+  // probes share one storage round-trip per second instead of one each.
+  let readiness: { at: number; ok: Promise<boolean> } | undefined;
+  const storageReady = (): Promise<boolean> => {
+    if (!readiness || Date.now() - readiness.at >= 1000) {
+      readiness = {
+        at: Date.now(),
+        ok: (async () => {
+          try {
+            await oauthStorage.getUser("__readiness_probe__");
+            await telemetryStorage.getStats();
+            return true;
+          } catch {
+            return false;
+          }
+        })(),
+      };
+    }
+    return readiness.ok;
+  };
   async function closeSessions(userId: string, clientId?: string) {
     for (const [id, owner] of sseOwners) {
       if (owner.userId === userId && (!clientId || owner.clientId === clientId)) {
@@ -836,13 +866,8 @@ export function createHttpServer(
       if (declared !== undefined && Number(declared) > limit) { sendPayloadTooLarge(res); return; }
     }
 
-    if (url.pathname === "/readyz") {
-      try {
-        await oauthStorage.getUser("__readiness_probe__");
-        await telemetryStorage.getStats();
-      } catch {
-        res.writeHead(503); res.end(JSON.stringify({ status: "unavailable" })); return;
-      }
+    if (url.pathname === "/readyz" && !(await storageReady())) {
+      res.writeHead(503); res.end(JSON.stringify({ status: "unavailable" })); return;
     }
     // Health check for Kubernetes probes
     if (url.pathname === "/healthz" || url.pathname === "/readyz") {
@@ -1178,7 +1203,7 @@ export function createHttpServer(
         // (TypeError, ...) is a server fault. The response stays invalid_grant
         // either way, but the label keeps the two apart.
         authFailures.inc({ reason: unavailable ? "token_unavailable"
-          : err instanceof OAuthError ? TOKEN_ERROR_REASONS[err.code] ?? "token_other"
+          : err instanceof OAuthError ? (Object.hasOwn(TOKEN_ERROR_REASONS, err.code) ? TOKEN_ERROR_REASONS[err.code] : "token_other")
           : err?.constructor === Error ? "token_invalid_grant" : "token_error" });
         res.writeHead(unavailable ? 503 : 400, {
           "Content-Type": "application/json; charset=utf-8",
@@ -1566,7 +1591,7 @@ export function createHttpServer(
     }
 
     // Public Informational & Legal Pages
-    if (url.pathname === "/setup" && req.method === "GET") {
+    if (url.pathname === "/setup" && (req.method === "GET" || req.method === "HEAD")) {
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       res.end(
         renderAuthPage({
@@ -1574,12 +1599,13 @@ export function createHttpServer(
           titleKey: "setup_page_title",
           contentHtml: renderSetupPage(siteUrl),
           canonical: canonicalFor("/setup"),
+          indexable: true,
         })
       );
       return;
     }
 
-    if (url.pathname === "/about" && req.method === "GET") {
+    if (url.pathname === "/about" && (req.method === "GET" || req.method === "HEAD")) {
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       res.end(
         renderAuthPage({
@@ -1587,12 +1613,13 @@ export function createHttpServer(
           titleKey: "about_title",
           contentHtml: renderAboutPage(baseUrl),
           canonical: canonicalFor("/about"),
+          indexable: true,
         })
       );
       return;
     }
 
-    if (url.pathname === "/privacy" && req.method === "GET") {
+    if (url.pathname === "/privacy" && (req.method === "GET" || req.method === "HEAD")) {
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       res.end(
         renderAuthPage({
@@ -1600,12 +1627,13 @@ export function createHttpServer(
           titleKey: "privacy_title",
           contentHtml: renderPrivacyPage(baseUrl),
           canonical: canonicalFor("/privacy"),
+          indexable: true,
         })
       );
       return;
     }
 
-    if (url.pathname === "/terms" && req.method === "GET") {
+    if (url.pathname === "/terms" && (req.method === "GET" || req.method === "HEAD")) {
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       res.end(
         renderAuthPage({
@@ -1613,12 +1641,13 @@ export function createHttpServer(
           titleKey: "terms_title",
           contentHtml: renderTermsPage(baseUrl),
           canonical: canonicalFor("/terms"),
+          indexable: true,
         })
       );
       return;
     }
 
-    if (url.pathname === "/security" && req.method === "GET") {
+    if (url.pathname === "/security" && (req.method === "GET" || req.method === "HEAD")) {
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       res.end(
         renderAuthPage({
@@ -1626,6 +1655,7 @@ export function createHttpServer(
           titleKey: "security_title",
           contentHtml: renderSecurityPage(baseUrl),
           canonical: canonicalFor("/security"),
+          indexable: true,
         })
       );
       return;
@@ -2216,7 +2246,7 @@ export function createHttpServer(
     }
 
     // Web Landing Page
-    if (url.pathname === "/" && req.method === "GET") {
+    if (url.pathname === "/" && (req.method === "GET" || req.method === "HEAD")) {
       const accept = req.headers.accept || "";
       const prefersJson = accept.includes("application/json") && !accept.includes("text/html");
       if (!prefersJson) {

@@ -238,18 +238,20 @@ export class QuasarClient {
    */
   async getAccountUid(): Promise<string | null> {
     if (!this.cookie) return null;
-    const res = await this.fetchQuasar("https://yandex.ru/iot?storage=1", {
+    const { res, text } = await this.fetchQuasar("https://yandex.ru/iot?storage=1", {
       headers: { Cookie: this.cookie, "User-Agent": USER_AGENT, Accept: "application/json" },
       redirect: "manual",
     });
     if (res.status !== 200) return null;
-    const data = (await res.json().catch(() => null)) as { storage?: { user?: { uid?: unknown } } } | null;
+    let data: { storage?: { user?: { uid?: unknown } } } | null = null;
+    try { data = JSON.parse(text); } catch { /* not JSON: no uid */ }
     const uid = data?.storage?.user?.uid;
     return (typeof uid === "string" || typeof uid === "number") && /^\d+$/.test(String(uid)) ? String(uid) : null;
   }
 
-  private fetchQuasar(url: string, init: RequestInit): Promise<Response> {
-    return upstreamFetch(url, init, { upstream: "Yandex Quasar", timeoutMs: this.timeoutMs, signal: this.signal });
+  /** One Quasar call, with the body read inside the same deadline as the request. */
+  private fetchQuasar(url: string, init: RequestInit): Promise<{ res: Response; text: string }> {
+    return upstreamFetch(url, init, { upstream: "Yandex Quasar", timeoutMs: this.timeoutMs, signal: this.signal }, async (res) => ({ res, text: await res.text() }));
   }
 
   async getCsrfToken(): Promise<string> {
@@ -261,7 +263,7 @@ export class QuasarClient {
       throw new Error("Yandex cookie not configured. Set YANDEX_COOKIE in .env or via /auth/cookie.");
     }
 
-    const res = await this.fetchQuasar("https://yandex.ru/quasar", {
+    const { res, text: html } = await this.fetchQuasar("https://yandex.ru/quasar", {
       headers: {
         Cookie: this.cookie,
         "User-Agent": USER_AGENT,
@@ -285,7 +287,6 @@ export class QuasarClient {
     this.cookie = this.serializeCookies();
 
     if (setCookies.length) await this.onCookieRefresh?.(this.cookie);
-    const html = await res.text();
     const match = html.match(/"csrfToken2"\s*:\s*"([^"]+)"/);
     if (!match || !match[1]) {
       throw new Error("Failed to extract csrfToken2 from Yandex Quasar page. Cookie may be invalid or expired.");
@@ -308,7 +309,7 @@ export class QuasarClient {
       ...(options.headers as Record<string, string>),
     };
 
-    let res = await this.fetchQuasar(url, { ...options, headers });
+    let { res, text } = await this.fetchQuasar(url, { ...options, headers });
 
     if (res.status === 403) {
       // CSRF token may have expired, refresh once
@@ -316,15 +317,14 @@ export class QuasarClient {
       const newCsrf = await this.getCsrfToken();
       headers["x-csrf-token"] = newCsrf;
       headers["Cookie"] = this.cookie || "";
-      res = await this.fetchQuasar(url, { ...options, headers });
+      ({ res, text } = await this.fetchQuasar(url, { ...options, headers }));
     }
 
     if (!res.ok) {
-      const text = await res.text();
       throw upstreamError("Yandex Quasar", res.status, text);
     }
 
-    return res.json();
+    return JSON.parse(text);
   }
 
   async getUserDevices(): Promise<any> {

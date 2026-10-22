@@ -141,7 +141,8 @@ const UPSTREAMS: Record<string, string> = {
 };
 
 export function upstreamLabel(upstream: string): string {
-  return UPSTREAMS[upstream] ?? "other";
+  // Own keys only: "constructor" must not resolve to Object.prototype's.
+  return Object.hasOwn(UPSTREAMS, upstream) ? UPSTREAMS[upstream] : "other";
 }
 
 export type UpstreamOutcome = "ok" | "3xx" | "4xx" | "5xx" | "timeout" | "error";
@@ -175,7 +176,9 @@ export function renderMetrics(): string {
 
 /** METRICS_PORT, or null when unset or invalid: metrics are then not served at all. */
 export function metricsPortFromEnv(): number | null {
-  const n = Number.parseInt(process.env.METRICS_PORT || "", 10);
+  // Digits only: parseInt would read "9464x" as 9464 and Number "0x24e8" as 9448.
+  const raw = (process.env.METRICS_PORT || "").trim();
+  const n = /^\d+$/.test(raw) ? Number(raw) : NaN;
   return Number.isInteger(n) && n > 0 && n < 65536 ? n : null;
 }
 
@@ -197,4 +200,16 @@ export function createMetricsServer(): http.Server {
     res.writeHead(200, { "Content-Type": "text/plain; version=0.0.4; charset=utf-8", "Cache-Control": "no-store" });
     res.end(req.method === "HEAD" ? undefined : renderMetrics());
   });
+}
+
+/**
+ * Starts the metrics listener. Metrics are optional, so a bind failure (for
+ * example METRICS_PORT equal to PORT) is logged and leaves the application
+ * server running instead of crashing the process.
+ */
+export function listenMetrics(port: number, host = "0.0.0.0"): http.Server {
+  const server = createMetricsServer();
+  server.on("error", (err) => console.error(`❌ [mctl-alice] metrics listener on port ${port} failed, metrics are off:`, err.message));
+  server.listen(port, host, () => console.log(`   - Metrics:      GET /metrics on port ${port}`));
+  return server;
 }

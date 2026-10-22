@@ -86,6 +86,7 @@ describe("rate limits over HTTP", () => {
     const cases: [string, () => Promise<Response>][] = [
       ["/oauth/register", () => post("/oauth/register")],
       ["/oauth/token", () => post("/oauth/token")],
+      ["/oauth/revoke", () => post("/oauth/revoke")],
       ["/oauth/authorize POST", () => post("/oauth/authorize")],
       ["/oauth/authorize GET", () => get("/oauth/authorize")],
       ["/auth/login", () => get("/auth/login")],

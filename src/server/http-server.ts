@@ -46,6 +46,9 @@ import { renderAboutPage, renderPrivacyPage, renderTermsPage, renderSecurityPage
 import { renderAccountPage } from "./account-page.js";
 import { UserRecord, guardedStorage, StorageUnavailableError } from "../storage/storage-interface.js";
 
+/** Maximum JSON-RPC batch length accepted per request. */
+const MAX_RPC_BATCH = 20;
+
 const DEFAULT_CLIENT_ID = "c0ebe342af7d48fbbbfcf2d2eedb8f9e";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -1094,6 +1097,19 @@ export function createHttpServer(
           }
           const rpcData = JSON.parse(body);
           if (Array.isArray(rpcData)) {
+            if (rpcData.length > MAX_RPC_BATCH) {
+              sendMcpResponse(
+                req,
+                res,
+                {
+                  jsonrpc: "2.0",
+                  id: null,
+                  error: { code: -32600, message: `Invalid Request: batch exceeds ${MAX_RPC_BATCH} elements` },
+                },
+                400
+              );
+              return;
+            }
             const results = [];
             for (const item of rpcData) {
               const resItem = await handleSingleRpc(item, req, activeSvc, auth.scope);

@@ -88,7 +88,7 @@ export function trustProxyHopsFromEnv(): number {
 /** Maps a route to its rate-limit bucket, or null for routes that are never limited. */
 export function rateLimitBucket(pathname: string, method: string | undefined, accept = ""): RateLimitBucket | null {
   if (pathname === "/oauth/register") return "register";
-  if (pathname === "/oauth/token") return "token";
+  if (pathname === "/oauth/token" || pathname === "/oauth/revoke") return "token";
   if (pathname === "/oauth/authorize") return "authorize";
   if (pathname === "/auth/qr-code") return "qr";
   if (pathname === "/auth/qr-status") return "qrstatus";

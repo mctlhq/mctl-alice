@@ -93,30 +93,23 @@ PGOPTIONS='-c statement_timeout=0' pg_restore -U postgres --no-owner --no-acl \
 `--role` makes every object owned by the app role. The live database is not
 touched. The new database is not declared in gitops.
 
-## 5. Verify before switching
-
-`restore-check` is read-only and prints counts only. It needs the real
-encryption key and refuses to run without `ENCRYPTION_KEY` or
-`ENCRYPTION_KEYS`. Run it from a one-off pod from the app image, using the
-app's secret for the key, with `DATABASE_URL` pointing at
-`labs-mctl-alice-restore` and `--as-role labs-mctl-alice` (it uses `SET ROLE`,
-so a postgres-user URL is enough and no pg_hba change is needed):
-
-```sh
-node dist/restore-check.js --as-role labs-mctl-alice
-```
-
-Exit code 0 means every check passed. Compare the table counts with step 3.
-Do not switch over on a non-zero exit.
-
-## 6. Switch over
+## 5. Switch over, then verify before serving
 
 `DATABASE_URL`, pg_hba and the CNPG `Database` resource stay unchanged; the
-database names are swapped instead.
+database names are swapped instead. The check runs against the live name, as
+the app role, before any traffic returns.
 
 1. Stop the app and keep it stopped: pause ArgoCD auto-sync for
-   `labs-mctl-alice` (or commit `replicaCount: 0` in gitops), then
-   `kubectl scale deploy/mctl-alice -n labs --replicas=0`.
+   `labs-mctl-alice` (or commit `replicaCount: 0` in gitops), then:
+
+```sh
+kubectl scale deploy/labs-mctl-alice-base-service -n labs --replicas=0
+kubectl rollout status deploy/labs-mctl-alice-base-service -n labs --timeout=60s
+kubectl get pods -n labs -l app.kubernetes.io/name=mctl-alice   # expect none
+```
+
+   Confirm zero pods before continuing: a running pod reconnects after
+   `pg_terminate_backend`.
 2. As local `postgres` on the primary:
 
 ```sql
@@ -125,13 +118,25 @@ ALTER DATABASE "labs-mctl-alice" RENAME TO "labs-mctl-alice-pre-restore-<yyyymmd
 ALTER DATABASE "labs-mctl-alice-restore" RENAME TO "labs-mctl-alice";
 ```
 
-3. Scale back to 1 and re-enable auto-sync.
+3. Run `restore-check` as the app role against the live name, from a one-off
+   pod from the app image (override the image entrypoint, e.g.
+   `kubectl run alice-restore-check -n labs --rm -it --restart=Never
+   --image=<app image> --command -- node dist/restore-check.js`), using the
+   app's own secrets for `DATABASE_URL` and the encryption key. No `--as-role`
+   and no superuser URL are needed; the tool refuses to run without
+   `ENCRYPTION_KEY` or `ENCRYPTION_KEYS`. It is read-only and prints counts only.
+   Exit code 0 means every check passed; compare the table counts with section 3.
+4. On a non-zero exit, reverse the rename (see "Rolling back a switch-over")
+   before scaling up. A `clear-text-credentials` failure means the target
+   predates credential encryption; restore a later target, or fix the data
+   on the scratch copy before switching.
+5. Only on exit 0, scale back to 1 and re-enable auto-sync.
 
 If sessions cannot be terminated, the fallback is to point the app at the new
 database name through its database secret and a pg_hba line; that needs a
 reviewed gitops change.
 
-## 7. Verify the live service
+## 6. Verify the live service
 
 - `/readyz` returns 200.
 - The startup log has no "cannot be decrypted with any configured key" line

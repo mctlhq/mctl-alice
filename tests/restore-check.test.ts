@@ -3,7 +3,7 @@ import pg from "pg";
 import { randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { encryptToken } from "../src/storage/crypto.js";
-import { POSTGRES_TABLES, PostgresStorage } from "../src/storage/postgres-storage.js";
+import { POSTGRES_TABLES, SECRET_COLUMNS, PostgresStorage, PostgresTelemetryStorage } from "../src/storage/postgres-storage.js";
 import { ROTATION_PAGE_SIZE } from "../src/storage/credential-rotation.js";
 import { checkRestoredDatabase } from "../src/storage/restore-check.js";
 
@@ -111,10 +111,52 @@ describe.skipIf(!connectionString)("checkRestoredDatabase against PostgreSQL", (
     await admin.query(`CREATE SCHEMA ${schema}`);
     const pool = new pg.Pool(options);
     const storage = new PostgresStorage({ pool: new pg.Pool(options) });
-    cleanup.push(async () => { await storage.close(); await pool.end(); await admin.query(`DROP SCHEMA ${schema} CASCADE`); });
+    const telemetry = new PostgresTelemetryStorage({ pool: new pg.Pool(options) });
+    cleanup.push(async () => { await telemetry.close(); await storage.close(); await pool.end(); await admin.query(`DROP SCHEMA ${schema} CASCADE`); });
     await storage.ready();
-    return { pool, schema };
+    await telemetry.ready();
+    return { pool, schema, storage };
   }
+
+  it("keeps POSTGRES_TABLES and SECRET_COLUMNS in step with the created schema", async () => {
+    vi.stubEnv("ENCRYPTION_KEY", KEY_A);
+    const { pool } = await fresh();
+    const created = await pool.query(
+      "SELECT tablename FROM pg_tables WHERE schemaname = current_schema() ORDER BY tablename",
+    );
+    expect(created.rows.map(r => r.tablename)).toEqual([...POSTGRES_TABLES].sort());
+    for (const [table, column] of SECRET_COLUMNS) {
+      const found = await pool.query(
+        "SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = $1 AND column_name = $2",
+        [table, column],
+      );
+      expect(found.rowCount, `${table}.${column}`).toBe(1);
+    }
+  });
+
+  it("passes a healthy database, detects a wrong key, and never writes", async () => {
+    vi.stubEnv("ENCRYPTION_KEY", KEY_A);
+    const { pool, storage } = await fresh();
+    await storage.saveUser({ id: "u1", yandexUid: "y1", createdAt: 0, updatedAt: 0 });
+    await storage.saveUserCredentials("u1", { yandexAccessToken: "access-1", yandexRefreshToken: "refresh-1" });
+    const before = await pool.query("SELECT user_id, xmin::text AS x FROM user_credentials ORDER BY user_id");
+    const report = await checkRestoredDatabase(pool);
+    expect(report.failures).toEqual([]);
+    expect(report.ok).toBe(true);
+    expect(report.credentials.total).toBe(2);
+    expect(report.credentials.undecryptable).toBe(0);
+    expect(report.clearTextCredentials).toBe(0);
+    const after = await pool.query("SELECT user_id, xmin::text AS x FROM user_credentials ORDER BY user_id");
+    expect(after.rows).toEqual(before.rows);
+
+    vi.stubEnv("ENCRYPTION_KEY", "");
+    vi.stubEnv("ENCRYPTION_KEYS", `other:${KEY_B}`);
+    vi.stubEnv("ENCRYPTION_KEY_ID", "other");
+    const wrong = await checkRestoredDatabase(pool);
+    expect(wrong.ok).toBe(false);
+    expect(wrong.credentials.undecryptable).toBeGreaterThan(0);
+    expect(wrong.failures).toContain("credentials-undecryptable");
+  });
 
   it("evaluates the real SQL: schema, privileges, clear text, paging", async () => {
     vi.stubEnv("ENCRYPTION_KEY", KEY_A);

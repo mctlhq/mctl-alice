@@ -76,6 +76,7 @@ flowchart LR
 ## Not affiliated with Yandex
 
 mctl-alice is an independent project. It is not affiliated with, endorsed or supported by Yandex. Yandex, Alice (Алиса) and Yandex Station are trademarks of their respective owners.
+
 ---
 
 ## Security Architecture & Threat Model

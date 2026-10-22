@@ -79,6 +79,36 @@ describe("TelemetryRetention on SQLite", () => {
     for (const bad of ["0", "-1", "abc", "1.5"]) expect(retentionDaysFromEnv(bad)).toBe(30);
   });
 
+  it("stop() during the pause runs no further batch and logs no failure", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    let calls = 0;
+    // Full batches forever; a batch after stop() hits a closed store, as on shutdown.
+    const store = { pruneBatch: vi.fn(() => { if (calls++ > 0) throw new Error("database is not open"); return 4; }) } as unknown as ITelemetryStorage;
+    const retention = new TelemetryRetention(store, { retentionDays: 30, batchSize: 4, batchPauseMs: 100 });
+    const run = retention.runOnce();
+    setTimeout(() => retention.stop(), 20);
+    await expect(run).resolves.toMatchObject({ deleted: 4, batches: 1 });
+    expect(store.pruneBatch).toHaveBeenCalledTimes(1);
+    expect(warn).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledTimes(1);
+  });
+
+  it("a server built under the test runner does not start retention unless asked", async () => {
+    const start = vi.spyOn(TelemetryRetention.prototype, "start");
+    storage = new TelemetryStorage(":memory:");
+    const oauth = new OAuthStorage(":memory:");
+    for (const authRequired of [false, true]) {
+      const server = createHttpServer(0, { publicBaseUrl: "http://localhost", authRequired, oauthStorage: oauth, storage, enableSampler: false });
+      server.emit("close");
+    }
+    expect(start).not.toHaveBeenCalled();
+    const server = createHttpServer(0, { publicBaseUrl: "http://localhost", authRequired: true, oauthStorage: oauth, storage, retention: { initialDelayMs: 60_000 } });
+    expect(start).toHaveBeenCalledTimes(1);
+    server.emit("close");
+    oauth.close();
+  });
+
   it("runs in hosted mode (AUTH_REQUIRED), where the sampler is off", async () => {
     quiet();
     storage = new TelemetryStorage(":memory:");
@@ -140,6 +170,39 @@ describe.skipIf(!connectionString)("TelemetryRetention on PostgreSQL", () => {
     const result = await new TelemetryRetention(storage, { retentionDays: 30, batchSize: 4, batchPauseMs: 0 }).runOnce();
     expect(result).toMatchObject({ deleted: 15, batches: 4 });
     expect(await remaining(storage)).toEqual({ local: 1, alice: 1, bob: 1 });
+  });
+
+  it("refuses to prune through an owner-bound view", async () => {
+    admin = new pg.Pool({ connectionString });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const storage = await store();
+    await expect(storage.forUser("alice").pruneBatch(Date.now(), 10)).rejects.toThrow(/unbound store/);
+  });
+
+  it("skips rows another transaction holds locked instead of waiting for them", async () => {
+    quiet();
+    admin = new pg.Pool({ connectionString });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const storage = await store();
+    await seed(storage);
+    const cutoff = Date.now() - 30 * DAY;
+    const holderPool = new pg.Pool({ ...poolOptions, max: 1 });
+    const holder = await holderPool.connect();
+    try {
+      await holder.query("BEGIN");
+      const locked = await holder.query("SELECT id FROM telemetry_samples WHERE timestamp < $1 ORDER BY id LIMIT 3 FOR UPDATE", [cutoff]);
+      expect(locked.rowCount).toBe(3);
+      const deleted = await Promise.race([
+        storage.pruneBatch(cutoff, 5),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("pruneBatch blocked on locked rows")), 2000)),
+      ]);
+      // A full batch from the 12 unlocked old rows, without waiting for the lock.
+      expect(deleted).toBe(5);
+    } finally {
+      await holder.query("ROLLBACK");
+      holder.release();
+      await holderPool.end();
+    }
   });
 
   it("two overlapping instances (rolling update) delete each row once and finish cleanly", async () => {

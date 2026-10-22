@@ -95,6 +95,8 @@ export class TelemetryRetention {
         batches++;
         if (n < this.batchSize || this.stopped) break;
         if (this.batchPauseMs > 0) await new Promise((resolve) => setTimeout(resolve, this.batchPauseMs).unref());
+        // stop() may land during the pause; on shutdown the store is closing.
+        if (this.stopped) break;
       }
       const result = { deleted, batches, durationMs: Date.now() - started };
       console.log(

@@ -549,7 +549,7 @@ export interface HttpServerOptions {
   publicBaseUrl?: string;
   storage?: ITelemetryStorage;
   enableSampler?: boolean;
-  /** Retention schedule for telemetry samples; runs in every mode. `false` turns it off. */
+  /** Retention schedule for telemetry samples; runs in every mode. `false` turns it off (the default under Vitest). */
   retention?: TelemetryRetentionOptions | false;
   oauthStorage?: IStorage;
   yandexCallbackUri?: string;
@@ -632,7 +632,10 @@ export function createHttpServer(
   }
   // Not tied to the sampler: hosted mode samples nothing (2.2.2), yet rows
   // recorded earlier must still age out of the retention period.
-  const retention = options.retention === false ? null : new TelemetryRetention(telemetryStorage, options.retention);
+  // Under the test runner it runs only when a test asks for it, so a suite run
+  // never prunes a real ./data/telemetry.db or TELEMETRY_DB_PATH.
+  const retentionOptions = options.retention ?? (process.env.VITEST ? false : {});
+  const retention = retentionOptions === false ? null : new TelemetryRetention(telemetryStorage, retentionOptions);
   retention?.start();
 
   // Keep track of active legacy SSE transports

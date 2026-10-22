@@ -3,6 +3,12 @@
 Versions follow semantic versioning; tags carry no `v` prefix. Full notes for
 every version are on the [Releases page](https://github.com/mctlhq/mctl-alice/releases).
 
+## 2.2.9 (2026-10-22)
+
+- `CLIENT_IP_HEADER` keys rate limits by a single-valued header the proxy
+  overwrites (`cf-connecting-ip` behind Cloudflare), so anonymous clients
+  behind a shared ingress no longer share one budget (#90).
+
 ## 2.2.8 (2026-10-22)
 
 - Request bodies are capped (64 KiB for forms, 1 MiB for MCP, 413 above),

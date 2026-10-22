@@ -91,6 +91,16 @@ describe("request body limits", () => {
     expect(ok.status).toBe(200);
   });
 
+  it("rejects a JSON-RPC batch longer than the element bound", async () => {
+    const batch = Array.from({ length: 21 }, (_, i) => ({ jsonrpc: "2.0", id: i, method: "ping" }));
+    const headers = { "Content-Type": "application/json" };
+    const res = await fetch(`${baseUrl}/mcp`, { method: "POST", headers, body: JSON.stringify(batch) });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error.code).toBe(-32600);
+    const ok = await fetch(`${baseUrl}/mcp`, { method: "POST", headers, body: JSON.stringify(batch.slice(0, 20)) });
+    expect(ok.status).toBe(200);
+  });
+
   it("reads /messages through the shared helper and never reaches the transport on overflow", async () => {
     const handle = vi.spyOn(SSEServerTransport.prototype, "handlePostMessage");
     let sse: http.ClientRequest | undefined;

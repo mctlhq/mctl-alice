@@ -86,7 +86,6 @@ describe("rate limits over HTTP", () => {
     const cases: [string, () => Promise<Response>][] = [
       ["/oauth/register", () => post("/oauth/register")],
       ["/oauth/token", () => post("/oauth/token")],
-      ["/oauth/revoke", () => post("/oauth/revoke")],
       ["/oauth/authorize POST", () => post("/oauth/authorize")],
       ["/oauth/authorize GET", () => get("/oauth/authorize")],
       ["/auth/login", () => get("/auth/login")],
@@ -107,6 +106,8 @@ describe("rate limits over HTTP", () => {
       expect(Number(limited.headers.get("retry-after")), name).toBeGreaterThan(0);
       expect(limited.headers.get("cache-control")).toBe("no-store");
     }
+    // /oauth/revoke shares the token bucket, which /oauth/token already exhausted.
+    expect((await post("/oauth/revoke")).status).toBe(429);
     // /api/* shares the MCP bucket, which is already exhausted.
     expect((await post("/api/say")).status).toBe(429);
     // The shared authorize bucket also limits the other method.

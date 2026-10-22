@@ -20,6 +20,21 @@ import {
 import { ENCRYPTED_COLUMNS, ROTATION_PAGE_SIZE, RotationCounts, RotationHooks, activeKeyId, logRotation, reencryptRequested, rotateRow, staleRowsParams, staleRowsQuery } from "./credential-rotation.js";
 import { encryptToken, decryptToken, decryptStoredToken, secretDigest, secretLookupKeys, storedSecret, SECRET_DIGEST_PREFIX } from "./crypto.js";
 
+/** Tables created by PostgresStorage and PostgresTelemetryStorage. */
+export const POSTGRES_TABLES = [
+  "browser_transactions", "users", "user_credentials", "web_sessions", "quasar_proxy_scenarios",
+  "oauth_clients", "oauth_pending", "oauth_codes", "oauth_tokens", "telemetry_samples",
+] as const;
+
+/** Columns holding bearer secrets, stored as sha256: digests. */
+export const SECRET_COLUMNS: ReadonlyArray<readonly [string, string]> = [
+  ["oauth_tokens", "access_token"],
+  ["oauth_tokens", "refresh_token"],
+  ["oauth_codes", "code"],
+  ["web_sessions", "session_hash"],
+  ["browser_transactions", "key"],
+];
+
 export interface PostgresStorageOptions {
   connectionString?: string;
   pool?: pg.Pool;
@@ -188,15 +203,8 @@ export class PostgresStorage implements IStorage {
       // lookups fall back to the raw value, see secretLookupKeys.
       const digest = (column: string) => `'${SECRET_DIGEST_PREFIX}' || encode(sha256(convert_to(${column}, 'UTF8')), 'hex')`;
       const raw = (column: string) => `${column} IS NOT NULL AND ${column} NOT LIKE '${SECRET_DIGEST_PREFIX}%'`;
-      const secretColumns: Array<[string, string]> = [
-        ["oauth_tokens", "access_token"],
-        ["oauth_tokens", "refresh_token"],
-        ["oauth_codes", "code"],
-        ["web_sessions", "session_hash"],
-        ["browser_transactions", "key"],
-      ];
       let rawRows = 0;
-      for (const [table, column] of secretColumns) {
+      for (const [table, column] of SECRET_COLUMNS) {
         if (this.rehashStoredSecrets) {
           // A raw row whose digest is already stored is the same secret twice;
           // drop it so the rewrite cannot hit a unique constraint and block boot.

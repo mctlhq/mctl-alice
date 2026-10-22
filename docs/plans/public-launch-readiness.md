@@ -434,6 +434,10 @@ site, actual tools and documented permissions agree; all public links work.
 - Validate persistent state across container replacement, restore a backup,
   and monitor authentication failures, rejected authorization, upstream errors,
   storage health and latency without collecting secrets or command content.
+  Restore a backup: the procedure is [docs/runbooks/restore-database.md](../runbooks/restore-database.md)
+  with the read-only `restore-check` tool. Status: runbook and tool written;
+  the recorded exercise on a scratch target is still pending (see the
+  runbook's Exercise log), so this item is not yet closed.
 - Treat the hosted authentication change as breaking; target `2.0.0` with
   reconnection instructions. Use a feature branch, PR, required CI/review and
   merge commit; tags have no `v` prefix and commits have no co-author trailers.

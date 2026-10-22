@@ -43,7 +43,7 @@ import { IStorage, createStorage, createTelemetryStorage, OAuthStorage } from ".
 import { OAuthController, OAuthError } from "../auth/oauth-controller.js";
 import { initQrAuth, checkQrAuthStatus } from "../auth/yandex-qr-auth.js";
 import { fetchYandexProfile } from "../auth/oauth-helper.js";
-import { renderAboutPage, renderPrivacyPage, renderTermsPage, renderSecurityPage } from "./pages.js";
+import { renderAboutPage, renderPrivacyPage, renderTermsPage, renderSecurityPage, renderSetupPage, renderNotFoundPage, renderRobotsTxt, renderSitemapXml } from "./pages.js";
 import { renderAccountPage } from "./account-page.js";
 import { UserRecord, guardedStorage, StorageUnavailableError } from "../storage/storage-interface.js";
 
@@ -70,17 +70,28 @@ const STATIC_MIME_TYPES: Record<string, string> = {
   ".png": "image/png",
   ".ico": "image/x-icon",
   ".txt": "text/plain; charset=utf-8",
+  ".woff2": "font/woff2",
 };
 
-/** Static HTML names its asset suffix `?v=__VERSION__`, filled in at serve time. */
-function withAssetVersion(html: string): string {
-  return html.replaceAll("?v=__VERSION__", `?v=${VERSION}`);
+/**
+ * Static HTML names its asset suffix `?v=__VERSION__` and its absolute URLs
+ * (canonical, og:url, og:image) `__BASE_URL__`, both filled in at serve time
+ * so a self-hosted instance does not point crawlers at alice.mctl.ai. Without
+ * a configured public origin the lines naming `__BASE_URL__` are dropped:
+ * a canonical guessed as localhost would de-index the page.
+ */
+function withAssetVersion(html: string, siteUrl = ""): string {
+  const versioned = html.replaceAll("?v=__VERSION__", `?v=${VERSION}`);
+  return siteUrl
+    ? versioned.replaceAll("__BASE_URL__", escapeHtml(siteUrl))
+    : versioned.replace(/^.*__BASE_URL__.*\n/gm, "");
 }
 
 function serveStaticFile(
   reqPath: string,
   res: http.ServerResponse,
-  fallbackContentType = "application/octet-stream"
+  fallbackContentType = "application/octet-stream",
+  siteUrl = ""
 ): boolean {
   let decoded = reqPath;
   try {
@@ -110,7 +121,7 @@ function serveStaticFile(
     if (stats.isDirectory()) {
       const indexPath = path.join(filePath, "index.html");
       if (fs.existsSync(indexPath)) {
-        const content = withAssetVersion(fs.readFileSync(indexPath, "utf8"));
+        const content = withAssetVersion(fs.readFileSync(indexPath, "utf8"), siteUrl);
         res.writeHead(200, {
           "Content-Type": "text/html; charset=utf-8",
           "Cache-Control": "no-cache",
@@ -123,11 +134,14 @@ function serveStaticFile(
 
     const ext = path.extname(filePath).toLowerCase();
     const contentType = STATIC_MIME_TYPES[ext] || fallbackContentType;
-    const content = ext === ".html" ? withAssetVersion(fs.readFileSync(filePath, "utf8")) : fs.readFileSync(filePath);
+    const content = ext === ".html" ? withAssetVersion(fs.readFileSync(filePath, "utf8"), siteUrl) : fs.readFileSync(filePath);
 
+    // Font files never change in place (a new font gets a new file name), so
+    // they are cached for a week instead of revalidated every minute.
+    const isFont = ext === ".woff2";
     res.writeHead(200, {
       "Content-Type": contentType,
-      "Cache-Control": "public, max-age=60, stale-while-revalidate=300",
+      "Cache-Control": isFont ? "public, max-age=604800" : "public, max-age=60, stale-while-revalidate=300",
     });
     res.end(content);
     return true;
@@ -150,12 +164,27 @@ function renderAuthPage({
   titleKey,
   contentHtml,
   scriptHtml = "",
+  canonical,
 }: {
   title: string;
   titleKey?: string;
   contentHtml: string;
   scriptHtml?: string;
+  /** Public pages pass their absolute URL; pages without one are not indexed. */
+  canonical?: { siteUrl: string; path: string };
 }): string {
+  const canonicalUrl = canonical ? canonical.siteUrl + canonical.path : "";
+  const indexing = canonical
+    ? `<link rel="canonical" href="${escapeHtml(canonicalUrl)}">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="mctl-alice">
+<meta property="og:title" content="${escapeHtml(title)}">
+<meta property="og:url" content="${escapeHtml(canonicalUrl)}">
+<meta property="og:image" content="${escapeHtml(canonical.siteUrl + "/og-image.png")}">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">`
+    : `<meta name="robots" content="noindex">`;
   return `<!doctype html>
 <html lang="ru"${titleKey ? ` data-page-title-key="${escapeHtml(titleKey)}"` : ""}>
 <head>
@@ -163,12 +192,15 @@ function renderAuthPage({
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <script src="/assets/theme-init.js?v=${VERSION}"></script>
 <title>${escapeHtml(title)}</title>
+${indexing}
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="stylesheet" href="/assets/fonts.css?v=${VERSION}">
 <link rel="stylesheet" href="/assets/tokens.css?v=${VERSION}">
 <link rel="stylesheet" href="/assets/components.css?v=${VERSION}">
 <link rel="stylesheet" href="/assets/pages.css?v=${VERSION}">
 </head>
 <body>
+<a class="skip-link" href="#main" data-i18n="skip_link">Перейти к содержимому</a>
 <header class="wrap topbar">
   <a class="brand" href="/">
     <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
@@ -178,17 +210,18 @@ function renderAuthPage({
     mctl-alice
     <span class="chip-beta">BETA</span>
   </a>
-  <nav class="topbar-links">
+  <nav class="topbar-links" aria-label="Основное меню" data-i18n-aria-label="nav_main_label">
     <a href="/" data-i18n="nav_home">Главная</a>
+    <a href="/setup" data-i18n="nav_setup">Подключение</a>
     <a href="/account" data-i18n="nav_account">Аккаунт</a>
     <a href="/auth/login" data-i18n="nav_login">Вход (OAuth)</a>
     <a href="/auth/cookie" data-i18n="nav_cookie">Quasar Cookie</a>
     <a href="https://github.com/mctlhq/mctl-alice" target="_blank" rel="noopener" data-i18n="nav_github">GitHub</a>
     <div class="lang-switcher" id="lang-switcher" role="group" aria-label="Выбор языка / Language selection">
-      <button class="lang-btn is-active" id="lang-btn-ru" type="button" data-lang="ru" aria-label="Русский">RU</button>
-      <button class="lang-btn" id="lang-btn-en" type="button" data-lang="en" aria-label="English">EN</button>
+      <button class="lang-btn is-active" id="lang-btn-ru" type="button" data-lang="ru" lang="ru" aria-label="Русский" aria-pressed="true">RU</button>
+      <button class="lang-btn" id="lang-btn-en" type="button" data-lang="en" lang="en" aria-label="English" aria-pressed="false">EN</button>
     </div>
-    <button class="theme-toggle" id="theme-toggle" type="button" hidden aria-label="Переключить тему оформления">
+    <button class="theme-toggle" id="theme-toggle" type="button" hidden aria-label="Переключить тему оформления" data-i18n-aria-label="theme_toggle_label">
       <svg class="icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
         <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>
       </svg>
@@ -199,7 +232,7 @@ function renderAuthPage({
     </button>
   </nav>
 </header>
-<main class="wrap">
+<main class="wrap" id="main" tabindex="-1">
   <div class="form-card">
     ${contentHtml}
   </div>
@@ -209,6 +242,7 @@ function renderAuthPage({
     <span data-i18n-html="footer_part">mctl-alice — часть платформы <a href="https://mctl.ai" target="_blank" rel="noopener">mctl</a>. Независимый проект, не связан с ООО «Яндекс» и не одобрен им; «Яндекс», «Алиса» и «Яндекс Станция» — товарные знаки их владельцев.</span>
     <span>
       <a href="/" data-i18n="nav_home">Главная</a> ·
+      <a href="/setup" data-i18n="footer_setup">Подключение</a> ·
       <a href="/account" data-i18n="footer_account">Личный кабинет</a> ·
       <a href="/about" data-i18n="footer_about">О сервисе</a> ·
       <a href="/privacy" data-i18n="footer_privacy">Конфиденциальность</a> ·
@@ -259,9 +293,9 @@ export function contentSecurityPolicy(formActionExtra?: string): string {
     "default-src 'self'",
     "script-src 'self'",
     "script-src-attr 'none'",
-    "style-src 'self' https://fonts.googleapis.com",
+    "style-src 'self'",
     "style-src-attr 'none'",
-    "font-src 'self' https://fonts.gstatic.com",
+    "font-src 'self'",
     "img-src 'self' data: https:",
     "object-src 'none'",
     "frame-ancestors 'none'",
@@ -296,6 +330,17 @@ function setSecurityHeaders(res: http.ServerResponse, formActionExtra?: string):
   res.setHeader("X-Frame-Options", "DENY");
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+}
+
+// Paths that only programs call. An unknown route under them answers in JSON
+// even when the client sends a browser-like Accept header.
+const MACHINE_PATHS = /^\/(?:mcp|sse|messages|api|oauth|\.well-known|openapi)(?:[/.]|$)/;
+
+/** Whether an unmatched request should get the HTML 404 page instead of JSON. */
+export function wantsHtmlNotFound(req: http.IncomingMessage, pathname: string): boolean {
+  if (req.method !== "GET") return false;
+  if (MACHINE_PATHS.test(pathname)) return false;
+  return String(req.headers.accept || "").includes("text/html");
 }
 
 // Browser-facing MCP, OAuth and REST endpoints are bearer-authenticated, so
@@ -535,6 +580,11 @@ export function createHttpServer(
   const authRequired =
     options.authRequired ?? (process.env.AUTH_REQUIRED === "true");
   const baseUrl = options.publicBaseUrl || process.env.PUBLIC_BASE_URL || `http://localhost:${port}`;
+  const siteUrl = baseUrl.replace(/\/+$/, "");
+  // Canonical URLs, og:* and the sitemap need the real public origin; the
+  // localhost fallback above is not one.
+  const publicSiteUrl = options.publicBaseUrl || process.env.PUBLIC_BASE_URL ? siteUrl : "";
+  const canonicalFor = (pagePath: string) => (publicSiteUrl ? { siteUrl: publicSiteUrl, path: pagePath } : undefined);
   const clientId =
     options.clientId ||
     process.env.YANDEX_CLIENT_ID ||
@@ -815,11 +865,25 @@ export function createHttpServer(
     if (
       (url.pathname === "/favicon.svg" ||
         url.pathname === "/favicon.ico" ||
-        url.pathname === "/robots.txt") &&
+        url.pathname === "/og-image.png") &&
       req.method === "GET"
     ) {
       const served = serveStaticFile(url.pathname, res);
       if (served) return;
+    }
+
+    // robots.txt and the sitemap name absolute URLs, so they are built from
+    // the configured public origin rather than shipped as static files.
+    if (url.pathname === "/robots.txt" && req.method === "GET") {
+      res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "public, max-age=3600" });
+      res.end(renderRobotsTxt(publicSiteUrl));
+      return;
+    }
+
+    if (url.pathname === "/sitemap.xml" && req.method === "GET" && publicSiteUrl) {
+      res.writeHead(200, { "Content-Type": "application/xml; charset=utf-8", "Cache-Control": "public, max-age=3600" });
+      res.end(renderSitemapXml(publicSiteUrl));
+      return;
     }
 
     // OpenAPI 3.1 schema for ChatGPT Actions and external integrators
@@ -1502,6 +1566,19 @@ export function createHttpServer(
     }
 
     // Public Informational & Legal Pages
+    if (url.pathname === "/setup" && req.method === "GET") {
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(
+        renderAuthPage({
+          title: "mctl-alice — Подключение ассистента",
+          titleKey: "setup_page_title",
+          contentHtml: renderSetupPage(siteUrl),
+          canonical: canonicalFor("/setup"),
+        })
+      );
+      return;
+    }
+
     if (url.pathname === "/about" && req.method === "GET") {
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       res.end(
@@ -1509,6 +1586,7 @@ export function createHttpServer(
           title: "mctl-alice — О сервисе",
           titleKey: "about_title",
           contentHtml: renderAboutPage(baseUrl),
+          canonical: canonicalFor("/about"),
         })
       );
       return;
@@ -1521,6 +1599,7 @@ export function createHttpServer(
           title: "mctl-alice — Политика конфиденциальности",
           titleKey: "privacy_title",
           contentHtml: renderPrivacyPage(baseUrl),
+          canonical: canonicalFor("/privacy"),
         })
       );
       return;
@@ -1533,6 +1612,7 @@ export function createHttpServer(
           title: "mctl-alice — Условия использования",
           titleKey: "terms_title",
           contentHtml: renderTermsPage(baseUrl),
+          canonical: canonicalFor("/terms"),
         })
       );
       return;
@@ -1545,6 +1625,7 @@ export function createHttpServer(
           title: "mctl-alice — Безопасность",
           titleKey: "security_title",
           contentHtml: renderSecurityPage(baseUrl),
+          canonical: canonicalFor("/security"),
         })
       );
       return;
@@ -1712,7 +1793,7 @@ export function createHttpServer(
           authFailures.inc({ reason: "login_failed" });
           res.writeHead(err instanceof StorageUnavailableError ? 503 : 500, { "Content-Type": "text/html; charset=utf-8" });
           const content = `
-            <h2 data-i18n="callback_error_title">Ошибка авторизации Яндекс</h2>
+            <h1 class="page-title" data-i18n="callback_error_title">Ошибка авторизации Яндекс</h1>
             <div class="alert alert-error">❌ ${escapeHtml(err.message)}</div>
             <div class="s-4ef6bf">
               <a href="${baseUrl}/auth/login" class="btn btn-primary" data-i18n="callback_btn_retry">Попробовать снова</a>
@@ -1807,8 +1888,8 @@ export function createHttpServer(
               : `<div class="speakers s-02b10e"><em data-i18n="callback_no_speakers">Колонки не найдены в умном доме, но токен успешно получен и сохранен.</em></div>`;
 
           const content = `
-            <h2 data-i18n="callback_success_title">mctl-alice — Успешный вход</h2>
-            <div class="alert alert-success" data-i18n="callback_success_msg">✅ Авторизация успешна! Получен постоянный Refresh-токен для автообновления.</div>
+            <h1 class="page-title" data-i18n="callback_success_title">mctl-alice — Успешный вход</h1>
+            <div class="alert alert-success" role="status" data-i18n="callback_success_msg">✅ Аккаунт Яндекса подключён: mctl-alice получил доступ к вашему Умному дому. Вернитесь в AI-ассистента и попросите, например, показать список устройств.</div>
             ${speakerHtml}
             <div class="s-4ef6bf">
               <a href="/" class="btn btn-primary" data-i18n="callback_btn_home">На главную</a>
@@ -1822,7 +1903,7 @@ export function createHttpServer(
           authFailures.inc({ reason: "login_failed" });
           res.writeHead(err instanceof StorageUnavailableError ? 503 : 500, { "Content-Type": "text/html; charset=utf-8" });
           const content = `
-            <h2 data-i18n="callback_error_title">mctl-alice — Ошибка авторизации</h2>
+            <h1 class="page-title" data-i18n="callback_error_title">mctl-alice — Ошибка авторизации</h1>
             <div class="alert alert-error">❌ Ошибка обмена кода: ${escapeHtml(err.message)}</div>
             <div class="s-4ef6bf">
               <a href="${baseUrl}/auth/login" class="btn btn-primary" data-i18n="callback_btn_retry">Попробовать снова</a>
@@ -1835,7 +1916,7 @@ export function createHttpServer(
       }
 
       const content = `
-        <h2 data-i18n="callback_success_title">mctl-alice — Успешный вход</h2>
+        <h1 class="page-title" data-i18n="callback_success_title">mctl-alice — Успешный вход</h1>
         <div id="status" class="alert alert-info" data-i18n="callback_status_obtaining">Получение токена...</div>
         <div id="speakers" class="speakers s-fdd932"></div>
         <div class="s-ce02ff" id="actions">
@@ -2139,7 +2220,7 @@ export function createHttpServer(
       const accept = req.headers.accept || "";
       const prefersJson = accept.includes("application/json") && !accept.includes("text/html");
       if (!prefersJson) {
-        const served = serveStaticFile("index.html", res);
+        const served = serveStaticFile("index.html", res, undefined, publicSiteUrl);
         if (served) return;
       }
     }
@@ -2176,7 +2257,13 @@ export function createHttpServer(
       return;
     }
 
-    // 404 Not Found for any unmatched route
+    // 404 Not Found for any unmatched route: a page for browsers, JSON for
+    // API, MCP and OAuth clients.
+    if (wantsHtmlNotFound(req, url.pathname)) {
+      res.writeHead(404, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(renderAuthPage({ title: "mctl-alice — Страница не найдена", titleKey: "notfound_page_title", contentHtml: renderNotFoundPage() }));
+      return;
+    }
     res.writeHead(404, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: "not_found", message: "Route not found" }));
     } catch (err) {

@@ -31,12 +31,16 @@ describe("CSP, CORS and HTML hardening", () => {
       client_id, redirect_uri: "https://claude.ai/api/mcp/auth_callback", response_type: "code", state: "s",
       code_challenge: "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM", code_challenge_method: "S256",
     });
-    for (const page of ["/", "/about", "/privacy", "/terms", "/security", "/account", "/auth/cookie", "/auth/callback", consent]) {
+    for (const page of ["/", "/setup", "/about", "/privacy", "/terms", "/security", "/account", "/auth/cookie", "/auth/callback", consent]) {
       const res = await fetch(base + page, { headers: { Accept: "text/html" } });
       expect(res.status, page).toBe(200);
       expect(res.headers.get("content-type"), page).toContain("text/html");
       htmlPages.set(page.startsWith("/oauth/authorize") ? "consent" : page, { headers: res.headers, body: await res.text() });
     }
+    const notFound = await fetch(base + "/no-such-page", { headers: { Accept: "text/html" } });
+    expect(notFound.status).toBe(404);
+    expect(notFound.headers.get("content-type")).toContain("text/html");
+    htmlPages.set("404", { headers: notFound.headers, body: await notFound.text() });
 
     const now = Date.now();
     storage.saveUser({ id: "alice", yandexUid: "alice", createdAt: now, updatedAt: now });
@@ -57,7 +61,7 @@ describe("CSP, CORS and HTML hardening", () => {
   });
 
   it("sends a CSP without unsafe-inline and frame protection on every HTML page", () => {
-    expect(htmlPages.size).toBe(10);
+    expect(htmlPages.size).toBe(12);
     for (const [page, { headers }] of htmlPages) {
       const csp = headers.get("content-security-policy") || "";
       expect(csp, page).toContain("script-src 'self';");

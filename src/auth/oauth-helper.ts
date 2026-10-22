@@ -134,7 +134,7 @@ export function startAuthServer(options: AuthServerOptions): Promise<{
             res.end(
               renderHtmlPage(
                 "mctl-alice — Авторизация успешна",
-                `<div class="status success">✅ Авторизация успешна! Получен постоянный Refresh-токен.</div>${speakerHtml}`
+                `<div class="status success">✅ Аккаунт Яндекса подключён, доступ к Умному дому сохранён. Можно закрыть эту вкладку.</div>${speakerHtml}`
               )
             );
 

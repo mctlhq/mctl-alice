@@ -43,7 +43,7 @@ describe("Internationalization (i18n) Coverage & Symmetry", () => {
     const missingFromRu: Array<{ key: string; file: string }> = [];
     const missingFromEn: Array<{ key: string; file: string }> = [];
 
-    const attrRegex = /data-i18n(?:-html|-placeholder)?=["']([^"'\s]+)["']/g;
+    const attrRegex = /data-i18n(?:-html|-placeholder|-aria-label)?=["']([^"'\s]+)["']/g;
 
     for (const filePath of templateFiles) {
       if (!fs.existsSync(filePath)) continue;

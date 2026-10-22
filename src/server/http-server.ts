@@ -205,7 +205,7 @@ function renderAuthPage({
 </main>
 <footer class="wrap">
   <div class="footer-row">
-    <span data-i18n-html="footer_part">mctl-alice — часть платформы <a href="https://mctl.ai" target="_blank" rel="noopener">mctl</a>.</span>
+    <span data-i18n-html="footer_part">mctl-alice — часть платформы <a href="https://mctl.ai" target="_blank" rel="noopener">mctl</a>. Независимый проект, не связан с ООО «Яндекс» и не одобрен им; «Яндекс», «Алиса» и «Яндекс Станция» — товарные знаки их владельцев.</span>
     <span>
       <a href="/" data-i18n="nav_home">Главная</a> ·
       <a href="/account" data-i18n="footer_account">Личный кабинет</a> ·

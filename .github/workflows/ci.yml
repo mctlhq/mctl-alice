@@ -25,7 +25,7 @@ jobs:
       TEST_POSTGRES_URL: postgresql://postgres:alice-ci-only@localhost:5432/postgres
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup Node.js
         uses: actions/setup-node@v4

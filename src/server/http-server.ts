@@ -701,8 +701,9 @@ export function createHttpServer(
 
     const bucket = rateLimitBucket(url.pathname, req.method, String(req.headers.accept || ""));
     if (bucket) {
-      const key = bucket === "mcp" && req.headers.authorization ? `token:${fingerprint(req)}` : `ip:${clientAddress(req, proxyHops)}`;
-      const verdict = limiters[bucket].hit(key);
+      // Always charge the address bucket: a token is unvalidated here, so it may only add a dimension.
+      let verdict = limiters[bucket].hit(`ip:${clientAddress(req, proxyHops)}`);
+      if (verdict.allowed && bucket === "mcp" && req.headers.authorization) verdict = limiters[bucket].hit(`token:${fingerprint(req)}`);
       if (!verdict.allowed) {
         res.writeHead(429, { "Content-Type": "application/json; charset=utf-8", "Retry-After": String(verdict.retryAfterSec), "Cache-Control": "no-store" });
         res.end(JSON.stringify(
@@ -1221,7 +1222,7 @@ export function createHttpServer(
       let parsed: unknown = raw;
       try { parsed = JSON.parse(raw); } catch { /* the transport answers 400 for an unparsable body */ }
       try {
-        await transport.handlePostMessage(req, res, parsed);
+        await transport.handlePostMessage(req, res, parsed ?? raw);
       } catch (err: any) {
         if (!res.headersSent) {
           res.writeHead(err instanceof StorageUnavailableError ? 503 : 500, { "Content-Type": "application/json" });

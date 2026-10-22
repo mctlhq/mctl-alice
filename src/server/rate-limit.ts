@@ -1,6 +1,6 @@
 import type http from "node:http";
 
-export type RateLimitBucket = "register" | "token" | "authorize" | "login" | "qr" | "mcp";
+export type RateLimitBucket = "register" | "token" | "authorize" | "login" | "qr" | "qrstatus" | "mcp";
 
 export type RateLimitResult = { allowed: true } | { allowed: false; retryAfterSec: number };
 
@@ -91,7 +91,8 @@ export function rateLimitBucket(pathname: string, method: string | undefined, ac
   if (pathname === "/oauth/token") return "token";
   if (pathname === "/oauth/authorize") return "authorize";
   if (pathname === "/auth/qr-code") return "qr";
-  if (["/auth/login", "/auth/callback", "/auth/qr-status", "/auth/save-cookie", "/auth/save-token"].includes(pathname)) return "login";
+  if (pathname === "/auth/qr-status") return "qrstatus";
+  if (["/auth/login", "/auth/callback", "/auth/save-cookie", "/auth/save-token"].includes(pathname)) return "login";
   if (["/mcp", "/sse", "/mcp/sse", "/messages", "/mcp/messages"].includes(pathname)) return "mcp";
   // GET / is the landing page unless the client asks for an event stream.
   if (pathname === "/") return (method === "GET" || method === "HEAD") && !accept.includes("text/event-stream") ? null : "mcp";
@@ -105,6 +106,7 @@ export const DEFAULT_RATE_LIMITS: Record<RateLimitBucket, number> = {
   authorize: 30,
   login: 30,
   qr: 10,
+  qrstatus: 90,
   mcp: 300,
 };
 

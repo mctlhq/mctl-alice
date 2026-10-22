@@ -80,7 +80,7 @@ describe("rate limits over HTTP", () => {
   });
 
   it("answers 429 with Retry-After once a bucket is over budget", async () => {
-    const base = await start(8311, { rateLimits: { register: 2, token: 2, authorize: 2, login: 2, qr: 2, mcp: 2 } });
+    const base = await start(8311, { rateLimits: { register: 2, token: 2, authorize: 2, login: 2, qr: 2, qrstatus: 2, mcp: 2 } });
     const post = (p: string) => fetch(base + p, { method: "POST", headers: { "Content-Type": "application/json", Origin: base }, body: "{}", redirect: "manual" });
     const get = (p: string) => fetch(base + p, { redirect: "manual" });
     const cases: [string, () => Promise<Response>][] = [
@@ -115,17 +115,22 @@ describe("rate limits over HTTP", () => {
   });
 
   it("never limits /healthz or /readyz", async () => {
-    const base = await start(8312, { rateLimits: { register: 1, token: 1, authorize: 1, login: 1, qr: 1, mcp: 1 } });
+    const base = await start(8312, { rateLimits: { register: 1, token: 1, authorize: 1, login: 1, qr: 1, qrstatus: 1, mcp: 1 } });
     for (let i = 0; i < 20; i++) expect((await fetch(`${base}/healthz`)).status).toBe(200);
     for (let i = 0; i < 20; i++) expect((await fetch(`${base}/readyz`)).status).toBe(200);
   });
 
-  it("keys the MCP budget on the bearer token", async () => {
+  it("cannot be bypassed by rotating bearer tokens", async () => {
     const base = await start(8313, { rateLimits: { mcp: 2 } });
     const call = (token: string) => fetch(`${base}/mcp`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: "{}" });
-    await call("token-a"); await call("token-a");
-    expect((await call("token-a")).status).toBe(429);
-    expect((await call("token-b")).status).not.toBe(429);
+    await call("token-a"); await call("token-b");
+    expect((await call("token-c")).status).toBe(429);
+  });
+
+  it("polling /auth/qr-status does not exhaust the login bucket", async () => {
+    const base = await start(8316, { rateLimits: { login: 2, qrstatus: 50 } });
+    for (let i = 0; i < 30; i++) await fetch(`${base}/auth/qr-status`);
+    expect((await fetch(`${base}/auth/callback`)).status).not.toBe(429);
   });
 
   it("separates clients by X-Forwarded-For only when TRUST_PROXY_HOPS is set", async () => {

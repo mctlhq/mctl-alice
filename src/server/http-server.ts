@@ -4,7 +4,7 @@ import { getKeyring } from "../storage/crypto.js";
 import { VERSION } from "../version.js";
 import { isLocalOrigin } from "./origin.js";
 import { FORM_BODY_LIMIT, MCP_BODY_LIMIT, PayloadTooLargeError, parseRequestBody, readRequestBody, sendPayloadTooLarge } from "./request-body.js";
-import { RateLimiter, clientAddress, rateLimitBucket, resolveRateLimits, trustProxyHopsFromEnv, type RateLimitBucket } from "./rate-limit.js";
+import { RateLimiter, clientAddress, rateLimitBucket, resolveRateLimits, trustProxyHopsFromEnv, clientIpHeaderFromEnv, type RateLimitBucket } from "./rate-limit.js";
 import { UpstreamError, UpstreamTimeoutError } from "../client/upstream.js";
 
 export { isLocalOrigin };
@@ -464,6 +464,8 @@ export interface HttpServerOptions {
   rateLimits?: Partial<Record<RateLimitBucket, number>>;
   /** Number of trusted proxy hops in X-Forwarded-For; defaults to TRUST_PROXY_HOPS or 0. */
   trustProxyHops?: number;
+  /** Header that carries the client address (e.g. cf-connecting-ip); defaults to CLIENT_IP_HEADER, unset = off. */
+  clientIpHeader?: string;
   /** Overall deadline for Quasar scenario cleanup on account deletion/disconnect (default 20 s). */
   cleanupDeadlineMs?: number;
 }
@@ -539,6 +541,7 @@ export function createHttpServer(
     (Object.keys(limits) as RateLimitBucket[]).map((bucket) => [bucket, new RateLimiter({ limit: limits[bucket], windowMs: 60_000 })]),
   ) as Record<RateLimitBucket, RateLimiter>;
   const proxyHops = options.trustProxyHops ?? trustProxyHopsFromEnv();
+  const ipHeader = (options.clientIpHeader ?? clientIpHeaderFromEnv()).toLowerCase();
   const clearSessionCookie = `mctl_session=; Path=/; HttpOnly; SameSite=Lax; ${authRequired ? "Secure; " : ""}Max-Age=0`;
   async function closeSessions(userId: string, clientId?: string) {
     for (const [id, owner] of sseOwners) {
@@ -705,7 +708,7 @@ export function createHttpServer(
     const bucket = rateLimitBucket(url.pathname, req.method, String(req.headers.accept || ""));
     if (bucket) {
       // Always charge the address bucket: a token is unvalidated here, so it may only add a dimension.
-      let verdict = limiters[bucket].hit(`ip:${clientAddress(req, proxyHops)}`);
+      let verdict = limiters[bucket].hit(`ip:${clientAddress(req, proxyHops, ipHeader)}`);
       if (verdict.allowed && bucket === "mcp" && req.headers.authorization) verdict = limiters[bucket].hit(`token:${fingerprint(req)}`);
       if (!verdict.allowed) {
         res.writeHead(429, { "Content-Type": "application/json; charset=utf-8", "Retry-After": String(verdict.retryAfterSec), "Cache-Control": "no-store" });

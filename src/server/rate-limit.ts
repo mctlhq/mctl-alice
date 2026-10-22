@@ -66,11 +66,22 @@ export class RateLimiter {
 }
 
 /**
- * The client address. With `trustProxyHops` N > 0 it is the N-th entry from
- * the right of X-Forwarded-For; only set that behind a proxy you control, or
- * clients can pick their own key.
+ * The client address. With `clientIpHeader` set (for example
+ * `cf-connecting-ip`) a single-valued header of that name wins; with
+ * `trustProxyHops` N > 0 it is the N-th entry from the right of
+ * X-Forwarded-For. Set either only behind a proxy you control that overwrites
+ * the header, or clients can pick their own key.
  */
-export function clientAddress(req: http.IncomingMessage, trustProxyHops = trustProxyHopsFromEnv()): string {
+export function clientAddress(
+  req: http.IncomingMessage,
+  trustProxyHops = trustProxyHopsFromEnv(),
+  clientIpHeader = clientIpHeaderFromEnv(),
+): string {
+  if (clientIpHeader) {
+    const header = req.headers[clientIpHeader];
+    const value = (Array.isArray(header) ? "" : header || "").trim();
+    if (value && !value.includes(",")) return value;
+  }
   if (trustProxyHops > 0) {
     const header = req.headers["x-forwarded-for"];
     const parts = (Array.isArray(header) ? header.join(",") : header || "").split(",").map((p) => p.trim()).filter(Boolean);
@@ -78,6 +89,10 @@ export function clientAddress(req: http.IncomingMessage, trustProxyHops = trustP
     if (candidate) return candidate;
   }
   return req.socket.remoteAddress || "unknown";
+}
+
+export function clientIpHeaderFromEnv(): string {
+  return (process.env.CLIENT_IP_HEADER || "").trim().toLowerCase();
 }
 
 export function trustProxyHopsFromEnv(): number {

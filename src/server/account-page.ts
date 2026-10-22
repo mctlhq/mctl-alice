@@ -16,7 +16,7 @@ export function renderAccountPage({
   if (!user) {
     return `
       <div class="account-unauth">
-        <h2 data-i18n="account_login_title">Личный кабинет mctl-alice</h2>
+        <h1 class="page-title" data-i18n="account_login_title">Личный кабинет mctl-alice</h1>
         <p data-i18n="account_login_desc">Войдите через Яндекс ID, чтобы управлять подключениями AI-ассистентов, интеграцией с колонками и сохранёнными данными.</p>
         <div class="s-784e59">
           <a href="${baseUrl}/auth/login" class="btn btn-primary" data-i18n="btn_login_yandex">Войти через Яндекс ID</a>
@@ -36,10 +36,10 @@ export function renderAccountPage({
       <table class="table s-c72ddd">
         <thead>
           <tr class="s-2f8e9d">
-            <th class="s-c079ee" data-i18n="account_th_client">Клиент</th>
-            <th class="s-c079ee" data-i18n="account_th_scope">Разрешения</th>
-            <th class="s-c079ee" data-i18n="account_th_connected">Подключен</th>
-            <th class="s-776427" data-i18n="account_th_action">Действие</th>
+            <th scope="col" class="s-c079ee" data-i18n="account_th_client">Клиент</th>
+            <th scope="col" class="s-c079ee" data-i18n="account_th_scope">Разрешения</th>
+            <th scope="col" class="s-c079ee" data-i18n="account_th_connected">Подключен</th>
+            <th scope="col" class="s-776427" data-i18n="account_th_action">Действие</th>
           </tr>
         </thead>
         <tbody>
@@ -69,7 +69,7 @@ export function renderAccountPage({
     <div class="account-dashboard">
       <div class="s-6c8f3b">
         <div>
-          <h2 class="s-2a0ca8" data-i18n="account_title">Личный кабинет</h2>
+          <h1 class="page-title s-2a0ca8" data-i18n="account_title">Личный кабинет</h1>
           <div class="s-8f25ff">
             <span data-i18n="account_user_label">Пользователь</span>: <strong>${escapeHtml(user.displayName || user.login || user.yandexUid)}</strong> 
             (ID: <code>${escapeHtml(user.yandexUid)}</code>)
@@ -81,7 +81,7 @@ export function renderAccountPage({
       </div>
 
       <div class="s-5b419e">
-        <h3 class="s-b6884e" data-i18n="account_quasar_title">Голосовое управление колонками (Quasar)</h3>
+        <h2 class="section-title s-b6884e" data-i18n="account_quasar_title">Голосовое управление колонками (Quasar)</h2>
         <p class="s-563961">
           <span data-i18n="account_status_label">Статус</span>: <strong>${
             hasQuasar
@@ -105,12 +105,12 @@ export function renderAccountPage({
       </div>
 
       <div class="s-5b419e">
-        <h3 class="s-b6884e" data-i18n="account_mcp_title">Подключённые AI-клиенты (MCP)</h3>
+        <h2 class="section-title s-b6884e" data-i18n="account_mcp_title">Подключённые AI-клиенты (MCP)</h2>
         ${grantsTable}
       </div>
 
       <div class="s-b504ec">
-        <h3 class="s-788ad3" data-i18n="account_danger_title">Опасная зона: удаление аккаунта</h3>
+        <h2 class="section-title s-788ad3" data-i18n="account_danger_title">Опасная зона: удаление аккаунта</h2>
         <p class="s-bdde6e" data-i18n="account_danger_desc">
           Вы можете полностью удалить все данные своей учётной записи из mctl-alice. Будут немедленно отозваны все MCP-токены, 
           удалены сохранённые зашифрованные токены Яндекса, сессии и прокси-сценарии.

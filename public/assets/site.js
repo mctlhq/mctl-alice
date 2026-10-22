@@ -62,13 +62,13 @@
   var translations = {
     ru: {
       meta_title: "mctl-alice — Управление Яндекс Станцией и умным домом через AI (MCP)",
-      meta_desc: "Model Context Protocol (MCP) сервер для Яндекс Станций и умного дома. Управляйте колонками Алиса, отправляйте голосовые команды, воспроизводите произвольный текст TTS через Claude, ChatGPT, Cursor и Antigravity.",
+      meta_desc: "Model Context Protocol (MCP) сервер для Яндекс Станций и умного дома. Управляйте колонками Алиса, отправляйте голосовые команды, воспроизводите произвольный текст TTS через Claude, ChatGPT, Codex и другие MCP-клиенты.",
       nav_login: "Вход (OAuth)",
       nav_cookie: "Quasar Cookie",
       nav_github: "GitHub",
       hero_eyebrow: "Model Context Protocol",
       hero_title: "Голосовое управление Яндекс Станцией<br>и умным домом для AI-ассистентов",
-      hero_lead: "mctl-alice соединяет ваших AI-ассистентов (Claude, ChatGPT, Cursor, Antigravity) с умными колонками Яндекс Станция и устройствами умного дома. Произносите произвольные фразы (TTS), симулируйте голосовые команды текстом, управляйте громкостью, музыкой и сценариями.",
+      hero_lead: "mctl-alice соединяет ваших AI-ассистентов (Claude, ChatGPT, Codex и другие MCP-клиенты) с умными колонками Яндекс Станция и устройствами умного дома. Произносите произвольные фразы (TTS), симулируйте голосовые команды текстом, управляйте громкостью, музыкой и сценариями.",
       hero_copy_idle: "Скопировать MCP URL",
       hero_copy_done: "Скопировано!",
       hero_login_btn: "Войти через Яндекс",
@@ -153,7 +153,7 @@
       cookie_manual_toggle: "Или настроить вручную через DevTools...",
       callback_success_page_title: "mctl-alice — Авторизация успешна",
       callback_success_title: "mctl-alice — Успешный вход",
-      callback_success_msg: "✅ Авторизация успешна! Получен постоянный Refresh-токен для автообновления.",
+      callback_success_msg: "✅ Аккаунт Яндекса подключён: mctl-alice получил доступ к вашему Умному дому. Вернитесь в AI-ассистента и попросите, например, показать список устройств.",
       callback_speakers_found: "Найденные колонки:",
       callback_no_speakers: "Колонки не найдены в умном доме, но токен успешно получен и сохранен.",
       callback_btn_home: "На главную",
@@ -257,17 +257,40 @@
 
       // Quasar Cookie Page Additions
       cookie_scenario_disclosure: "Воспроизведение произвольного текста (TTS) и выполнение голосовых команд через Quasar происходит путём создания сценариев в вашем умном доме Яндекс. Текст и параметры команды передаются на серверы Яндекса и сохраняются в истории сценариев вашего аккаунта. mctl-alice изолирует сценарии по пользователям и удаляет сценарий сразу после выполнения.",
-      cookie_scenario_ack: "Я понимаю, что команды Quasar сохраняются в истории сценариев Яндекс"
+      cookie_scenario_ack: "Я понимаю, что команды Quasar сохраняются в истории сценариев Яндекс",
+      // Site navigation, setup guide and 404
+      skip_link: "Перейти к содержимому",
+      nav_main_label: "Основное меню",
+      theme_toggle_label: "Переключить тему оформления",
+      nav_setup: "Подключение",
+      footer_setup: "Подключение",
+      hero_connect_btn: "Подключить ассистента",
+      setup_more_link: "Другие клиенты, пошаговый сценарий и как отозвать доступ →",
+      setup_page_title: "mctl-alice — Подключение ассистента",
+      setup_page_h1: "Подключите своего AI-ассистента",
+      setup_page_lead: "mctl-alice — удалённый MCP-сервер. Добавьте его адрес в ассистента, войдите через Яндекс ID и выберите, что ассистенту можно делать. Дальше просто просите его на обычном языке.",
+      setup_tested_title: "Проверенные клиенты",
+      setup_tested_list: "<li><strong>Claude</strong> (claude.ai и Claude Desktop): <em>Customize → Connectors → «+» → Add custom connector</em>, вставьте MCP URL и нажмите <em>Add</em>, затем <em>Connect</em>.</li><li><strong>ChatGPT</strong>: <em>Settings → Apps &amp; Connectors → Advanced settings</em> → включите <em>Developer mode</em>, затем <em>Apps &amp; Connectors → Create</em> и вставьте MCP URL.</li><li><strong>Codex</strong>: добавьте MCP URL как удалённый (streamable HTTP) MCP-сервер; вход через Яндекс ID откроется в браузере.</li>",
+      setup_other_title: "Другие MCP-клиенты",
+      setup_other_desc: "Подойдёт любой клиент, который подключает удалённые MCP-серверы с авторизацией OAuth 2.1, например Claude Code или Cursor. Мы их сами не проверяли, поэтому напишите нам, если что-то не работает.",
+      setup_walk_title: "Как это проходит",
+      setup_walk_list: "<li>Вы добавляете MCP URL, и ассистент открывает окно входа.</li><li>Вы входите через Яндекс ID и разрешаете mctl-alice доступ к Умному дому.</li><li>На странице согласия вы видите, какой ассистент просит доступ, и можете снять лишние разрешения: <code>iot:view</code> (смотреть устройства), <code>iot:control</code> (управлять ими), <code>quasar</code> (речь и текстовые команды на колонках).</li><li>Вы возвращаетесь в ассистента и пишете, например: «Какие у меня колонки?» или «Выключи весь свет на кухне».</li><li>По желанию подключаете Quasar в <a href=\"/account\">личном кабинете</a>, чтобы колонки могли произносить фразы и выполнять текстовые команды. Без него остальные функции работают.</li>",
+      setup_data_title: "Ваши данные и как отозвать доступ",
+      setup_data_list: "<li><strong>История устройств.</strong> Облачный сервис не собирает и не хранит историю состояний устройств, включать её не нужно. Инструмент <code>alice_get_device_history</code> здесь новых данных не возвращает.</li><li><strong>Ваши данные.</strong> Что хранится и сколько, перечислено в <a href=\"/privacy\">политике конфиденциальности</a>. Кнопки выгрузки нет. Чтобы получить копию сведений о вашем аккаунте, напишите на <a href=\"mailto:support@mctl.ai\">support@mctl.ai</a>.</li><li><strong>Отключить ассистента.</strong> В <a href=\"/account\">личном кабинете</a> нажмите «Отозвать» рядом с ассистентом: его токены перестанут работать сразу.</li><li><strong>Отключить Quasar.</strong> Кнопка в личном кабинете удаляет сохранённую веб-сессию и сценарии <code>mctl-*</code>, созданные сервисом.</li><li><strong>Удалить всё.</strong> «Удалить все мои данные» в личном кабинете стирает аккаунт, токены, сессии и сценарии <code>mctl-*</code>.</li><li><strong>На стороне Яндекса.</strong> Удаление в mctl-alice стирает наши копии ключей, но не отзывает их у Яндекса. Доступ приложения отзывается в <a href=\"https://id.yandex.ru/security\" target=\"_blank\" rel=\"noopener\">Яндекс ID</a>, в разделе доступов приложений. Веб-сессию, созданную входом по QR, завершает выход из аккаунта на всех устройствах там же.</li>",
+      setup_btn_account: "Личный кабинет",
+      notfound_page_title: "mctl-alice — Страница не найдена",
+      notfound_title: "Страница не найдена",
+      notfound_desc: "Такой страницы нет. Возможно, ссылка устарела или в адресе опечатка."
     },
     en: {
       meta_title: "mctl-alice — Yandex Station & Smart Home Control via AI (MCP)",
-      meta_desc: "Model Context Protocol (MCP) server for Yandex Station smart speakers and smart home devices. Control Alice speakers, issue voice commands, synthesize text-to-speech (TTS) via Claude, ChatGPT, Cursor, and Antigravity.",
+      meta_desc: "Model Context Protocol (MCP) server for Yandex Station smart speakers and smart home devices. Control Alice speakers, issue voice commands, synthesize text-to-speech (TTS) via Claude, ChatGPT, Codex and other MCP clients.",
       nav_login: "Sign In (OAuth)",
       nav_cookie: "Quasar Cookie",
       nav_github: "GitHub",
       hero_eyebrow: "Model Context Protocol",
       hero_title: "Voice Control for Yandex Station<br>& Smart Home for AI Assistants",
-      hero_lead: "mctl-alice connects your AI assistants (Claude, ChatGPT, Cursor, Antigravity) to Yandex Station smart speakers and smart home devices. Speak arbitrary text (TTS), simulate voice commands via text, adjust volume, control music playback, and run routines.",
+      hero_lead: "mctl-alice connects your AI assistants (Claude, ChatGPT, Codex and other MCP clients) to Yandex Station smart speakers and smart home devices. Speak arbitrary text (TTS), simulate voice commands via text, adjust volume, control music playback, and run routines.",
       hero_copy_idle: "Copy MCP URL",
       hero_copy_done: "Copied!",
       hero_login_btn: "Log in with Yandex",
@@ -352,7 +375,7 @@
       cookie_manual_toggle: "Or configure manually via DevTools...",
       callback_success_page_title: "mctl-alice — Authorization Successful",
       callback_success_title: "mctl-alice — Successful Sign In",
-      callback_success_msg: "✅ Authorization successful! Permanent refresh token obtained for auto-renewal.",
+      callback_success_msg: "✅ Your Yandex account is connected: mctl-alice can now access your Smart Home. Go back to your AI assistant and ask it, for example, to list your devices.",
       callback_speakers_found: "Discovered speakers:",
       callback_no_speakers: "No speakers found in smart home, but token was obtained and saved successfully.",
       callback_btn_home: "Go to Home",
@@ -456,7 +479,30 @@
 
       // Quasar Cookie Page Additions
       cookie_scenario_disclosure: "Arbitrary text-to-speech (TTS) playback and voice commands via Quasar work by dynamically generating routines in your Yandex Smart Home. The command text and parameters are sent to Yandex servers and recorded in your account routine history. mctl-alice isolates routines per user and purges them immediately after execution.",
-      cookie_scenario_ack: "I understand that Quasar commands are recorded in my Yandex routine history"
+      cookie_scenario_ack: "I understand that Quasar commands are recorded in my Yandex routine history",
+      // Site navigation, setup guide and 404
+      skip_link: "Skip to content",
+      nav_main_label: "Main navigation",
+      theme_toggle_label: "Toggle color theme",
+      nav_setup: "Connect",
+      footer_setup: "Connect",
+      hero_connect_btn: "Connect your assistant",
+      setup_more_link: "Other clients, a walkthrough and how to revoke access →",
+      setup_page_title: "mctl-alice — Connect your assistant",
+      setup_page_h1: "Connect your AI assistant",
+      setup_page_lead: "mctl-alice is a remote MCP server. Add its URL to your assistant, sign in with Yandex ID and choose what the assistant may do. Then just ask it in plain language.",
+      setup_tested_title: "Tested clients",
+      setup_tested_list: "<li><strong>Claude</strong> (claude.ai and Claude Desktop): <em>Customize → Connectors → “+” → Add custom connector</em>, paste the MCP URL, click <em>Add</em>, then <em>Connect</em>.</li><li><strong>ChatGPT</strong>: <em>Settings → Apps &amp; Connectors → Advanced settings</em> → turn on <em>Developer mode</em>, then <em>Apps &amp; Connectors → Create</em> and paste the MCP URL.</li><li><strong>Codex</strong>: add the MCP URL as a remote (streamable HTTP) MCP server; the Yandex ID sign-in opens in your browser.</li>",
+      setup_other_title: "Other MCP clients",
+      setup_other_desc: "Any client that connects to remote MCP servers with OAuth 2.1 authorization should work, for example Claude Code or Cursor. We have not tested them ourselves, so let us know if something does not work.",
+      setup_walk_title: "What happens",
+      setup_walk_list: "<li>You add the MCP URL and the assistant opens a sign-in window.</li><li>You sign in with Yandex ID and allow mctl-alice to access your Smart Home.</li><li>The consent page shows which assistant is asking, and you can untick permissions you do not want: <code>iot:view</code> (see devices), <code>iot:control</code> (control them), <code>quasar</code> (speech and text commands on speakers).</li><li>You go back to the assistant and write, for example: “Which speakers do I have?” or “Turn off all the lights in the kitchen”.</li><li>Optionally, connect Quasar on the <a href=\"/account\">account page</a> so speakers can say phrases and run text commands. Everything else works without it.</li>",
+      setup_data_title: "Your data and how to revoke access",
+      setup_data_list: "<li><strong>Device history.</strong> The hosted service does not collect or store device state history, so there is nothing to turn on. The <code>alice_get_device_history</code> tool returns no new data here.</li><li><strong>Your data.</strong> What is stored and for how long is listed in the <a href=\"/privacy\">privacy policy</a>. There is no export button. To get a copy of what we hold about your account, email <a href=\"mailto:support@mctl.ai\">support@mctl.ai</a>.</li><li><strong>Disconnect an assistant.</strong> On the <a href=\"/account\">account page</a>, click “Revoke” next to the assistant: its tokens stop working immediately.</li><li><strong>Disconnect Quasar.</strong> The button on the account page deletes the stored web session and the <code>mctl-*</code> scenarios the service created.</li><li><strong>Delete everything.</strong> “Delete all my data” on the account page erases your account, tokens, sessions and <code>mctl-*</code> scenarios.</li><li><strong>On the Yandex side.</strong> Deleting data in mctl-alice erases our copies of your keys but does not revoke them at Yandex. Revoke the app's access in <a href=\"https://id.yandex.ru/security\" target=\"_blank\" rel=\"noopener\">Yandex ID</a>, under app access. A web session created by the QR sign-in ends when you sign out on all devices there.</li>",
+      setup_btn_account: "Account",
+      notfound_page_title: "mctl-alice — Page not found",
+      notfound_title: "Page not found",
+      notfound_desc: "There is no such page. The link may be outdated or the address may contain a typo."
     }
   };
 
@@ -514,6 +560,14 @@
       }
     });
 
+    // Update aria-labels
+    Array.prototype.forEach.call(document.querySelectorAll("[data-i18n-aria-label]"), function (el) {
+      var key = el.getAttribute("data-i18n-aria-label");
+      if (dict[key] !== undefined) {
+        el.setAttribute("aria-label", dict[key]);
+      }
+    });
+
     // Update segmented lang switcher buttons
     Array.prototype.forEach.call(document.querySelectorAll(".lang-btn[data-lang]"), function (btn) {
       var btnLang = btn.getAttribute("data-lang");
@@ -522,6 +576,7 @@
       } else {
         btn.classList.remove("is-active");
       }
+      btn.setAttribute("aria-pressed", btnLang === lang ? "true" : "false");
     });
 
     // Update single lang toggle button label (shows the next language to switch to)

@@ -5,23 +5,28 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <script src="/assets/theme-init.js?v=__VERSION__"></script>
 <title>mctl-alice — Управление Яндекс Станцией и умным домом через AI (MCP)</title>
-<meta name="description" content="Model Context Protocol (MCP) сервер для Яндекс Станций и умного дома. Управляйте колонками Алиса, отправляйте голосовые команды, воспроизводите произвольный текст TTS через Claude, ChatGPT, Cursor и Antigravity.">
+<meta name="description" content="Model Context Protocol (MCP) сервер для Яндекс Станций и умного дома. Управляйте колонками Алиса, отправляйте голосовые команды, воспроизводите произвольный текст TTS через Claude, ChatGPT, Codex и другие MCP-клиенты.">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="mctl-alice">
 <meta property="og:title" content="mctl-alice — Голосовое управление Яндекс Станцией через AI">
-<meta property="og:description" content="Подключите Claude, ChatGPT или Cursor к вашим колонкам Алиса: симуляция команд, синтез речи, громкость и сценарии.">
-<meta property="og:url" content="https://alice.mctl.ai">
+<meta property="og:description" content="Подключите Claude, ChatGPT или Codex к вашим колонкам Алиса и Умному дому Яндекса: устройства, сценарии, громкость, синтез речи.">
+<meta property="og:url" content="__BASE_URL__/">
+<meta property="og:image" content="__BASE_URL__/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="mctl-alice: AI-ассистенты для колонок Алиса и Умного дома Яндекса">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="canonical" href="__BASE_URL__/">
 
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="/assets/fonts.css?v=__VERSION__">
 <link rel="stylesheet" href="/assets/tokens.css?v=__VERSION__">
 <link rel="stylesheet" href="/assets/components.css?v=__VERSION__">
 <link rel="stylesheet" href="/assets/pages.css?v=__VERSION__">
 </head>
 <body>
 
+<a class="skip-link" href="#main" data-i18n="skip_link">Перейти к содержимому</a>
 <header class="wrap topbar">
   <a class="brand" href="/">
     <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
@@ -31,16 +36,17 @@
     mctl-alice
     <span class="chip-beta">BETA</span>
   </a>
-  <nav class="topbar-links">
+  <nav class="topbar-links" aria-label="Основное меню" data-i18n-aria-label="nav_main_label">
+    <a href="/setup" data-i18n="nav_setup">Подключение</a>
     <a href="/account" data-i18n="nav_account">Аккаунт</a>
     <a href="/auth/login" data-i18n="nav_login">Вход (OAuth)</a>
     <a href="/auth/cookie" data-i18n="nav_cookie">Quasar Cookie</a>
     <a href="https://github.com/mctlhq/mctl-alice" target="_blank" rel="noopener" data-i18n="nav_github">GitHub</a>
     <div class="lang-switcher" id="lang-switcher" role="group" aria-label="Выбор языка / Language selection">
-      <button class="lang-btn is-active" id="lang-btn-ru" type="button" data-lang="ru" aria-label="Русский">RU</button>
-      <button class="lang-btn" id="lang-btn-en" type="button" data-lang="en" aria-label="English">EN</button>
+      <button class="lang-btn is-active" id="lang-btn-ru" type="button" data-lang="ru" lang="ru" aria-label="Русский" aria-pressed="true">RU</button>
+      <button class="lang-btn" id="lang-btn-en" type="button" data-lang="en" lang="en" aria-label="English" aria-pressed="false">EN</button>
     </div>
-    <button class="theme-toggle" id="theme-toggle" type="button" hidden aria-label="Переключить тему оформления">
+    <button class="theme-toggle" id="theme-toggle" type="button" hidden aria-label="Переключить тему оформления" data-i18n-aria-label="theme_toggle_label">
       <svg class="icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
         <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>
       </svg>
@@ -52,7 +58,7 @@
   </nav>
 </header>
 
-<main>
+<main id="main" tabindex="-1">
 
 <section class="hero wrap">
   <div class="eyebrow-row">
@@ -61,7 +67,7 @@
   </div>
   <h1 data-i18n-html="hero_title">Голосовое управление Яндекс Станцией<br>и умным домом для AI-ассистентов</h1>
   <p class="lead" data-i18n="hero_lead">
-    mctl-alice соединяет ваших AI-ассистентов (Claude, ChatGPT, Cursor, Antigravity)
+    mctl-alice соединяет ваших AI-ассистентов (Claude, ChatGPT, Codex и другие MCP-клиенты)
     с умными колонками Яндекс Станция и устройствами умного дома. Произносите произвольные фразы
     (TTS), симулируйте голосовые команды текстом, управляйте громкостью, музыкой и сценариями.
   </p>
@@ -72,7 +78,8 @@
   </div>
 
   <div class="cta-row">
-    <button class="btn btn-primary" id="copy-url" type="button" data-idle="Скопировать MCP URL" data-done="Скопировано!">Скопировать MCP URL</button>
+    <a class="btn btn-primary" href="/setup" data-i18n="hero_connect_btn">Подключить ассистента</a>
+    <button class="btn btn-secondary" id="copy-url" type="button" data-idle="Скопировать MCP URL" data-done="Скопировано!">Скопировать MCP URL</button>
     <a class="btn btn-secondary" href="/auth/login" data-i18n="hero_login_btn">Войти через Яндекс</a>
   </div>
 </section>
@@ -85,42 +92,42 @@
   <div class="card-grid">
     <div class="card">
       <div class="card-icon">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true" focusable="false"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
       </div>
       <h3 data-i18n="card_cmd_title">Симуляция голосовых команд</h3>
       <p data-i18n="card_cmd_desc">Выполнение любых команд текстом ровно так, как если бы вы произнесли их вслух в микрофон колонки: «Включи джаз», «Какая погода завтра», «Выключи свет везде».</p>
     </div>
     <div class="card">
       <div class="card-icon">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true" focusable="false"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
       </div>
       <h3 data-i18n="card_tts_title">Произвольная речь (TTS)</h3>
       <p data-i18n="card_tts_desc">Озвучивание любого произвольного текста через выбранную колонку. Идеально для голосовых уведомлений, напоминаний, утренних сводок и ответов ассистента.</p>
     </div>
     <div class="card">
       <div class="card-icon">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true" focusable="false"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>
       </div>
       <h3 data-i18n="card_vol_title">Управление громкостью</h3>
       <p data-i18n="card_vol_desc">Точная регулировка громкости от 1 до 10 для конкретной колонки, комнаты или устройства по умолчанию.</p>
     </div>
     <div class="card">
       <div class="card-icon">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
       </div>
       <h3 data-i18n="card_media_title">Управление медиа-плеером</h3>
       <p data-i18n="card_media_desc">Пауза, возобновление проигрывания, остановка трека, переключение на следующий или предыдущий трек в Яндекс Музыке.</p>
     </div>
     <div class="card">
       <div class="card-icon">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true" focusable="false"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
       </div>
       <h3 data-i18n="card_discovery_title">Обнаружение умного дома</h3>
       <p data-i18n="card_discovery_desc">Автоматическое получение списка всех колонок, комнат, групп и умных устройств пользователя с информацией об их возможностях.</p>
     </div>
     <div class="card">
       <div class="card-icon">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true" focusable="false"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
       </div>
       <h3 data-i18n="card_scenarios_title">Сценарии автоматизации</h3>
       <p data-i18n="card_scenarios_desc">Мгновенный триггер настроенных сценариев умного дома Яндекса по их названию или идентификатору («Доброе утро», «Ушел из дома», «Кино»).</p>
@@ -214,17 +221,7 @@
       <br>
       <div data-i18n-html="setup_step1_chatgpt">• <strong>ChatGPT</strong>: откройте <em>Settings → Apps &amp; Connectors → Advanced settings → Developer mode</em>, затем в <em>Apps &amp; Connectors → Create</em> укажите URL <code class="mcp-url-slot">https://alice.mctl.ai/mcp</code>. Сервер поддерживает RFC 8414 &amp; OAuth 2.1 — ChatGPT автоматически проведет вас через авторизацию в Яндексе.</div>
       <br>
-      • <strong>Claude Code</strong>:
-      <pre><code>claude mcp add --transport sse alice https://alice.mctl.ai/sse</code></pre>
-      <br>
-      • <strong>Cursor / Antigravity / Claude Desktop (mcp.json)</strong>:
-      <pre><code>{
-  "mcpServers": {
-    "alice": {
-      "url": "https://alice.mctl.ai/sse"
-    }
-  }
-}</code></pre>
+      <a href="/setup" data-i18n="setup_more_link">Другие клиенты, пошаговый сценарий и как отозвать доступ →</a>
     </li>
     <li>
       <strong data-i18n="setup_step2_title">Шаг 2. Авторизуйтесь в Яндексе (OAuth):</strong>
@@ -267,6 +264,7 @@
   <div class="footer-row">
     <span data-i18n-html="footer_part">mctl-alice — часть платформы <a href="https://mctl.ai" target="_blank" rel="noopener">mctl</a>. Независимый проект, не связан с ООО «Яндекс» и не одобрен им; «Яндекс», «Алиса» и «Яндекс Станция» — товарные знаки их владельцев.</span>
     <span>
+      <a href="/setup" data-i18n="footer_setup">Подключение</a> ·
       <a href="/account" data-i18n="footer_account">Личный кабинет</a> ·
       <a href="/about" data-i18n="footer_about">О сервисе</a> ·
       <a href="/privacy" data-i18n="footer_privacy">Конфиденциальность</a> ·

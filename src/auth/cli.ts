@@ -105,7 +105,7 @@ async function main() {
   console.log("1. Открываем окно браузера для авторизации...");
   console.log(`   Ссылка: ${authUrl}`);
   if (responseType === "code") {
-    console.log("   (Используется Authorization Code Flow для получения постоянного Refresh Token)");
+    console.log("   (Authorization Code Flow: сервер получит refresh-токен и будет продлевать доступ сам)");
   } else {
     console.log("\n(Альтернатива: если редирект на localhost не сработает, откройте:\n " + directVerifyUrl + "\n и скопируйте токен из адресной строки)");
   }

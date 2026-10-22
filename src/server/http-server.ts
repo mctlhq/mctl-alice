@@ -6,6 +6,7 @@ import { isLocalOrigin } from "./origin.js";
 import { FORM_BODY_LIMIT, MCP_BODY_LIMIT, PayloadTooLargeError, parseRequestBody, readRequestBody, sendPayloadTooLarge } from "./request-body.js";
 import { RateLimiter, clientAddress, rateLimitBucket, resolveRateLimits, trustProxyHopsFromEnv, clientIpHeaderFromEnv, type RateLimitBucket } from "./rate-limit.js";
 import { UpstreamError, UpstreamTimeoutError } from "../client/upstream.js";
+import { authFailures, cameThroughProxy, rateLimited, recordHttpRequest, renderMetrics } from "../metrics.js";
 
 export { isLocalOrigin };
 import http from "node:http";
@@ -331,7 +332,11 @@ export async function assertCookieOwnedBy(cookie: string, user: UserRecord | nul
 export type AuthResult =
   | { authenticated: true; mode: "hosted"; service: StationService; scope: string; userId: string; clientId: string }
   | { authenticated: true; mode: "local"; service: StationService; scope: "*"; userId?: never; clientId?: never }
-  | { authenticated: false; service?: never; status: number; error?: "invalid_token" | "invalid_request" | "temporarily_unavailable"; errorMessage: string };
+  | { authenticated: false; service?: never; status: number; error?: "invalid_token" | "invalid_request" | "temporarily_unavailable"; errorMessage: string; reason: AuthFailureReason };
+
+/** The fixed label values of mctl_alice_auth_failures_total for a rejected bearer request. */
+export type AuthFailureReason =
+  | "missing_token" | "cookie_header" | "malformed" | "invalid_token" | "invalid_grant" | "reconnect_required" | "storage_unavailable";
 
 export function buildWwwAuthenticate(baseUrl: string, error?: string): string {
   const metadataUrl = `${baseUrl.replace(/\/+$/, "")}/.well-known/oauth-protected-resource/mcp`;
@@ -346,17 +351,30 @@ export async function authenticateRequest(
   telemetryStorage?: ITelemetryStorage,
   authRequired = false
 ): Promise<AuthResult> {
-  const fail = (errorMessage: string, status = 401): AuthResult => ({
-    authenticated: false, status, error: status === 503 ? "temporarily_unavailable" : "invalid_token", errorMessage,
+  const result = await checkBearer(req, defaultService, defaultQuasar, oauthStorage, telemetryStorage, authRequired);
+  if (!result.authenticated) authFailures.inc({ reason: result.reason });
+  return result;
+}
+
+async function checkBearer(
+  req: http.IncomingMessage,
+  defaultService: StationService | undefined,
+  defaultQuasar: QuasarClient | undefined,
+  oauthStorage: IStorage | undefined,
+  telemetryStorage: ITelemetryStorage | undefined,
+  authRequired: boolean,
+): Promise<AuthResult> {
+  const fail = (reason: AuthFailureReason, errorMessage: string, status = 401): AuthResult => ({
+    authenticated: false, status, error: status === 503 ? "temporarily_unavailable" : "invalid_token", errorMessage, reason,
   });
-  if (req.headers["x-yandex-cookie"]) return fail("Cookie headers are not supported");
+  if (req.headers["x-yandex-cookie"]) return fail("cookie_header", "Cookie headers are not supported");
   const header = req.headers.authorization;
   if (!header) {
     if (!authRequired && defaultService) return { authenticated: true, mode: "local", service: defaultService, scope: "*" };
-    return { authenticated: false, status: 401, errorMessage: "authentication required" };
+    return { authenticated: false, status: 401, errorMessage: "authentication required", reason: "missing_token" };
   }
   const match = /^Bearer +([a-zA-Z0-9._~+/-]+=*)$/i.exec(header);
-  if (!match) return fail("Bearer token required");
+  if (!match) return fail("malformed", "Bearer token required");
   const rawToken = match[1];
   try {
     const record = await oauthStorage?.getToken(rawToken);
@@ -368,9 +386,9 @@ export async function authenticateRequest(
       const userId = record.userId;
       if (!userId || ["legacy_user", "usr_local"].includes(userId) || !record.clientId ||
           !Number.isFinite(record.expiresAt) || record.expiresAt <= Date.now() || !validScope(record.scope) ||
-          !await oauthStorage!.getUser(userId)) return fail("Invalid token owner or grant");
+          !await oauthStorage!.getUser(userId)) return fail("invalid_grant", "Invalid token owner or grant");
       const creds = await oauthStorage!.getUserCredentials(userId);
-      if (!creds || (!creds.yandexAccessToken && !creds.quasarCookie)) return fail("Reconnect your Yandex account");
+      if (!creds || (!creds.yandexAccessToken && !creds.quasarCookie)) return fail("reconnect_required", "Reconnect your Yandex account");
       const client = creds.yandexAccessToken ? new YandexIoTClient(creds.yandexAccessToken, {
         credentialsMode: "hosted", refreshToken: creds.yandexRefreshToken,
         onRefresh: async (accessToken, refreshToken, expiresIn) => {
@@ -399,9 +417,9 @@ export async function authenticateRequest(
       if (/^(y0_|y1_|AQAAAA)/.test(rawToken)) return { authenticated: true, mode: "local", scope: "*",
         service: new StationService(new YandexIoTClient(rawToken, { useKeychain: false, persistEnv: false }), defaultQuasar, telemetryStorage) };
     }
-    return fail("Invalid access token");
+    return fail("invalid_token", "Invalid access token");
   } catch {
-    return fail("Credential storage unavailable", 503);
+    return fail("storage_unavailable", "Credential storage unavailable", 503);
   }
 }
 
@@ -471,6 +489,17 @@ export interface HttpServerOptions {
 }
 
 const CLEANUP_DEADLINE_MS = 20_000;
+
+/** /oauth/token error codes as auth-failure reasons; an unlisted code counts as token_other. */
+const TOKEN_ERROR_REASONS: Record<string, string> = {
+  invalid_grant: "token_invalid_grant",
+  invalid_request: "token_invalid_request",
+  invalid_client: "token_invalid_client",
+  invalid_target: "token_invalid_target",
+  invalid_redirect_uri: "token_invalid_redirect_uri",
+  unsupported_grant_type: "token_unsupported_grant_type",
+  temporarily_unavailable: "token_unavailable",
+};
 
 export function createHttpServer(
   port = 8080,
@@ -669,6 +698,7 @@ export function createHttpServer(
   }
 
   const server = http.createServer(async (req, res) => {
+    res.once("close", () => recordHttpRequest(req.url, req.method, res.statusCode, res.headersSent));
     try {
     const url = new URL(req.url || "/", baseUrl);
     if (req.method === "POST" && (url.pathname.startsWith("/account/") || ["/oauth/authorize", "/auth/save-cookie", "/auth/save-token"].includes(url.pathname))) {
@@ -705,12 +735,27 @@ export function createHttpServer(
       return;
     }
 
+    // For the in-cluster scrape only: it connects to the pod directly, while
+    // anything routed through the ingress carries proxy headers. The edge also
+    // denies /metrics in gitops; this is the second layer, not the only one.
+    if (url.pathname === "/metrics") {
+      if ((req.method !== "GET" && req.method !== "HEAD") || cameThroughProxy(req.headers)) {
+        res.writeHead(404, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Not found" }));
+        return;
+      }
+      res.writeHead(200, { "Content-Type": "text/plain; version=0.0.4; charset=utf-8", "Cache-Control": "no-store" });
+      res.end(req.method === "HEAD" ? undefined : renderMetrics());
+      return;
+    }
+
     const bucket = rateLimitBucket(url.pathname, req.method, String(req.headers.accept || ""));
     if (bucket) {
       // Always charge the address bucket: a token is unvalidated here, so it may only add a dimension.
       let verdict = limiters[bucket].hit(`ip:${clientAddress(req, proxyHops, ipHeader)}`);
       if (verdict.allowed && bucket === "mcp" && req.headers.authorization) verdict = limiters[bucket].hit(`token:${fingerprint(req)}`);
       if (!verdict.allowed) {
+        rateLimited.inc({ bucket });
         res.writeHead(429, { "Content-Type": "application/json; charset=utf-8", "Retry-After": String(verdict.retryAfterSec), "Cache-Control": "no-store" });
         res.end(JSON.stringify(
           bucket === "mcp" && req.method === "POST" && !url.searchParams.has("sessionId")
@@ -1036,6 +1081,8 @@ export function createHttpServer(
         // An unreadable stored grant is a server fault: answering invalid_grant would make
         // clients drop it and re-authorize over ciphertext a corrected key could still read.
         const unavailable = err instanceof StorageUnavailableError || err instanceof CredentialDecryptionError;
+        const code = unavailable ? "temporarily_unavailable" : err instanceof OAuthError ? err.code : "invalid_grant";
+        authFailures.inc({ reason: TOKEN_ERROR_REASONS[code] ?? "token_other" });
         res.writeHead(unavailable ? 503 : 400, {
           "Content-Type": "application/json; charset=utf-8",
           "Cache-Control": "no-store",
@@ -1235,6 +1282,7 @@ export function createHttpServer(
       if (!auth.authenticated) { sendUnauthorized(auth.error, auth.errorMessage, auth.status); return; }
       const owner = sseOwners.get(sessionId!);
       if (!owner || owner.userId !== auth.userId || owner.clientId !== auth.clientId || owner.fingerprint !== fingerprint(req)) {
+        authFailures.inc({ reason: "session_mismatch" });
         sendUnauthorized("invalid_token", "Session owner mismatch"); return;
       }
       const raw = await readRequestBody(req, { limit: MCP_BODY_LIMIT });
@@ -1263,6 +1311,7 @@ export function createHttpServer(
       }
       const tool = restTools[url.pathname];
       if (tool && !checkScope(tool, auth.scope)) {
+        authFailures.inc({ reason: "insufficient_scope" });
         res.setHeader("WWW-Authenticate", buildWwwAuthenticate(baseUrl, "insufficient_scope") + `, scope="${TOOL_SCOPES[tool].join(" ")}"`);
         throw Object.assign(new Error("insufficient_scope"), { statusCode: 403 });
       }
@@ -1607,6 +1656,7 @@ export function createHttpServer(
       if (authRequired || (code && !(state && await oauthStorage.getPendingAuth(state)))) {
         const transaction = await liveLoginTransaction(state, req);
         if (!transaction) {
+          authFailures.inc({ reason: "login_state" });
           res.writeHead(400); res.end("Invalid login transaction; sign in again"); return;
         }
         await loginTransactions.delete(state!);
@@ -1626,6 +1676,7 @@ export function createHttpServer(
           res.end();
           return;
         } catch (err: any) {
+          authFailures.inc({ reason: "login_failed" });
           res.writeHead(err instanceof StorageUnavailableError ? 503 : 500, { "Content-Type": "text/html; charset=utf-8" });
           const content = `
             <h2 data-i18n="callback_error_title">Ошибка авторизации Яндекс</h2>
@@ -1735,6 +1786,7 @@ export function createHttpServer(
           res.end(renderAuthPage({ title: "mctl-alice — Авторизация успешна", titleKey: "callback_success_page_title", contentHtml: content }));
           return;
         } catch (err: any) {
+          authFailures.inc({ reason: "login_failed" });
           res.writeHead(err instanceof StorageUnavailableError ? 503 : 500, { "Content-Type": "text/html; charset=utf-8" });
           const content = `
             <h2 data-i18n="callback_error_title">mctl-alice — Ошибка авторизации</h2>

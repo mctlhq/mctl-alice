@@ -40,6 +40,10 @@ Set `PUBLIC_BASE_URL` to the exact origin browsers use to reach the server. With
 
 Bodies are capped at 64 KiB (forms) and 1 MiB (MCP/REST JSON, `MAX_MCP_BODY_BYTES`), and OAuth, sign-in and MCP routes are rate limited per client (`RATE_LIMIT_REGISTER|TOKEN|AUTHORIZE|LOGIN|QR|MCP`, requests per minute). Behind a reverse proxy set `CLIENT_IP_HEADER` to a header the proxy overwrites with the client address (`cf-connecting-ip` behind Cloudflare), or `TRUST_PROXY_HOPS` to the number of trusted proxies so the address is taken from `X-Forwarded-For`; set either only behind a proxy you control, since otherwise clients can spoof their rate-limit key. See `SECURITY.md` for the defaults.
 
+### Metrics
+
+`GET /metrics` serves Prometheus metrics on the main port: `mctl_alice_http_requests_total` (route template, method, status class), `mctl_alice_auth_failures_total` (reason), `mctl_alice_rate_limited_total` (bucket), `mctl_alice_upstream_requests_total` and `mctl_alice_upstream_request_duration_seconds` (Yandex upstream and outcome), and `mctl_alice_build_info`. Label values come from fixed sets; no path, query string or token reaches a label. The endpoint answers 404 to any request that carries a reverse-proxy header (`X-Forwarded-For`, `X-Real-IP`, `Forwarded`, `CF-Connecting-IP`, `X-Forwarded-Host`), so scrape the server directly rather than through your proxy, and deny `/metrics` at the proxy as well.
+
 ---
 
 ## Available MCP Tools

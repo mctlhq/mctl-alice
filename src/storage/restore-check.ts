@@ -17,6 +17,10 @@ export interface RestoreCheckReport {
   tables: TableReport[];
   credentials: { total: number; notUnderActiveKey: number; undecryptable: number };
   clearTextSecrets: number;
+  /** Values in credential columns that are not encryption envelopes. */
+  clearTextCredentials: number;
+  /** Schema the unqualified table names resolved to, as the app sees it. */
+  schema: string | null;
   /** Names of failed checks; never contains row data. */
   failures: string[];
 }
@@ -34,18 +38,22 @@ export async function checkRestoredDatabase(pool: pg.Pool, opts: { asRole?: stri
     await client.query("BEGIN READ ONLY");
     if (opts.asRole) await client.query(`SET LOCAL ROLE ${quoteIdent(opts.asRole)}`);
 
+    const schema = ((await client.query("SELECT current_schema() AS s")).rows[0]?.s as string | undefined) ?? null;
     const tables: TableReport[] = [];
     for (const table of POSTGRES_TABLES) {
-      const found = await client.query("SELECT to_regclass($1) IS NOT NULL AS present", [`public.${table}`]);
+      const found = await client.query("SELECT to_regclass($1) IS NOT NULL AS present", [table]);
       if (!found.rows[0]?.present) {
         tables.push({ table, exists: false, rows: 0, usable: false });
         failures.push(`table-missing:${table}`);
         continue;
       }
       const access = await client.query(
-        `SELECT (pg_get_userbyid(c.relowner) = current_user OR has_table_privilege(current_user, c.oid, 'SELECT,INSERT,UPDATE,DELETE')) AS usable
+        `SELECT (pg_get_userbyid(c.relowner) = current_user OR has_table_privilege(current_user, c.oid, 'SELECT')
+                AND has_table_privilege(current_user, c.oid, 'INSERT')
+                AND has_table_privilege(current_user, c.oid, 'UPDATE')
+                AND has_table_privilege(current_user, c.oid, 'DELETE')) AS usable
            FROM pg_class c WHERE c.oid = to_regclass($1)`,
-        [`public.${table}`],
+        [table],
       );
       const usable = Boolean(access.rows[0]?.usable);
       let rows = 0;
@@ -58,6 +66,8 @@ export async function checkRestoredDatabase(pool: pg.Pool, opts: { asRole?: stri
     const activeId = getKeyring().activeId;
     const prefix = activeId ? `v2:${activeId}:` : "";
     const credentials = { total: 0, notUnderActiveKey: 0, undecryptable: 0 };
+    let clearTextCredentials = 0;
+    let v1MissingKey = false;
     for (const spec of ENCRYPTED_COLUMNS) {
       if (!present(spec.table)) continue;
       const selected = spec.key === "user_id" ? [spec.key, ...spec.columns] : [spec.key, "user_id", ...spec.columns];
@@ -71,8 +81,11 @@ export async function checkRestoredDatabase(pool: pg.Pool, opts: { asRole?: stri
           const owner = String(row.user_id || "legacy_user");
           for (const column of spec.columns) {
             const value = row[column];
-            if (typeof value !== "string" || !isEncryptedEnvelope(value)) continue;
+            if (typeof value !== "string" || value === "") continue;
+            if (!isEncryptedEnvelope(value)) { clearTextCredentials++; continue; }
             credentials.total++;
+            // v1 envelopes open with ENCRYPTION_KEY only; never let the dev fallback key decide.
+            if (value.startsWith("v1:") && !process.env.ENCRYPTION_KEY) { v1MissingKey = true; continue; }
             if (!prefix || !value.startsWith(prefix)) credentials.notUnderActiveKey++;
             try {
               decryptToken(value, owner);
@@ -86,6 +99,8 @@ export async function checkRestoredDatabase(pool: pg.Pool, opts: { asRole?: stri
         after = String(page.rows[page.rows.length - 1][spec.key]);
       }
     }
+    if (v1MissingKey) failures.push("v1-credentials-need-ENCRYPTION_KEY");
+    if (clearTextCredentials > 0) failures.push("clear-text-credentials");
     if (credentials.undecryptable > 0) failures.push("credentials-undecryptable");
 
     let clearTextSecrets = 0;
@@ -97,7 +112,7 @@ export async function checkRestoredDatabase(pool: pg.Pool, opts: { asRole?: stri
     if (clearTextSecrets > 0) failures.push("clear-text-secrets");
 
     await client.query("ROLLBACK");
-    return { ok: failures.length === 0, tables, credentials, clearTextSecrets, failures };
+    return { ok: failures.length === 0, tables, credentials, clearTextSecrets, clearTextCredentials, schema, failures };
   } catch (error) {
     await client.query("ROLLBACK").catch(() => undefined);
     throw error;

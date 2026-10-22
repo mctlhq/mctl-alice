@@ -829,6 +829,9 @@ export class OAuthStorage implements IStorage {
   getTokenByRefreshToken(refreshToken: string): OAuthTokenRecord | null {
     const row = this.getTokenByRefreshStmt.get(...secretLookupKeys(refreshToken)) as any;
     if (!row) return null;
+    if (row.expires_at < Date.now()) {
+      return null;
+    }
 
     const userId = row.user_id || "legacy_user";
     let yandexAccessToken = "";
@@ -904,6 +907,7 @@ export class OAuthStorage implements IStorage {
   }
 
   revokeGrantFamily(grantId: string): boolean {
+    if (!grantId) return false;
     return Number(this.db.prepare("DELETE FROM oauth_tokens WHERE grant_id = ?").run(grantId).changes) > 0;
   }
 

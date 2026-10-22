@@ -128,6 +128,15 @@ describe.each(backends)("hosted grant replay and rotation (%s)", (_name, makeBac
       expect(await liveTokens()).toBe(0);
     });
 
+    it("a redeemed code presented for another client does not revoke the grant", async () => {
+      await storage.saveClient({ clientId: "other", clientSecret: "", clientName: "Other", redirectUris: [redirectUri], createdAt: Date.now() });
+      const code = await issueCode();
+      const first = await exchange(code);
+      await expect(controller.handleToken({ grant_type: "authorization_code", client_id: "other", redirect_uri: redirectUri, code, code_verifier: verifier }))
+        .rejects.toThrow("Invalid or expired authorization code");
+      expect(await storage.getToken(first.access_token)).toMatchObject({ userId: "alice" });
+    });
+
     it("a code replayed while its first exchange is still saving revokes the new tokens", async () => {
       const code = await issueCode();
       const save = storage.saveToken.bind(storage);
@@ -194,6 +203,30 @@ describe.each(backends)("hosted grant replay and rotation (%s)", (_name, makeBac
       await expect(refresh(first.refresh_token!)).rejects.toThrow("Invalid refresh_token");
       expect(await storage.getToken(second.access_token)).toMatchObject({ userId: "alice" });
       expect(await refresh(second.refresh_token!)).toMatchObject({ token_type: "Bearer" });
+    });
+
+    it("reuse of a token rotated moments before its own expiry still revokes the family", async () => {
+      await storage.saveToken({ accessToken: "mctl_at_short", refreshToken: "mctl_rt_short", clientId: "web", userId: "alice", yandexAccessToken: "",
+        scope: "iot:view", createdAt: Date.now(), expiresAt: Date.now() + 2000, grantId: randomUUID() });
+      const rotated = await refresh("mctl_rt_short");
+      advance(REFRESH_REUSE_GRACE_MS + 1);
+      await expect(refresh("mctl_rt_short")).rejects.toThrow("Invalid refresh_token");
+      expect(await storage.getToken(rotated.access_token)).toBeNull();
+    });
+
+    it("an expired refresh token cannot be rotated", async () => {
+      await storage.saveToken({ accessToken: "mctl_at_expired", refreshToken: "mctl_rt_expired", clientId: "web", userId: "alice", yandexAccessToken: "",
+        scope: "iot:view", createdAt: Date.now() - 7200000, expiresAt: Date.now() - 1000, grantId: randomUUID() });
+      expect(await storage.getTokenByRefreshToken("mctl_rt_expired")).toBeNull();
+      await expect(refresh("mctl_rt_expired")).rejects.toThrow("Invalid refresh_token");
+    });
+
+    it("an empty grant id is never a family", async () => {
+      await storage.saveToken({ accessToken: "mctl_at_blank", refreshToken: "mctl_rt_blank", clientId: "web", userId: "alice", yandexAccessToken: "",
+        scope: "iot:view", createdAt: Date.now(), expiresAt: Date.now() + 3600000, grantId: "" });
+      expect((await storage.getToken("mctl_at_blank"))?.grantId).toBeUndefined();
+      expect(await storage.revokeGrantFamily("")).toBe(false);
+      expect(await storage.getToken("mctl_at_blank")).toMatchObject({ userId: "alice" });
     });
 
     it("a refresh that loses the rotation race revokes nothing", async () => {

@@ -641,6 +641,7 @@ export class PostgresStorage implements IStorage {
 
   async consumeAuthCode(code: string, spend?: { grantId: string; keepUntil: number }): Promise<AuthCode | null> {
     await this.ready();
+    if (spend) await this.pool.query("DELETE FROM oauth_spent_secrets WHERE expires_at < $1", [Date.now()]);
     // One statement: a replay finds the code either live or spent, never neither.
     const res = spend
       ? await this.pool.query(
@@ -768,7 +769,7 @@ export class PostgresStorage implements IStorage {
       scope: row.scope,
       createdAt: Number(row.created_at),
       expiresAt: Number(row.expires_at),
-      grantId: row.grant_id ?? undefined,
+      grantId: row.grant_id || undefined,
     };
   }
 
@@ -832,6 +833,7 @@ export class PostgresStorage implements IStorage {
   }
 
   async revokeGrantFamily(grantId: string): Promise<boolean> {
+    if (!grantId) return false;
     await this.ready();
     const result = await this.pool.query("DELETE FROM oauth_tokens WHERE grant_id = $1", [grantId]);
     return (result.rowCount ?? 0) > 0;

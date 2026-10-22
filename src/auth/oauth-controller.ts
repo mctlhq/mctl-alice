@@ -58,8 +58,11 @@ const MAX_CLIENT_NAME_LENGTH = 100;
 const MAX_METADATA_BYTES = 16 * 1024;
 /** Bounds the whole metadata exchange; the 4 s idle timeout alone resets on every byte. */
 export const METADATA_DEADLINE_MS = 5000;
-/** How long a redeemed authorization code is remembered to detect its reuse. */
-const SPENT_CODE_TTL_MS = 24 * 60 * 60 * 1000;
+/**
+ * How long a redeemed authorization code is remembered to detect its reuse:
+ * the 10-minute code lifetime plus a margin; longer adds no detection value.
+ */
+const SPENT_CODE_TTL_MS = 60 * 60 * 1000;
 /**
  * A rotated refresh token presented again within this window is refused
  * without revoking its grant: a client retrying a refresh whose response it
@@ -729,12 +732,13 @@ export class OAuthController {
       }
 
       // RFC 9700 section 4.14 / OAuth 2.1: a code presented again revokes the
-      // tokens already issued from it.
+      // tokens already issued from it. Deliberately keyed on the code alone, as
+      // the spec prescribes; only a presentation for another client is ignored.
       const grantId = crypto.randomUUID();
       const authCode = await this.storage.consumeAuthCode(body.code, { grantId, keepUntil: Date.now() + SPENT_CODE_TTL_MS });
       if (!authCode) {
         const spent = await this.storage.flagSpentSecretReuse(body.code);
-        if (spent?.kind === "code") await this.storage.revokeGrantFamily(spent.grantId);
+        if (spent?.kind === "code" && spent.clientId === body.client_id) await this.storage.revokeGrantFamily(spent.grantId);
         throw new Error("Invalid or expired authorization code");
       }
 
@@ -841,13 +845,16 @@ export class OAuthController {
       // token as a digest, so existing.accessToken is an opaque handle here.
       // Losing this race to a simultaneous refresh is not reuse: no revocation.
       if (!await this.storage.revokeToken(body.refresh_token)) throw new Error("Grant already revoked or rotated");
-      const grantId = existing.grantId ?? crypto.randomUUID();
+      const grantId = existing.grantId || crypto.randomUUID();
+      const expiresIn = 2592000;
+      // Kept as long as the successor it protects, not just the rest of the
+      // rotated token's own life, which may be seconds.
       await this.storage.recordSpentSecret(body.refresh_token, {
-        kind: "refresh", grantId, clientId: existing.clientId, userId: existing.userId, spentAt: Date.now(), expiresAt: existing.expiresAt,
+        kind: "refresh", grantId, clientId: existing.clientId, userId: existing.userId, spentAt: Date.now(),
+        expiresAt: Math.max(existing.expiresAt, Date.now() + expiresIn * 1000),
       });
       const newAccessToken = `mctl_at_${crypto.randomUUID().replace(/-/g, "")}`;
       const newRefreshToken = `mctl_rt_${crypto.randomUUID().replace(/-/g, "")}`;
-      const expiresIn = 2592000;
 
       await this.storage.saveToken({
         accessToken: newAccessToken,

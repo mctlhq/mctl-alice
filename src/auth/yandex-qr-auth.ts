@@ -81,7 +81,6 @@ class CookieJar {
 const PASSPORT_USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
-/** One Passport call; the body is read inside the same deadline (and latency metric) as the request. */
 /** Parses a Passport body; a non-JSON body becomes a short sanitized error, never a fragment of the raw text. */
 function parsePassportJson(text: string, what: string): any {
   try {
@@ -91,6 +90,7 @@ function parsePassportJson(text: string, what: string): any {
   }
 }
 
+/** One Passport call; the body is read inside the same deadline (and latency metric) as the request. */
 const passportFetch = (url: string, init: RequestInit, timeoutMs?: number) =>
   upstreamFetch(url, init, { upstream: "Yandex Passport", timeoutMs }, async (res) => ({ res, text: await res.text() }));
 

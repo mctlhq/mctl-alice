@@ -166,6 +166,20 @@ describe("rate limits over HTTP", () => {
     expect(getUser).toHaveBeenCalledTimes(1);
   });
 
+  it("answers not ready when a /readyz storage check never settles, then starts a fresh one", async () => {
+    const base = await start({ readinessTimeoutMs: 200 });
+    const storage = servers[servers.length - 1].storage;
+    const getUser = vi.spyOn(storage, "getUser").mockImplementationOnce(() => new Promise(() => {}));
+    const started = Date.now();
+    const answer = await Promise.race([fetch(`${base}/readyz`), new Promise<"pending">((r) => setTimeout(() => r("pending"), 1500))]);
+    expect(answer === "pending" ? answer : answer.status).toBe(503);
+    expect(Date.now() - started).toBeLessThan(1000);
+    // The not-ready answer is reused for the window that starts when it settled; after that a new check runs and passes.
+    await new Promise((r) => setTimeout(r, 1050));
+    expect((await fetch(`${base}/readyz`)).status).toBe(200);
+    expect(getUser).toHaveBeenCalledTimes(2);
+  });
+
   it("cannot be bypassed by rotating bearer tokens", async () => {
     const base = await start({ rateLimits: { mcp: 2 } });
     const call = (token: string) => fetch(`${base}/mcp`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: "{}" });

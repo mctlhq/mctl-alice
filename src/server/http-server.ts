@@ -571,9 +571,12 @@ export interface HttpServerOptions {
   clientIpHeader?: string;
   /** Overall deadline for Quasar scenario cleanup on account deletion/disconnect (default 20 s). */
   cleanupDeadlineMs?: number;
+  /** Deadline for one /readyz storage check; past it the probe answers not ready (default 3 s). */
+  readinessTimeoutMs?: number;
 }
 
 const CLEANUP_DEADLINE_MS = 20_000;
+const READINESS_TIMEOUT_MS = 3_000;
 
 /** /oauth/token error codes as auth-failure reasons; an unlisted code counts as token_other. */
 const TOKEN_ERROR_REASONS: Record<string, string> = {
@@ -679,21 +682,31 @@ export function createHttpServer(
   // /readyz is never rate limited (probes), so concurrent and back-to-back
   // probes share one storage round-trip: at most one in flight, and a settled
   // answer is reused for a second. `at` is stamped when the check settles, so
-  // slow storage cannot make probes pile up behind it.
+  // slow storage cannot make probes pile up behind it, and the check has its
+  // own deadline, so a storage call that never returns cannot pin every later
+  // probe to it: past the deadline it answers not ready and the next probe
+  // starts a fresh check.
+  const readinessTimeoutMs = options.readinessTimeoutMs ?? READINESS_TIMEOUT_MS;
   let readiness: { at: number; ok: Promise<boolean> } | undefined;
   const storageReady = (): Promise<boolean> => {
     if (!readiness || Date.now() - readiness.at >= 1000) {
+      let timer: NodeJS.Timeout | undefined;
+      const deadline = new Promise<boolean>((resolve) => {
+        timer = setTimeout(() => resolve(false), readinessTimeoutMs);
+        timer.unref();
+      });
+      const probe = (async () => {
+        try {
+          await oauthStorage.getUser("__readiness_probe__");
+          await telemetryStorage.getStats();
+          return true;
+        } catch {
+          return false;
+        }
+      })();
       const check = {
         at: Number.POSITIVE_INFINITY,
-        ok: (async () => {
-          try {
-            await oauthStorage.getUser("__readiness_probe__");
-            await telemetryStorage.getStats();
-            return true;
-          } catch {
-            return false;
-          }
-        })(),
+        ok: Promise.race([probe, deadline]).finally(() => clearTimeout(timer)),
       };
       void check.ok.then(() => { check.at = Date.now(); });
       readiness = check;

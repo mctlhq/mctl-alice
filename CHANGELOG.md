@@ -3,6 +3,13 @@
 Versions follow semantic versioning; tags carry no `v` prefix. Full notes for
 every version are on the [Releases page](https://github.com/mctlhq/mctl-alice/releases).
 
+## 2.2.13 (2026-10-25)
+
+- Quasar reads its CSRF token from `yandex.ru/iot/`: since 2026-10-23
+  `yandex.ru/quasar` resets every connection, which broke speech, text
+  commands and scenarios through the web session. The cookie setup guide
+  links the working page (#111).
+
 ## 2.2.12 (2026-10-23)
 
 - Runs on Node 24 LTS (base image, CI and `@types/node`) (#107).

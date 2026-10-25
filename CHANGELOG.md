@@ -3,6 +3,13 @@
 Versions follow semantic versioning; tags carry no `v` prefix. Full notes for
 every version are on the [Releases page](https://github.com/mctlhq/mctl-alice/releases).
 
+## 2.2.14 (2026-10-25)
+
+- An owner's Quasar proxy scenario keeps its own voice trigger on every
+  update, so speech and text commands no longer fail with "the activation
+  phrase is already in use" next to a proxy created before ownership was
+  recorded (#115).
+
 ## 2.2.13 (2026-10-25)
 
 - Quasar reads its CSRF token from `yandex.ru/iot/`: since 2026-10-23

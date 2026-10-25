@@ -1,4 +1,5 @@
 import { saveEnvVariable, saveTokenToKeychain, getTokenFromKeychain } from "../auth/token-storage.js";
+import { createHash } from "node:crypto";
 import { IStorage } from "../storage/storage-interface.js";
 import { readTextPrefix, sanitizeUpstreamMessage, upstreamError, upstreamFetch } from "./upstream.js";
 
@@ -386,12 +387,23 @@ export class QuasarClient {
     return this.userId ? `mctl-${this.userId.slice(0, 8)}-${deviceId}` : `mctl-${deviceId}`;
   }
 
+  /**
+   * The voice trigger of this owner's proxy, the same on create and on every update.
+   * Yandex refuses a phrase another scenario in the account already holds, and a proxy
+   * from before ownership was recorded (`mctl-<device>`) keeps the bare device phrase,
+   * so an owner's proxy carries an owner suffix instead.
+   */
+  private proxyTrigger(deviceId: string): string {
+    const trigger = encodeDeviceId(deviceId);
+    if (!this.userId) return trigger;
+    return trigger + encodeDeviceId(createHash("sha256").update(this.userId).digest("hex").slice(0, 4));
+  }
+
   async getOrCreateSpeakerScenario(deviceId: string): Promise<string> {
     if (this.scenarioCache.has(deviceId)) {
       return this.scenarioCache.get(deviceId)!;
     }
 
-    const trigger = encodeDeviceId(deviceId);
     const name = this.proxyScenarioName(deviceId);
     const scenarios = await this.getScenarios();
 
@@ -406,8 +418,7 @@ export class QuasarClient {
     }
 
     // Create a new proxy scenario on /m/user/scenarios (not /v4/)
-    const uniqueTrigger = `${trigger}${Date.now().toString().slice(-4)}`;
-    const payload = buildTtsScenarioPayload(name, uniqueTrigger, deviceId, "готов");
+    const payload = buildTtsScenarioPayload(name, this.proxyTrigger(deviceId), deviceId, "готов");
     const res = await this.request("https://iot.quasar.yandex.ru/m/user/scenarios", {
       method: "POST",
       body: JSON.stringify(payload),
@@ -433,7 +444,7 @@ export class QuasarClient {
   ): Promise<any> {
     return this.runWithLock(deviceId, async () => {
       const scenarioId = await this.getOrCreateSpeakerScenario(deviceId);
-      const trigger = encodeDeviceId(deviceId);
+      const trigger = this.proxyTrigger(deviceId);
       const name = this.proxyScenarioName(deviceId);
 
       const payload = buildTtsScenarioPayload(name, trigger, deviceId, text);
@@ -468,7 +479,7 @@ export class QuasarClient {
   ): Promise<any> {
     return this.runWithLock(deviceId, async () => {
       const scenarioId = await this.getOrCreateSpeakerScenario(deviceId);
-      const trigger = encodeDeviceId(deviceId);
+      const trigger = this.proxyTrigger(deviceId);
       const name = this.proxyScenarioName(deviceId);
 
       const payload = buildCommandScenarioPayload(name, trigger, deviceId, command);

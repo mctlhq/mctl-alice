@@ -97,7 +97,7 @@ describe("two users at once in hosted mode", () => {
           { id: "speaker", name: `Станция ${owner}`, type: "devices.types.smart_speaker.yandex.station", capabilities: [] },
         ] });
       }
-      if (url === "https://yandex.ru/quasar") return new Response('{"csrfToken2":"csrf"}');
+      if (url === "https://yandex.ru/iot/") return new Response('{"csrfToken2":"csrf"}');
       const owner = /(?:^|;\s*)Session_id=(alice|bob)(?:;|$)/.exec(headers.get("cookie") || "")?.[1];
       if (!owner) { violations.push(`Quasar call ${url} with cookie ${headers.get("cookie")}`); return new Response("{}", { status: 401 }); }
       const method = init?.method || "GET";

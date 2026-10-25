@@ -2123,7 +2123,7 @@ export function createHttpServer(
           <div class="s-4c0544">
             <h4 class="s-49f975" data-i18n="cookie_instructions_title">Инструкция по настройке:</h4>
             <ol class="steps s-05854e">
-              <li data-i18n-html="cookie_step1">Откройте <a href="https://yandex.ru/quasar" target="_blank" rel="noopener">yandex.ru/quasar</a> или <a href="https://yandex.ru" target="_blank" rel="noopener">yandex.ru</a> в браузере под вашим аккаунтом Яндекса.</li>
+              <li data-i18n-html="cookie_step1">Откройте <a href="https://yandex.ru/iot" target="_blank" rel="noopener">yandex.ru/iot</a> или <a href="https://yandex.ru" target="_blank" rel="noopener">yandex.ru</a> в браузере под вашим аккаунтом Яндекса.</li>
               <li data-i18n-html="cookie_step2">Откройте консоль разработчика DevTools (нажмите <code>F12</code> или <code>Cmd + Option + I</code> на Mac).</li>
               <li data-i18n-html="cookie_step3">Перейдите на вкладку <strong>Application</strong> (или <strong>Storage</strong>) → <strong>Cookies</strong> → <code>https://yandex.ru</code>.</li>
               <li data-i18n-html="cookie_step4">Найдите строку с куки <code>Session_id</code> и скопируйте её значение (или скопируйте всю строку заголовка Cookie).</li>

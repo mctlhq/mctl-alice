@@ -17,7 +17,7 @@ function stubYandex() {
     const url = String(input instanceof Request ? input.url : input);
     const cookie = String(new Headers(init?.headers).get("cookie"));
     if (url === "https://yandex.ru/iot?storage=1") return Response.json({ storage: { user: { uid: cookieUids[cookie] ?? null } } });
-    if (url === "https://yandex.ru/quasar") return new Response('{"csrfToken2":"csrf"}');
+    if (url === "https://yandex.ru/iot/") return new Response('{"csrfToken2":"csrf"}');
     if (url.startsWith("https://")) throw new Error(`unexpected upstream call ${url}`);
     return realFetch(input, init);
   });

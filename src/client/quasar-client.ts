@@ -126,6 +126,9 @@ export interface QuasarClientOptions {
 // must outlive the instance. Keyed by owner and device; single process only.
 const sharedLocks = new Map<string, { chain: Promise<void> }>();
 
+/** The page whose HTML carries csrfToken2; the trailing slash skips a 302 that would drop its Set-Cookie. */
+export const CSRF_PAGE_URL = "https://yandex.ru/iot/";
+
 export class QuasarClient {
   private onCookieRefresh?: QuasarClientOptions["onCookieRefresh"];
   private cookie: string | null = null;
@@ -270,7 +273,9 @@ export class QuasarClient {
       throw new Error("Yandex cookie not configured. Set YANDEX_COOKIE in .env or via /auth/cookie.");
     }
 
-    const { res, text: html } = await this.fetchQuasar("https://yandex.ru/quasar", {
+    // yandex.ru/quasar used to carry the token, but since 2026-10-23 Yandex resets
+    // the stream there; the Smart Home page carries the same csrfToken2.
+    const { res, text: html } = await this.fetchQuasar(CSRF_PAGE_URL, {
       headers: {
         Cookie: this.cookie,
         "User-Agent": USER_AGENT,
@@ -309,7 +314,7 @@ export class QuasarClient {
       Cookie: this.cookie || "",
       "User-Agent": USER_AGENT,
       "Origin": "https://yandex.ru",
-      "Referer": "https://yandex.ru/quasar",
+      "Referer": CSRF_PAGE_URL,
       "Accept": "application/json",
       "x-csrf-token": csrf,
       "Content-Type": "application/json",

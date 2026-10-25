@@ -21,7 +21,7 @@ function stubQuasar(scenarios: Array<{ id: string; name: string }>): string[] {
   const deleted: string[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input instanceof Request ? input.url : input);
-    if (url === "https://yandex.ru/quasar") return new Response('{"csrfToken2":"csrf"}');
+    if (url === "https://yandex.ru/iot/") return new Response('{"csrfToken2":"csrf"}');
     if (url === "https://iot.quasar.yandex.ru/m/user/scenarios") return Response.json({ status: "ok", scenarios });
     const del = url.match(/^https:\/\/iot\.quasar\.yandex\.ru\/m\/v4\/user\/scenarios\/([^/]+)$/);
     if (del && init?.method === "DELETE") { deleted.push(decodeURIComponent(del[1])); return Response.json({ status: "ok" }); }
@@ -346,7 +346,7 @@ describe("hosted access boundary", () => {
       const calls: Array<{ url: string; headers: Headers }> = [];
       vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
         const url = String(input); calls.push({ url, headers: new Headers(init?.headers) });
-        if (url === "https://yandex.ru/quasar") return new Response('{"csrfToken2":"test-csrf"}');
+        if (url === "https://yandex.ru/iot/") return new Response('{"csrfToken2":"test-csrf"}');
         if (url.includes("/user/info")) return new Response(JSON.stringify({ status: "ok", rooms: [], scenarios: [], devices: [
           { id: "lamp", name: "Lamp", type: "devices.types.light", capabilities: [{ type: "devices.capabilities.on_off", retrievable: true, state: { instance: "on", value: false } }] },
           { id: "speaker", name: "Speaker", type: "devices.types.smart_speaker", capabilities: [] },

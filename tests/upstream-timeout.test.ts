@@ -78,7 +78,7 @@ describe("upstream deadlines", () => {
 
   it("bounds a Quasar error body read by the deadline and reports it as a timeout", async () => {
     vi.stubGlobal("fetch", (input: any, init?: RequestInit) =>
-      String(input) === "https://yandex.ru/quasar"
+      String(input) === "https://yandex.ru/iot/"
         ? Promise.resolve(new Response('"csrfToken2":"abc"', { status: 200 }))
         : hangingBodyFetch(500)(input, init));
     const err = await new QuasarClient({ cookie: "Session_id=x", useKeychain: false, persistEnv: false, timeoutMs: 50 }).getScenarios().catch((e) => e);
@@ -89,7 +89,7 @@ describe("upstream deadlines", () => {
   it("reads only a bounded prefix of a Quasar error body, then stops pulling it", async () => {
     let pulled = 0;
     vi.stubGlobal("fetch", (input: any, init?: RequestInit) => {
-      if (String(input) === "https://yandex.ru/quasar") return Promise.resolve(new Response('"csrfToken2":"abc"', { status: 200 }));
+      if (String(input) === "https://yandex.ru/iot/") return Promise.resolve(new Response('"csrfToken2":"abc"', { status: 200 }));
       const signal = init?.signal;
       // A large error body that is never finished: buffering it whole can only end at the deadline.
       const body = new ReadableStream<Uint8Array>({
@@ -129,7 +129,7 @@ describe("upstream deadlines", () => {
 describe("upstream error sanitization", () => {
   const quasarFetch = (status: number, body: string) => (input: any) =>
     Promise.resolve(
-      String(input) === "https://yandex.ru/quasar"
+      String(input) === "https://yandex.ru/iot/"
         ? new Response('<html>"csrfToken2":"abc"</html>', { status: 200 })
         : new Response(body, { status }),
     );
@@ -159,7 +159,7 @@ describe("upstream error sanitization", () => {
     const big = { status: "error", message: "nope", debug: "D".repeat(3000) };
     vi.stubGlobal("fetch", (input: any, init?: RequestInit) => {
       const url = String(input);
-      if (url === "https://yandex.ru/quasar") return Promise.resolve(new Response('"csrfToken2":"abc"', { status: 200 }));
+      if (url === "https://yandex.ru/iot/") return Promise.resolve(new Response('"csrfToken2":"abc"', { status: 200 }));
       if (init?.method === "POST") return Promise.resolve(new Response(JSON.stringify(big), { status: 200 }));
       return Promise.resolve(new Response(JSON.stringify({ status: "ok", scenarios: [] }), { status: 200 }));
     });

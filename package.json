@@ -28,7 +28,7 @@
   "author": "mctlhq",
   "license": "Apache-2.0",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.32.1",
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "dotenv": "^18.0.9",
     "pg": "^8.23.1",
     "qrcode": "^1.5.4",

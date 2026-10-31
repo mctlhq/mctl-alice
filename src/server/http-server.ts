@@ -180,6 +180,34 @@ function renderAuthPage({
   indexable?: boolean;
 }): string {
   const canonicalUrl = canonical ? canonical.siteUrl + canonical.path : "";
+  const breadcrumbs = canonical && canonical.path && canonical.path !== "/"
+    ? `<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  "itemListElement": [
+    {
+      "@type": "ListItem",
+      "position": 1,
+      "name": "MCTL",
+      "item": "https://mctl.ai"
+    },
+    {
+      "@type": "ListItem",
+      "position": 2,
+      "name": "Alice MCP",
+      "item": "https://alice.mctl.ai"
+    },
+    {
+      "@type": "ListItem",
+      "position": 3,
+      "name": "${escapeHtml(title.replace(/^mctl-alice — /, ""))}",
+      "item": "${escapeHtml(canonicalUrl)}"
+    }
+  ]
+}
+</script>`
+    : "";
   const indexing = canonical
     ? `<link rel="canonical" href="${escapeHtml(canonicalUrl)}">
 <meta property="og:type" content="website">
@@ -216,6 +244,7 @@ ${indexing}
   }
 }
 </script>
+${breadcrumbs}
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link rel="stylesheet" href="/assets/fonts.css?v=${VERSION}">
 <link rel="stylesheet" href="/assets/tokens.css?v=${VERSION}">

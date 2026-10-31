@@ -81,7 +81,7 @@ describe("CSP, CORS and HTML hardening", () => {
 
   it("serves HTML without inline scripts, event handlers or style attributes", () => {
     for (const [page, { body }] of htmlPages) {
-      expect(body.match(/<script(?![^>]*\ssrc=)[^>]*>/gi), page).toBeNull();
+      expect(body.match(/<script(?![^>]*(?:\ssrc=|\stype=["']application\/ld\+json["']))[^>]*>/gi), page).toBeNull();
       expect(body.match(/<[^>]+\son[a-z]+\s*=/gi), page).toBeNull();
       expect(body.match(/<[^>]+\sstyle\s*=/gi), page).toBeNull();
     }

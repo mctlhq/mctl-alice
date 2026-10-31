@@ -199,6 +199,23 @@ function renderAuthPage({
 <script src="/assets/theme-init.js?v=${VERSION}"></script>
 <title>${escapeHtml(title)}</title>
 ${indexing}
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "mctl-alice",
+  "applicationCategory": "DeveloperApplication",
+  "operatingSystem": "Cloud",
+  "url": "https://alice.mctl.ai",
+  "description": "Model Context Protocol (MCP) сервер для Яндекс Станций и умного дома",
+  "provider": {
+    "@type": "Organization",
+    "@id": "https://mctl.ai/#organization",
+    "name": "MCTL",
+    "url": "https://mctl.ai"
+  }
+}
+</script>
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link rel="stylesheet" href="/assets/fonts.css?v=${VERSION}">
 <link rel="stylesheet" href="/assets/tokens.css?v=${VERSION}">
@@ -222,6 +239,7 @@ ${indexing}
     <a href="/account" data-i18n="nav_account">Аккаунт</a>
     <a href="/auth/login" data-i18n="nav_login">Вход (OAuth)</a>
     <a href="/auth/cookie" data-i18n="nav_cookie">Quasar Cookie</a>
+    <a href="https://mctl.ai" target="_blank" rel="noopener">MCTL</a>
     <a href="https://github.com/mctlhq/mctl-alice" target="_blank" rel="noopener" data-i18n="nav_github">GitHub</a>
     <div class="lang-switcher" id="lang-switcher" role="group" aria-label="Выбор языка / Language selection">
       <button class="lang-btn is-active" id="lang-btn-ru" type="button" data-lang="ru" lang="ru" aria-label="Русский" aria-pressed="true">RU</button>
@@ -247,6 +265,9 @@ ${indexing}
   <div class="footer-row">
     <span data-i18n-html="footer_part">mctl-alice — часть платформы <a href="https://mctl.ai" target="_blank" rel="noopener">mctl</a>. Независимый проект, не связан с ООО «Яндекс» и не одобрен им; «Яндекс», «Алиса» и «Яндекс Станция» — товарные знаки их владельцев.</span>
     <span>
+      <a href="https://mctl.ai" target="_blank" rel="noopener">MCTL</a> ·
+      <a href="https://tg.mctl.ai" target="_blank" rel="noopener">Telegram MCP</a> ·
+      <a href="https://docs.mctl.ai" target="_blank" rel="noopener">Docs</a> ·
       <a href="/" data-i18n="nav_home">Главная</a> ·
       <a href="/setup" data-i18n="footer_setup">Подключение</a> ·
       <a href="/account" data-i18n="footer_account">Личный кабинет</a> ·

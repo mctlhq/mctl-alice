@@ -14,7 +14,9 @@
     "start": "node dist/index.js",
     "restore-check": "node dist/restore-check.js",
     "start:http": "PORT=8080 node dist/index.js",
-    "test": "vitest run"
+    "test": "vitest run",
+    "sync:tokens": "node scripts/sync-tokens.mjs",
+    "check:tokens": "node scripts/sync-tokens.mjs --check"
   },
   "keywords": [
     "mcp",

@@ -4,12 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <script src="/assets/theme-init.js?v=__VERSION__"></script>
-<title>mctl-alice — Управление Яндекс Станцией и умным домом через AI (MCP)</title>
-<meta name="description" content="Model Context Protocol (MCP) сервер для Яндекс Станций и умного дома. Управляйте колонками Алиса, отправляйте голосовые команды, воспроизводите произвольный текст TTS через Claude, ChatGPT и другие MCP-клиенты.">
+<title>mctl-alice — Алиса MCP: Управление Яндекс Станцией и умным домом через AI</title>
+<meta name="description" content="Алиса MCP: Model Context Protocol сервер для колонок Яндекс Станция и умного дома. Голосовые команды, сценарии, громкость и произвольный текст TTS через Claude, ChatGPT и MCP-клиенты.">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="mctl-alice">
-<meta property="og:title" content="mctl-alice — Голосовое управление Яндекс Станцией через AI">
+<meta property="og:title" content="mctl-alice — Алиса MCP: Голосовое управление Яндекс Станцией через AI">
 <meta property="og:description" content="Подключите Claude, ChatGPT или другой MCP-клиент к вашим колонкам Алиса и Умному дому Яндекса: устройства, сценарии, громкость, синтез речи.">
 <meta property="og:url" content="__BASE_URL__/">
 <meta property="og:image" content="__BASE_URL__/og-image.png">
@@ -22,18 +22,59 @@
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
-  "@type": "SoftwareApplication",
-  "name": "mctl-alice",
-  "applicationCategory": "DeveloperApplication",
-  "operatingSystem": "Cloud",
-  "url": "https://alice.mctl.ai",
-  "description": "Model Context Protocol (MCP) сервер для Яндекс Станций и умного дома",
-  "provider": {
-    "@type": "Organization",
-    "@id": "https://mctl.ai/#organization",
-    "name": "MCTL",
-    "url": "https://mctl.ai"
-  }
+  "@graph": [
+    {
+      "@type": "SoftwareApplication",
+      "name": "mctl-alice",
+      "applicationCategory": "DeveloperApplication",
+      "operatingSystem": "Cloud",
+      "url": "https://alice.mctl.ai",
+      "description": "Алиса MCP: Model Context Protocol сервер для колонок Яндекс Станция и умного дома",
+      "provider": {
+        "@type": "Organization",
+        "@id": "https://mctl.ai/#organization",
+        "name": "MCTL",
+        "url": "https://mctl.ai"
+      }
+    },
+    {
+      "@type": "FAQPage",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Безопасно ли подключать умный дом через mctl-alice?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Вход идёт через OAuth 2.1 с PKCE. Токены Яндекса хранятся зашифрованными (AES-256-GCM), а токены ИИ-клиентов — только в виде хешей. Устройствами умного дома сервис управляет через официальный API Умного дома Яндекса."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Какие модели колонок Яндекс Станция поддерживаются?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Поддерживаются все актуальные модели: Яндекс Станция Макс, Станция Миди, Станция 2, Станция Лайт, Станция Мини, Станция Дуо Макс, а также сторонние устройства с поддержкой голосового помощника Алиса."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "В чем разница между IoT API и Quasar API?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "API Умного дома Яндекса — официальный и документированный: он показывает устройства, их состояние и сценарии и управляет ими. Quasar — неофициальный внутренний API, которым пользуется веб-интерфейс Яндекса для синтеза речи (TTS) и текстовых команд."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Можно ли управлять устройствами умного дома других брендов?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Да! Любое устройство (лампочки, розетки, реле, роботы-пылесосы, кондиционеры), привязанное к вашему умному дому в приложении «Дом с Алисой», доступно для симуляции команд и запуска через сценарии."
+          }
+        }
+      ]
+    }
+  ]
 }
 </script>
 

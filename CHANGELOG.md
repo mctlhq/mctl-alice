@@ -3,6 +3,16 @@
 Versions follow semantic versioning; tags carry no `v` prefix. Full notes for
 every version are on the [Releases page](https://github.com/mctlhq/mctl-alice/releases).
 
+## 2.2.15 (2026-10-31)
+
+- The landing and account pages take their design tokens from
+  `@mctlhq/css` 0.19.0 (was 0.5.0); `scripts/sync-tokens.mjs` now lives in
+  this repository (`npm run sync:tokens` / `check:tokens`). No visual change
+  (#122).
+- Dependency updates: `@hono/node-server` 2.1.5, `@modelcontextprotocol/sdk`
+  1.32.2, `dotenv` 18.0.9, `body-parser` 2.4.0, `fast-uri` 3.1.9
+  (#113, #114, #118, #119, #121).
+
 ## 2.2.14 (2026-10-25)
 
 - An owner's Quasar proxy scenario keeps its own voice trigger on every

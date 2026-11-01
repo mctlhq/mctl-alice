@@ -161,11 +161,23 @@ export function recordUpstream(upstream: string, outcome: UpstreamOutcome, secon
   upstreamDuration.observe({ upstream: name }, seconds);
 }
 
+let sseStreams: () => number = () => 0;
+/**
+ * Reads the open SSE stream count at scrape time instead of counting opens and closes, so a
+ * missed close cannot make the gauge drift. Each stream holds a socket and about 0.15 MiB.
+ */
+export function setSseStreamsSource(count: () => number): void {
+  sseStreams = count;
+}
+
 export function renderMetrics(): string {
   return [
     "# HELP mctl_alice_build_info The running version; always 1.",
     "# TYPE mctl_alice_build_info gauge",
     `mctl_alice_build_info${formatLabels({ version: VERSION })} 1`,
+    "# HELP mctl_alice_sse_streams_open Open long-lived SSE streams (GET /mcp, /sse) held by this process.",
+    "# TYPE mctl_alice_sse_streams_open gauge",
+    `mctl_alice_sse_streams_open ${sseStreams()}`,
     httpRequests.render(),
     authFailures.render(),
     rateLimited.render(),

@@ -3,6 +3,19 @@
 Versions follow semantic versioning; tags carry no `v` prefix. Full notes for
 every version are on the [Releases page](https://github.com/mctlhq/mctl-alice/releases).
 
+## 2.4.0 (2026-11-01)
+
+- New gauge `mctl_alice_sse_streams_open` (legacy SSE streams currently open),
+  read at scrape time so a missed close cannot make it drift (#129).
+- Calls answered 429, or redirected to a captcha page, now count under a new
+  `blocked` upstream outcome, so Yandex throttling an egress IP can be told
+  apart from Yandex being down (#134).
+- `getUserInfo` shares one 15 s budget between the Yandex IoT call and the
+  Quasar fallback; a hung IoT call no longer adds a further 10 s (#135).
+- `/readyz` checks storage with `SELECT 1` instead of a statistics scan
+  (#128), and a tool call re-checks the user's credentials at most once per
+  second instead of twice, cutting database reads from 6 to 3 (#130).
+
 ## 2.3.0 (2026-11-01)
 
 - A failed or timed-out call to Yandex now writes one `[upstream-failure]`

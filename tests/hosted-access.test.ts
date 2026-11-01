@@ -333,6 +333,23 @@ describe("hosted access boundary", () => {
     expect((await realFetch(base + "/readyz")).status).toBe(503);
   });
 
+  it("readiness pings telemetry storage and never counts its rows", async () => {
+    // getStats() is a sequential scan of the whole samples table; on 1.3M rows a probe cost ~2.5 s of disk reads.
+    await start();
+    const ping = vi.spyOn(telemetry, "ping");
+    const getStats = vi.spyOn(telemetry, "getStats");
+    expect((await realFetch(base + "/readyz")).status).toBe(200);
+    expect(ping).toHaveBeenCalledTimes(1);
+    expect(getStats).not.toHaveBeenCalled();
+  });
+  it("readiness fails when telemetry storage cannot answer", async () => {
+    await start(); expect((await realFetch(base + "/readyz")).status).toBe(200);
+    vi.spyOn(telemetry, "ping").mockImplementation(() => { throw new Error("offline"); });
+    const now = Date.now();
+    vi.spyOn(Date, "now").mockReturnValue(now + 1500);
+    expect((await realFetch(base + "/readyz")).status).toBe(503);
+  });
+
   it("preserves local OAuth grants without accepting them in hosted mode", async () => {
     const record = db.getToken("mcp-alice")!; db.saveToken({ ...record, userId: "legacy_user" });
     const local = new StationService();

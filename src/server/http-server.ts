@@ -748,7 +748,7 @@ export function createHttpServer(
       const probe = (async () => {
         try {
           await oauthStorage.getUser("__readiness_probe__");
-          await telemetryStorage.getStats();
+          await telemetryStorage.ping();
           return true;
         } catch {
           return false;

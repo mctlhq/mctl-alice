@@ -65,6 +65,11 @@ export interface ITelemetryStorage {
   /** Deletes every sample of the owner this view is bound to (see forUser). */
   deleteOwnerSamples(): Promise<number> | number;
   getStats(): Promise<{ totalSamples: number; oldestTimestamp: number | null; newestTimestamp: number | null }> | { totalSamples: number; oldestTimestamp: number | null; newestTimestamp: number | null };
+  /**
+   * A constant-cost round-trip that proves the store answers. Readiness probes use it:
+   * getStats() counts rows, which is a sequential scan of the whole samples table.
+   */
+  ping(): Promise<void> | void;
   close(): Promise<void> | void;
 }
 
@@ -342,6 +347,10 @@ export class TelemetryStorage implements ITelemetryStorage {
     if (!this.userId) throw new Error("deleteOwnerSamples requires an owner-bound view");
     const info = this.db.prepare("DELETE FROM telemetry_samples WHERE user_id = ?").run(this.userId);
     return Number(info.changes);
+  }
+
+  ping(): void {
+    this.db.prepare("SELECT 1").get();
   }
 
   getStats(): { totalSamples: number; oldestTimestamp: number | null; newestTimestamp: number | null } {

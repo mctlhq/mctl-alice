@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, afterEach, beforeAll, afterAll, vi } from "vitest";
 import http from "node:http";
 import { OAuthStorage } from "../src/storage/oauth-storage.js";
 import { PublicStatsCache } from "../src/server/public-stats.js";
@@ -81,5 +81,43 @@ describe("GET /api/stats", () => {
     }
     expect(status).toBe(200);
     expect(Object.keys(body).sort()).toEqual(["activeUsers30d", "connectedAccounts", "sampledAt", "sessionsOnline", "toolCalls"]);
+  });
+});
+
+describe("recording a hosted tool call", () => {
+  let storage: OAuthStorage; let server: http.Server; let port = 0;
+  const rpc = (name: string) => JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: {} } });
+  const post = async (body: string) => {
+    const res = await fetch(`http://127.0.0.1:${port}/mcp`, { method: "POST", body, headers: { "content-type": "application/json", accept: "application/json, text/event-stream", authorization: "Bearer tok_a" } });
+    return res.text();
+  };
+
+  beforeAll(async () => {
+    storage = newStorage(); addUser(storage, "usr_a");
+    storage.saveToken({ accessToken: "tok_a", refreshToken: "rt_a", clientId: "c", userId: "usr_a", yandexAccessToken: "y_a",
+      scope: "iot:view iot:control", createdAt: Date.now(), expiresAt: Date.now() + 3_600_000 });
+    server = createHttpServer(0, { publicBaseUrl: "http://localhost", authRequired: true, oauthStorage: storage, enableSampler: false });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    port = (server.address() as import("node:net").AddressInfo).port;
+  });
+  afterAll(async () => { server.closeAllConnections(); await new Promise<void>((r) => server.close(() => r())); });
+
+  it("counts a successful call and ignores a failed one", async () => {
+    const realFetch = globalThis.fetch;
+    const yandex = (ok: boolean) => vi.spyOn(globalThis, "fetch").mockImplementation(async (input: any, init?: any) => {
+      const url = String(input?.url ?? input);
+      if (url.startsWith("http://127.0.0.1")) return realFetch(input, init);
+      return ok ? new Response(JSON.stringify({ status: "ok", rooms: [], devices: [], scenarios: [] })) : new Response("{}", { status: 500 });
+    });
+
+    yandex(true);
+    expect(await post(rpc("alice_list_devices"))).toContain('"result"');
+    await vi.waitFor(() => expect(storage.getUsageTotals().toolCalls).toBe(1));
+
+    vi.restoreAllMocks(); yandex(false);
+    await post(rpc("alice_list_devices"));
+    await new Promise((r) => setTimeout(r, 100));
+    expect(storage.getUsageTotals().toolCalls).toBe(1);
+    vi.restoreAllMocks();
   });
 });

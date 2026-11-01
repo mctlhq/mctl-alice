@@ -27,7 +27,7 @@ import { encryptToken, decryptToken, decryptStoredToken, secretDigest, secretLoo
 /** Tables created by PostgresStorage and PostgresTelemetryStorage. */
 export const POSTGRES_TABLES = [
   "browser_transactions", "users", "user_credentials", "web_sessions", "quasar_proxy_scenarios",
-  "oauth_clients", "oauth_pending", "oauth_codes", "oauth_tokens", "oauth_spent_secrets", "telemetry_samples",
+  "oauth_clients", "oauth_pending", "oauth_codes", "oauth_tokens", "oauth_spent_secrets", "tool_call_daily", "telemetry_samples",
 ] as const;
 
 /** Columns holding bearer secrets, stored as sha256: digests. */

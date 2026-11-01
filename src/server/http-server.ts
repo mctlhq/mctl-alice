@@ -6,7 +6,7 @@ import { isLocalOrigin } from "./origin.js";
 import { FORM_BODY_LIMIT, MCP_BODY_LIMIT, PayloadTooLargeError, parseRequestBody, readRequestBody, sendPayloadTooLarge } from "./request-body.js";
 import { RateLimiter, clientAddress, rateLimitBucket, resolveRateLimits, trustProxyHopsFromEnv, clientIpHeaderFromEnv, type RateLimitBucket } from "./rate-limit.js";
 import { UpstreamCancelledError, UpstreamError, UpstreamTimeoutError, userRef } from "../client/upstream.js";
-import { authFailures, rateLimited, recordHttpRequest } from "../metrics.js";
+import { authFailures, rateLimited, recordHttpRequest, setSseStreamsSource } from "../metrics.js";
 
 export { isLocalOrigin };
 import http from "node:http";
@@ -710,6 +710,7 @@ export function createHttpServer(
 
   // Keep track of active legacy SSE transports
   const sseTransports = new Map<string, SSEServerTransport>();
+  setSseStreamsSource(() => sseTransports.size);
 
   const browserTransactions = new BrowserTransactions<{ browser: string; expires: number }>(oauthStorage, "consent");
   const loginTransactions = new BrowserTransactions<{ browser: string; expires: number; returnTo: string }>(oauthStorage, "login");

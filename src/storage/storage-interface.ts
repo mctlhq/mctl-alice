@@ -205,7 +205,15 @@ export function guardedStorage(storage: IStorage): IStorage {
       if (typeof value !== "function") return value;
       return async (...args: unknown[]) => {
         try { return await value.apply(target, args); }
-        catch (error) { if (error instanceof CredentialDecryptionError) throw error; throw new StorageUnavailableError(); }
+        catch (error) {
+          if (error instanceof CredentialDecryptionError) throw error;
+          // Every storage failure becomes the same 503; without this line the cause of an outage
+          // (pool timeout, connection reset, bad row) is unrecoverable afterwards. Method, class
+          // and code only: a message can carry SQL text or identifiers.
+          const code = (error as { code?: unknown } | null)?.code;
+          console.error(`[storage-failure] op=${String(property)} error=${error instanceof Error ? error.name : typeof error}${typeof code === "string" && /^[A-Z0-9_]{2,40}$/.test(code) ? ` code=${code}` : ""}`);
+          throw new StorageUnavailableError();
+        }
       };
     },
   });

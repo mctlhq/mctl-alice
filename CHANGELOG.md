@@ -3,6 +3,17 @@
 Versions follow semantic versioning; tags carry no `v` prefix. Full notes for
 every version are on the [Releases page](https://github.com/mctlhq/mctl-alice/releases).
 
+## 2.3.0 (2026-11-01)
+
+- A failed or timed-out call to Yandex now writes one `[upstream-failure]`
+  log line with the upstream, outcome, elapsed time, error class, the network
+  cause code (for example `ECONNRESET`) and an 8-hex tag of the user, so
+  `MctlAliceUpstreamErrorRatioHigh` can be traced to a cause and to a user
+  count. Messages, URLs, headers and bodies are never logged (#126).
+- The landing page targets a quick-win search query and carries FAQ and
+  breadcrumb structured data (#125); ecosystem services are cross-linked and
+  the application schema is added (#124).
+
 ## 2.2.15 (2026-10-31)
 
 - The landing and account pages take their design tokens from

@@ -3,6 +3,20 @@
 Versions follow semantic versioning; tags carry no `v` prefix. Full notes for
 every version are on the [Releases page](https://github.com/mctlhq/mctl-alice/releases).
 
+## 2.5.0 (2026-11-01)
+
+- The home page shows live usage numbers (tool calls, connected accounts,
+  active in the last 30 days, sessions online), served from `GET /api/stats`
+  as aggregates only. A new table `tool_call_daily` is created on start; the
+  call counter begins at the release (#137).
+- A storage failure now logs the method, error class and code before it is
+  answered 503, so an outage such as the one on 2026-10-31 names its cause
+  (#138).
+- The ChatGPT setup steps describe the current flow (Plugins, add a custom MCP
+  server); the Developer mode path is gone (#139).
+- The open-streams gauge sums one source per server and drops a closed
+  server's share (#140).
+
 ## 2.4.0 (2026-11-01)
 
 - New gauge `mctl_alice_sse_streams_open` (legacy SSE streams currently open),

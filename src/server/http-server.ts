@@ -1544,8 +1544,6 @@ export function createHttpServer(
       }
       return auth.service;
     }
-    // Reject unauthorized requests before reading their body. Each operation
-    // revalidates after reading it, using this same hosted access policy.
     if (url.pathname === "/api/stats" && (req.method === "GET" || req.method === "HEAD")) {
       const snap = publicStats.snapshot();
       if (!snap) {
@@ -1559,6 +1557,8 @@ export function createHttpServer(
       return;
     }
 
+    // Reject unauthorized requests before reading their body. Each operation
+    // revalidates after reading it, using this same hosted access policy.
     if (url.pathname.startsWith("/api/") && url.pathname !== "/api/info") {
       try { await getRestService(); } catch (error) {
         const err = error as Error & { statusCode?: number };

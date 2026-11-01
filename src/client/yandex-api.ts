@@ -24,6 +24,8 @@ export interface YandexIoTClientOptions {
   autoRefresh?: boolean;
   persistEnv?: boolean;
   envFilePath?: string;
+  /** Opaque tag of the owning user (`userRef`), attached to upstream failure log lines. */
+  userRef?: string;
 }
 
 export class YandexApiError extends Error {
@@ -49,10 +51,12 @@ export class YandexIoTClient {
   private envFilePath?: string;
 
   private onRefresh?: YandexIoTClientOptions["onRefresh"];
+  private userRef?: string;
 
   constructor(token?: string, options: YandexIoTClientOptions = {}) {
     const hosted = options.credentialsMode === "hosted";
     this.onRefresh = options.onRefresh;
+    this.userRef = options.userRef;
     this.useKeychain = !hosted && (options.useKeychain ?? true);
     this.autoRefresh = options.autoRefresh ?? true;
     this.persistEnv = !hosted && (options.persistEnv ?? true);
@@ -110,7 +114,7 @@ export class YandexIoTClient {
           headers,
           body: options.body ? JSON.stringify(options.body) : undefined,
         },
-        { upstream: "Yandex IoT", timeoutMs: 15000 },
+        { upstream: "Yandex IoT", timeoutMs: 15000, userRef: this.userRef },
         async (r) => ({ response: r, responseText: await r.text() }),
       );
       let responseData: any;

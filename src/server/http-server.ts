@@ -5,7 +5,7 @@ import { VERSION } from "../version.js";
 import { isLocalOrigin } from "./origin.js";
 import { FORM_BODY_LIMIT, MCP_BODY_LIMIT, PayloadTooLargeError, parseRequestBody, readRequestBody, sendPayloadTooLarge } from "./request-body.js";
 import { RateLimiter, clientAddress, rateLimitBucket, resolveRateLimits, trustProxyHopsFromEnv, clientIpHeaderFromEnv, type RateLimitBucket } from "./rate-limit.js";
-import { UpstreamCancelledError, UpstreamError, UpstreamTimeoutError } from "../client/upstream.js";
+import { UpstreamCancelledError, UpstreamError, UpstreamTimeoutError, userRef } from "../client/upstream.js";
 import { authFailures, rateLimited, recordHttpRequest } from "../metrics.js";
 
 export { isLocalOrigin };
@@ -519,7 +519,7 @@ async function checkBearer(
       const creds = await oauthStorage!.getUserCredentials(userId);
       if (!creds || (!creds.yandexAccessToken && !creds.quasarCookie)) return fail("reconnect_required", "Reconnect your Yandex account");
       const client = creds.yandexAccessToken ? new YandexIoTClient(creds.yandexAccessToken, {
-        credentialsMode: "hosted", refreshToken: creds.yandexRefreshToken,
+        credentialsMode: "hosted", refreshToken: creds.yandexRefreshToken, userRef: userRef(userId),
         onRefresh: async (accessToken, refreshToken, expiresIn) => {
           if (!await oauthStorage!.getUser(userId)) throw new Error("Account deleted");
           const current = await oauthStorage!.getUserCredentials(userId);

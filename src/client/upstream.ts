@@ -1,4 +1,5 @@
 /** Bounded outbound calls to Yandex, and error text that never carries a raw upstream body. */
+import { createHash } from "node:crypto";
 import { outcomeForStatus, recordUpstream } from "../metrics.js";
 
 export const DEFAULT_UPSTREAM_TIMEOUT_MS = 10_000;
@@ -35,6 +36,29 @@ export interface UpstreamOptions {
   timeoutMs?: number;
   /** An additional caller deadline or cancellation, for example a cleanup deadline. */
   signal?: AbortSignal;
+  /** Opaque short reference to the calling user (see `userRef`), for the failure log line only. Never a metric label. */
+  userRef?: string;
+}
+
+/** Stable, non-reversible 8-hex tag of an internal user id: lets a log reader count distinct affected users without learning who they are. */
+export const userRef = (userId: string) => createHash("sha256").update(userId).digest("hex").slice(0, 8);
+
+/**
+ * One line per failed outbound call. Only fixed, non-secret fields: the error class and the
+ * network-level cause code (ECONNRESET, ENOTFOUND, ...), never the message, URL, headers or body.
+ */
+function logUpstreamFailure(upstream: string, outcome: "error" | "timeout", seconds: number, userRef: string | undefined, err?: unknown): void {
+  const cause = err instanceof Error ? (err as { cause?: unknown }).cause : undefined;
+  const code = (cause as { code?: unknown } | undefined)?.code ?? (err as { code?: unknown } | undefined)?.code;
+  const fields = [
+    `upstream=${JSON.stringify(upstream)}`,
+    `outcome=${outcome}`,
+    `elapsed_s=${seconds.toFixed(2)}`,
+    `user=${userRef ?? "-"}`,
+    ...(err instanceof Error ? [`error=${err.name}`] : []),
+    ...(typeof code === "string" && /^[A-Z0-9_]{2,40}$/.test(code) ? [`cause=${code}`] : []),
+  ];
+  console.error(`[upstream-failure] ${fields.join(" ")}`);
 }
 
 const isAbort = (err: unknown) => err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError");
@@ -43,7 +67,7 @@ const isAbort = (err: unknown) => err instanceof Error && (err.name === "Timeout
 export async function upstreamFetch<T = Response>(
   url: string,
   init: RequestInit,
-  { upstream, timeoutMs = DEFAULT_UPSTREAM_TIMEOUT_MS, signal }: UpstreamOptions,
+  { upstream, timeoutMs = DEFAULT_UPSTREAM_TIMEOUT_MS, signal, userRef }: UpstreamOptions,
   read?: (res: Response) => Promise<T>,
 ): Promise<T> {
   const deadline = AbortSignal.timeout(timeoutMs);
@@ -58,6 +82,7 @@ export async function upstreamFetch<T = Response>(
   } catch (err) {
     if (deadline.aborted && isAbort(err)) {
       recordUpstream(upstream, "timeout", elapsed());
+      logUpstreamFailure(upstream, "timeout", elapsed(), userRef);
       throw new UpstreamTimeoutError(upstream, timeoutMs);
     }
     if (!deadline.aborted && signal?.aborted && isAbort(err)) {
@@ -65,6 +90,7 @@ export async function upstreamFetch<T = Response>(
       throw new UpstreamCancelledError(upstream, signal.reason);
     }
     recordUpstream(upstream, "error", elapsed());
+    logUpstreamFailure(upstream, "error", elapsed(), userRef, err);
     throw err;
   }
 }

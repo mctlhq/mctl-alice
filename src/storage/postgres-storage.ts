@@ -1161,6 +1161,11 @@ export class PostgresTelemetryStorage implements ITelemetryStorage {
     return res.rowCount ?? 0;
   }
 
+  async ping(): Promise<void> {
+    await this.ready();
+    await this.pool.query("SELECT 1");
+  }
+
   async getStats(): Promise<{ totalSamples: number; oldestTimestamp: number | null; newestTimestamp: number | null }> {
     await this.ready();
     const res = await this.pool.query(`

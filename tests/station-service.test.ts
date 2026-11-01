@@ -531,6 +531,46 @@ describe("StationService", () => {
     expect(summary.batteries[0].name).toBe("Датчик двери");
     expect(summary.batteries[0].warning).toBe(true); // 15% < 20%
   });
+
+  describe("getUserInfo shared budget", () => {
+    const iotTimeout = (ms: number) =>
+      vi.fn().mockImplementation(() => new Promise((_, rej) => setTimeout(() => rej(new Error("iot timeout")), ms)));
+    const quasar = (impl: () => Promise<any>) =>
+      ({ hasCookie: () => true, getUserDevices: vi.fn(impl), getScenarios: vi.fn().mockResolvedValue([]) }) as any;
+
+    it("skips the Quasar fallback when the IoT call used the whole budget", async () => {
+      vi.useFakeTimers();
+      try {
+        const q = quasar(async () => ({ rooms: [], speakers: [], devices: [] }));
+        const svc = new StationService({ getUserInfo: iotTimeout(15000) } as any, q);
+        const p = svc.getUserInfo(true);
+        const settled = expect(p).rejects.toThrow("iot timeout");
+        await vi.advanceTimersByTimeAsync(15000);
+        await settled;
+        expect(q.getUserDevices).not.toHaveBeenCalled();
+      } finally { vi.useRealTimers(); }
+    });
+
+    it("gives a slow fallback only the remaining time", async () => {
+      vi.useFakeTimers();
+      try {
+        const q = quasar(() => new Promise(() => {})); // never answers
+        const svc = new StationService({ getUserInfo: iotTimeout(5000) } as any, q);
+        const p = svc.getUserInfo(true);
+        const settled = expect(p).rejects.toThrow("iot timeout");
+        await vi.advanceTimersByTimeAsync(5000 + 10000);
+        await settled; // 5 s IoT + 10 s remaining = 15 s total, not 25 s
+        expect(q.getUserDevices).toHaveBeenCalledTimes(1);
+      } finally { vi.useRealTimers(); }
+    });
+
+    it("still uses the fallback when IoT fails fast", async () => {
+      const q = quasar(async () => ({ rooms: [], speakers: [], devices: [] }));
+      const svc = new StationService({ getUserInfo: vi.fn().mockRejectedValue(new Error("403")) } as any, q);
+      await expect(svc.getUserInfo(true)).resolves.toBeDefined();
+      expect(q.getUserDevices).toHaveBeenCalledTimes(1);
+    });
+  });
 });
 
 

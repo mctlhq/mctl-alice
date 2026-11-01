@@ -3,6 +3,13 @@
 Versions follow semantic versioning; tags carry no `v` prefix. Full notes for
 every version are on the [Releases page](https://github.com/mctlhq/mctl-alice/releases).
 
+## 2.6.0 (2026-11-01)
+
+- The home-page strip counts only accounts that hold credentials and have
+  connected at least one MCP client, and shows how many connected through
+  ChatGPT, Claude or another client. The family comes from the client name
+  given at registration, so it is a self-reported label (#142).
+
 ## 2.5.0 (2026-11-01)
 
 - The home page shows live usage numbers (tool calls, connected accounts,

@@ -46,6 +46,7 @@ import { initQrAuth, checkQrAuthStatus } from "../auth/yandex-qr-auth.js";
 import { fetchYandexProfile } from "../auth/oauth-helper.js";
 import { renderAboutPage, renderPrivacyPage, renderTermsPage, renderSecurityPage, renderSetupPage, renderNotFoundPage, renderRobotsTxt, renderSitemapXml } from "./pages.js";
 import { renderAccountPage } from "./account-page.js";
+import { PublicStatsCache, publicStatsRefreshMs } from "./public-stats.js";
 import { UserRecord, guardedStorage, StorageUnavailableError } from "../storage/storage-interface.js";
 
 /** Maximum JSON-RPC batch length accepted per request. */
@@ -710,6 +711,10 @@ export function createHttpServer(
 
   // Keep track of active legacy SSE transports
   const sseTransports = new Map<string, SSEServerTransport>();
+
+  const publicStats = new PublicStatsCache(oauthStorage, () => sseTransports.size);
+  // A suite run samples only when a test sets PUBLIC_STATS_REFRESH_MS itself.
+  publicStats.start(publicStatsRefreshMs(underTest));
   setSseStreamsSource(() => sseTransports.size);
 
   const browserTransactions = new BrowserTransactions<{ browser: string; expires: number }>(oauthStorage, "consent");
@@ -875,6 +880,10 @@ export function createHttpServer(
         const activeSvc = fresh.service;
         scope = fresh.scope;
         const result = await handleToolCall(name, args, activeSvc, scope);
+        // Counted off the response path; a failed write must never fail the call.
+        if (fresh.mode === "hosted" && !(result as { isError?: boolean }).isError) {
+          Promise.resolve(oauthStorage.recordToolCall(fresh.userId)).catch(() => {});
+        }
         return {
           jsonrpc: "2.0",
           id,
@@ -1535,6 +1544,19 @@ export function createHttpServer(
       }
       return auth.service;
     }
+    if (url.pathname === "/api/stats" && (req.method === "GET" || req.method === "HEAD")) {
+      const snap = publicStats.snapshot();
+      if (!snap) {
+        // Never a zero-filled body before the first sample.
+        res.writeHead(503, { "Content-Type": "application/json; charset=utf-8", "Retry-After": "30", "Cache-Control": "no-store" });
+        res.end(JSON.stringify({ error: "stats_unavailable" }));
+        return;
+      }
+      res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "public, max-age=60" });
+      res.end(req.method === "HEAD" ? undefined : JSON.stringify(snap));
+      return;
+    }
+
     // Reject unauthorized requests before reading their body. Each operation
     // revalidates after reading it, using this same hosted access policy.
     if (url.pathname.startsWith("/api/") && url.pathname !== "/api/info") {
@@ -2407,6 +2429,7 @@ export function createHttpServer(
   server.on("close", () => {
     for (const transport of sseTransports.values()) void transport.close();
     if (sampler) sampler.stop();
+    publicStats.stop();
     retention?.stop();
     if (!options.storage) void telemetryStorage.close();
   });

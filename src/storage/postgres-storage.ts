@@ -11,6 +11,8 @@ import {
   UserGrant,
   SpentSecret,
   spentSecretFromRow,
+  UsageTotals,
+  utcDay,
 } from "./storage-interface.js";
 import {
   ITelemetryStorage,
@@ -25,7 +27,7 @@ import { encryptToken, decryptToken, decryptStoredToken, secretDigest, secretLoo
 /** Tables created by PostgresStorage and PostgresTelemetryStorage. */
 export const POSTGRES_TABLES = [
   "browser_transactions", "users", "user_credentials", "web_sessions", "quasar_proxy_scenarios",
-  "oauth_clients", "oauth_pending", "oauth_codes", "oauth_tokens", "oauth_spent_secrets", "telemetry_samples",
+  "oauth_clients", "oauth_pending", "oauth_codes", "oauth_tokens", "oauth_spent_secrets", "tool_call_daily", "telemetry_samples",
 ] as const;
 
 /** Columns holding bearer secrets, stored as sha256: digests. */
@@ -117,6 +119,14 @@ export class PostgresStorage implements IStorage {
           created_at BIGINT NOT NULL,
           updated_at BIGINT NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS tool_call_daily (
+          day INTEGER NOT NULL,
+          user_id VARCHAR(255) NOT NULL,
+          calls BIGINT NOT NULL,
+          PRIMARY KEY (day, user_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_tool_call_daily_user ON tool_call_daily(user_id);
 
         CREATE TABLE IF NOT EXISTS user_credentials (
           user_id VARCHAR(255) PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
@@ -404,6 +414,25 @@ export class PostgresStorage implements IStorage {
     await this.pool.query("DELETE FROM user_credentials WHERE user_id = $1", [userId]);
   }
 
+  async recordToolCall(userId: string, now = Date.now()): Promise<void> {
+    await this.ready();
+    await this.pool.query(
+      "INSERT INTO tool_call_daily (day, user_id, calls) VALUES ($1, $2, 1) ON CONFLICT (day, user_id) DO UPDATE SET calls = tool_call_daily.calls + 1",
+      [utcDay(now), userId],
+    );
+  }
+
+  async getUsageTotals(now = Date.now()): Promise<UsageTotals> {
+    await this.ready();
+    const since = utcDay(now) - 29;
+    const [calls, accounts, active] = await Promise.all([
+      this.pool.query("SELECT COALESCE(SUM(calls), 0)::text AS n FROM tool_call_daily"),
+      this.pool.query("SELECT COUNT(*)::text AS n FROM user_credentials"),
+      this.pool.query("SELECT COUNT(DISTINCT user_id)::text AS n FROM tool_call_daily WHERE day >= $1", [since]),
+    ]);
+    return { toolCalls: Number(calls.rows[0].n), connectedAccounts: Number(accounts.rows[0].n), activeUsers30d: Number(active.rows[0].n) };
+  }
+
   async deleteUser(userId: string): Promise<void> {
     await this.ready();
     const client = await this.pool.connect();
@@ -412,7 +441,7 @@ export class PostgresStorage implements IStorage {
       // Only user_credentials references users(id); every other owner-keyed
       // table must be cleared explicitly, otherwise tokens and sessions survive
       // and reattach when the same Yandex account (deterministic usr_<uid>) returns.
-      for (const table of ["user_credentials", "quasar_proxy_scenarios", "web_sessions", "oauth_tokens", "oauth_codes", "oauth_spent_secrets", "oauth_pending"]) {
+      for (const table of ["user_credentials", "tool_call_daily", "quasar_proxy_scenarios", "web_sessions", "oauth_tokens", "oauth_codes", "oauth_spent_secrets", "oauth_pending"]) {
         await client.query(`DELETE FROM ${table} WHERE user_id = $1`, [userId]);
       }
       await client.query("DELETE FROM users WHERE id = $1", [userId]);

@@ -72,6 +72,10 @@
       hero_copy_idle: "Скопировать MCP URL",
       hero_copy_done: "Скопировано!",
       hero_login_btn: "Войти через Яндекс",
+      stats_calls: "Вызовов инструментов",
+      stats_accounts: "Подключённых аккаунтов",
+      stats_active: "Активны за 30 дней",
+      stats_online: "Сессий онлайн сейчас",
       features_title: "Возможности",
       features_subtitle: "Все ключевые сценарии взаимодействия с голосовым помощником Алиса в виде стандартных инструментов MCP.",
       card_cmd_title: "Симуляция голосовых команд",
@@ -304,6 +308,10 @@
       hero_copy_idle: "Copy MCP URL",
       hero_copy_done: "Copied!",
       hero_login_btn: "Log in with Yandex",
+      stats_calls: "Tool calls",
+      stats_accounts: "Connected accounts",
+      stats_active: "Active last 30 days",
+      stats_online: "Sessions online now",
       features_title: "Capabilities",
       features_subtitle: "All key interaction scenarios with the Alice voice assistant available as standard MCP tools.",
       card_cmd_title: "Voice Command Simulation",
@@ -646,6 +654,36 @@
   }
 
   applyLanguage(initialLang);
+
+  // ── Live usage numbers (home page only) ─────────────────────────────────
+  // The strip stays hidden until the first successful answer, so a failed or
+  // not-yet-ready /api/stats never shows zeros.
+  var statsBox = document.getElementById("usage-stats");
+  if (statsBox) {
+    var fmt = function (n) {
+      try { return new Intl.NumberFormat(root.lang === "en" ? "en-US" : "ru-RU").format(n); } catch (e) { return String(n); }
+    };
+    var setStat = function (id, n) {
+      var el = document.getElementById(id);
+      if (el && typeof n === "number" && isFinite(n)) el.textContent = fmt(n);
+    };
+    var loadStats = function () {
+      if (document.hidden) return;
+      fetch("/api/stats", { headers: { Accept: "application/json" }, cache: "no-cache" })
+        .then(function (res) { return res.ok ? res.json() : null; })
+        .then(function (d) {
+          if (!d) return;
+          setStat("stat-calls", d.toolCalls);
+          setStat("stat-accounts", d.connectedAccounts);
+          setStat("stat-active", d.activeUsers30d);
+          setStat("stat-online", d.sessionsOnline);
+          statsBox.hidden = false;
+        })
+        .catch(function () {});
+    };
+    loadStats();
+    setInterval(loadStats, 60000);
+  }
 
   // ── Confirm before destructive forms ────────────────────────────────────
   // Forms carry data-confirm instead of inline onsubmit handlers, which the

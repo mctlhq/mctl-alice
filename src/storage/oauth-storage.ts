@@ -13,6 +13,8 @@ import {
   PendingAuth,
   AuthCode,
   OAuthTokenRecord,
+  UsageTotals,
+  utcDay,
 } from "./storage-interface.js";
 
 export {
@@ -129,6 +131,13 @@ export class OAuthStorage implements IStorage {
         display_name TEXT,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS tool_call_daily (
+        day INTEGER NOT NULL,
+        user_id TEXT NOT NULL,
+        calls INTEGER NOT NULL,
+        PRIMARY KEY (day, user_id)
       );
 
       CREATE TABLE IF NOT EXISTS user_credentials (
@@ -617,10 +626,27 @@ export class OAuthStorage implements IStorage {
     return Number(this.deleteUserClientTokensStmt.run(userId, clientId).changes) > 0;
   }
 
+  recordToolCall(userId: string, now = Date.now()): void {
+    this.db.prepare(
+      "INSERT INTO tool_call_daily (day, user_id, calls) VALUES (?, ?, 1) ON CONFLICT(day, user_id) DO UPDATE SET calls = calls + 1",
+    ).run(utcDay(now), userId);
+  }
+
+  getUsageTotals(now = Date.now()): UsageTotals {
+    const since = utcDay(now) - 29;
+    const one = (sql: string, ...args: number[]) => Number((this.db.prepare(sql).get(...args) as { n: number | null }).n ?? 0);
+    return {
+      toolCalls: one("SELECT SUM(calls) AS n FROM tool_call_daily"),
+      connectedAccounts: one("SELECT COUNT(*) AS n FROM user_credentials"),
+      activeUsers30d: one("SELECT COUNT(DISTINCT user_id) AS n FROM tool_call_daily WHERE day >= ?", since),
+    };
+  }
+
   deleteUser(userId: string): void {
     this.db.exec("BEGIN TRANSACTION;");
     try {
       this.deleteUserCredsStmt.run(userId);
+      this.db.prepare("DELETE FROM tool_call_daily WHERE user_id = ?").run(userId);
       this.deleteQuasarScenariosStmt.run(userId);
       this.db.prepare("DELETE FROM web_sessions WHERE user_id = ?").run(userId);
       this.db.prepare("DELETE FROM oauth_tokens WHERE user_id = ?").run(userId);

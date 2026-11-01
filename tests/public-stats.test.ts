@@ -1,0 +1,85 @@
+import { describe, it, expect, afterEach, beforeAll, afterAll } from "vitest";
+import http from "node:http";
+import { OAuthStorage } from "../src/storage/oauth-storage.js";
+import { PublicStatsCache } from "../src/server/public-stats.js";
+import { createHttpServer } from "../src/server/http-server.js";
+import { utcDay } from "../src/storage/storage-interface.js";
+
+const DAY = 86_400_000;
+const T0 = Date.UTC(2026, 10, 1, 12);
+
+const newStorage = () => new OAuthStorage(":memory:");
+const addUser = (st: OAuthStorage, id: string, withCreds = true) => {
+  st.saveUser({ id, yandexUid: `uid-${id}`, createdAt: T0, updatedAt: T0 });
+  if (withCreds) st.saveUserCredentials(id, { yandexAccessToken: "tok" });
+};
+
+describe("usage totals", () => {
+  it("counts calls, connected accounts and 30-day active users", () => {
+    const st = newStorage();
+    addUser(st, "a"); addUser(st, "b"); addUser(st, "c", false);
+    st.recordToolCall("a", T0); st.recordToolCall("a", T0); st.recordToolCall("b", T0 - 29 * DAY);
+    st.recordToolCall("c", T0 - 30 * DAY); // day 31 back: not active in the window
+    expect(st.getUsageTotals(T0)).toEqual({ toolCalls: 4, connectedAccounts: 2, activeUsers30d: 2 });
+    expect(utcDay(T0 - 29 * DAY)).toBe(utcDay(T0) - 29);
+  });
+
+  it("deleting a user removes their counters", () => {
+    const st = newStorage();
+    addUser(st, "a"); st.recordToolCall("a", T0);
+    st.deleteUser("a");
+    expect(st.getUsageTotals(T0)).toEqual({ toolCalls: 0, connectedAccounts: 0, activeUsers30d: 0 });
+  });
+});
+
+describe("PublicStatsCache", () => {
+  it("is empty until a sample succeeds and keeps the last snapshot when a sample fails", async () => {
+    let fail = false;
+    const storage = { getUsageTotals: async () => { if (fail) throw new Error("db down"); return { toolCalls: 5, connectedAccounts: 2, activeUsers30d: 1 }; } } as any;
+    const cache = new PublicStatsCache(storage, () => 7);
+    expect(cache.snapshot()).toBeNull();
+    await cache.sample();
+    expect(cache.snapshot()).toMatchObject({ toolCalls: 5, sessionsOnline: 7 });
+    fail = true;
+    await cache.sample();
+    expect(cache.snapshot()).toMatchObject({ toolCalls: 5 });
+  });
+
+  it("never stores a snapshot when the first sample fails", async () => {
+    const cache = new PublicStatsCache({ getUsageTotals: async () => { throw new Error("x"); } } as any, () => 0);
+    await cache.sample();
+    expect(cache.snapshot()).toBeNull();
+  });
+});
+
+describe("GET /api/stats", () => {
+  let server: http.Server; let base = "";
+  const start = async () => {
+    server = createHttpServer(0, { publicBaseUrl: "http://localhost", enableSampler: false });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    base = `http://127.0.0.1:${(server.address() as import("node:net").AddressInfo).port}`;
+  };
+  afterEach(async () => { delete process.env.PUBLIC_STATS_REFRESH_MS; server.closeAllConnections(); await new Promise<void>((r) => server.close(() => r())); });
+
+  it("answers 503 before any sample, never a zero-filled body", async () => {
+    await start();
+    const res = await fetch(`${base}/api/stats`);
+    expect(res.status).toBe(503);
+    expect(res.headers.get("retry-after")).toBeTruthy();
+    expect(await res.json()).toEqual({ error: "stats_unavailable" });
+  });
+
+  it("serves aggregates only, publicly cacheable, once sampled", async () => {
+    process.env.PUBLIC_STATS_REFRESH_MS = "60000";
+    await start();
+    let body: any = null; let status = 0;
+    for (let i = 0; i < 50; i++) {
+      const res = await fetch(`${base}/api/stats`);
+      status = res.status;
+      if (status === 200) { body = await res.json(); expect(res.headers.get("cache-control")).toContain("public"); break; }
+      await new Promise((r) => setTimeout(r, 40));
+    }
+    expect(status).toBe(200);
+    expect(Object.keys(body).sort()).toEqual(["activeUsers30d", "connectedAccounts", "sampledAt", "sessionsOnline", "toolCalls"]);
+  });
+});

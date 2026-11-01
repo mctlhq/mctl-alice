@@ -102,7 +102,22 @@ export interface UserGrant {
   createdAt: number;
 }
 
+/** Aggregate usage for the public home page. Never carries a per-user figure. */
+export interface UsageTotals {
+  /** Successful tool calls, all time. */
+  toolCalls: number;
+  /** Users who currently hold stored Yandex credentials. */
+  connectedAccounts: number;
+  /** Distinct users with at least one tool call in the last 30 UTC days. */
+  activeUsers30d: number;
+}
+
+export const utcDay = (ms: number) => Math.floor(ms / 86_400_000);
+
 export interface IStorage {
+  /** Counts one successful tool call for the user in today's UTC bucket. */
+  recordToolCall(userId: string, now?: number): Promise<void> | void;
+  getUsageTotals(now?: number): Promise<UsageTotals> | UsageTotals;
   // Users & credentials
   saveUser(user: UserRecord): Promise<void> | void;
   getUser(userId: string): Promise<UserRecord | null> | (UserRecord | null);

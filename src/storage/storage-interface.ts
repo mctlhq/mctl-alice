@@ -106,10 +106,34 @@ export interface UserGrant {
 export interface UsageTotals {
   /** Successful tool calls, all time. */
   toolCalls: number;
-  /** Users who currently hold stored Yandex credentials. */
+  /** Users who hold stored Yandex credentials AND have connected at least one MCP client. */
   connectedAccounts: number;
+  /** Distinct connected users per assistant family; one user can appear under several. */
+  assistants: AssistantBreakdown;
   /** Distinct users with at least one tool call in the last 30 UTC days. */
   activeUsers30d: number;
+}
+
+export interface AssistantBreakdown { chatgpt: number; claude: number; other: number }
+
+/**
+ * Buckets an OAuth client name into an assistant family. The name comes from unauthenticated
+ * dynamic client registration, so this is a self-reported label for a vanity statistic, not a
+ * verified identity. "Connected" also relies on oauth_tokens rows surviving expiry: nothing calls
+ * pruneExpired() today, and wiring it in would make lapsed users drop out of the count.
+ */
+export function assistantFamily(clientName: string | null | undefined): keyof AssistantBreakdown {
+  const n = (clientName ?? "").toLowerCase();
+  if (/chatgpt|openai/.test(n)) return "chatgpt";
+  if (/claude/.test(n)) return "claude";
+  return "other";
+}
+
+/** Counts distinct users per family from (user, client name) pairs. */
+export function breakdownAssistants(rows: Array<{ userId: string; clientName: string | null }>): AssistantBreakdown {
+  const seen: Record<keyof AssistantBreakdown, Set<string>> = { chatgpt: new Set(), claude: new Set(), other: new Set() };
+  for (const r of rows) seen[assistantFamily(r.clientName)].add(r.userId);
+  return { chatgpt: seen.chatgpt.size, claude: seen.claude.size, other: seen.other.size };
 }
 
 export const utcDay = (ms: number) => Math.floor(ms / 86_400_000);

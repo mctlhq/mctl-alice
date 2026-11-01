@@ -73,7 +73,9 @@
       hero_copy_done: "Скопировано!",
       hero_login_btn: "Войти через Яндекс",
       stats_calls: "Вызовов инструментов",
-      stats_accounts: "Подключённых аккаунтов",
+      stats_accounts: "Подключили ассистента",
+      stats_by: "Кто подключил",
+      stats_other: "Другие",
       stats_active: "Активны за 30 дней",
       stats_online: "Сессий онлайн сейчас",
       features_title: "Возможности",
@@ -309,7 +311,9 @@
       hero_copy_done: "Copied!",
       hero_login_btn: "Log in with Yandex",
       stats_calls: "Tool calls",
-      stats_accounts: "Connected accounts",
+      stats_accounts: "Connected an assistant",
+      stats_by: "Connected via",
+      stats_other: "Others",
       stats_active: "Active last 30 days",
       stats_online: "Sessions online now",
       features_title: "Capabilities",
@@ -677,6 +681,11 @@
           setStat("stat-accounts", d.connectedAccounts);
           setStat("stat-active", d.activeUsers30d);
           setStat("stat-online", d.sessionsOnline);
+          if (d.assistants) {
+            setStat("stat-chatgpt", d.assistants.chatgpt);
+            setStat("stat-claude", d.assistants.claude);
+            setStat("stat-other", d.assistants.other);
+          }
           statsBox.hidden = false;
         })
         .catch(function () {});

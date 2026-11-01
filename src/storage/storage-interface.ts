@@ -116,7 +116,12 @@ export interface UsageTotals {
 
 export interface AssistantBreakdown { chatgpt: number; claude: number; other: number }
 
-/** Buckets an OAuth client name (as registered by the MCP client) into an assistant family. */
+/**
+ * Buckets an OAuth client name into an assistant family. The name comes from unauthenticated
+ * dynamic client registration, so this is a self-reported label for a vanity statistic, not a
+ * verified identity. "Connected" also relies on oauth_tokens rows surviving expiry: nothing calls
+ * pruneExpired() today, and wiring it in would make lapsed users drop out of the count.
+ */
 export function assistantFamily(clientName: string | null | undefined): keyof AssistantBreakdown {
   const n = (clientName ?? "").toLowerCase();
   if (/chatgpt|openai/.test(n)) return "chatgpt";

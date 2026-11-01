@@ -13,6 +13,7 @@ import {
   spentSecretFromRow,
   UsageTotals,
   utcDay,
+  breakdownAssistants,
 } from "./storage-interface.js";
 import {
   ITelemetryStorage,
@@ -425,12 +426,18 @@ export class PostgresStorage implements IStorage {
   async getUsageTotals(now = Date.now()): Promise<UsageTotals> {
     await this.ready();
     const since = utcDay(now) - 29;
-    const [calls, accounts, active] = await Promise.all([
+    const [calls, accounts, active, pairs] = await Promise.all([
       this.pool.query("SELECT COALESCE(SUM(calls), 0)::text AS n FROM tool_call_daily"),
-      this.pool.query("SELECT COUNT(*)::text AS n FROM user_credentials"),
+      this.pool.query("SELECT COUNT(DISTINCT u.user_id)::text AS n FROM user_credentials u JOIN oauth_tokens t ON t.user_id = u.user_id"),
       this.pool.query("SELECT COUNT(DISTINCT user_id)::text AS n FROM tool_call_daily WHERE day >= $1", [since]),
+      this.pool.query("SELECT DISTINCT t.user_id AS \"userId\", c.client_name AS \"clientName\" FROM oauth_tokens t JOIN user_credentials u ON u.user_id = t.user_id LEFT JOIN oauth_clients c ON c.client_id = t.client_id"),
     ]);
-    return { toolCalls: Number(calls.rows[0].n), connectedAccounts: Number(accounts.rows[0].n), activeUsers30d: Number(active.rows[0].n) };
+    return {
+      toolCalls: Number(calls.rows[0].n),
+      connectedAccounts: Number(accounts.rows[0].n),
+      activeUsers30d: Number(active.rows[0].n),
+      assistants: breakdownAssistants(pairs.rows as Array<{ userId: string; clientName: string | null }>),
+    };
   }
 
   async deleteUser(userId: string): Promise<void> {

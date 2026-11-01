@@ -1,4 +1,4 @@
-import { CredentialDecryptionError, SpentSecret, spentSecretFromRow } from "./storage-interface.js";
+import { CredentialDecryptionError, SpentSecret, spentSecretFromRow, breakdownAssistants } from "./storage-interface.js";
 import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync, StatementSync } from "node:sqlite";
@@ -637,7 +637,10 @@ export class OAuthStorage implements IStorage {
     const one = (sql: string, ...args: number[]) => Number((this.db.prepare(sql).get(...args) as { n: number | null }).n ?? 0);
     return {
       toolCalls: one("SELECT SUM(calls) AS n FROM tool_call_daily"),
-      connectedAccounts: one("SELECT COUNT(*) AS n FROM user_credentials"),
+      connectedAccounts: one("SELECT COUNT(DISTINCT u.user_id) AS n FROM user_credentials u JOIN oauth_tokens t ON t.user_id = u.user_id"),
+      assistants: breakdownAssistants((this.db.prepare(
+        "SELECT DISTINCT t.user_id AS userId, c.client_name AS clientName FROM oauth_tokens t JOIN user_credentials u ON u.user_id = t.user_id LEFT JOIN oauth_clients c ON c.client_id = t.client_id",
+      ).all() as Array<{ userId: string; clientName: string | null }>)),
       activeUsers30d: one("SELECT COUNT(DISTINCT user_id) AS n FROM tool_call_daily WHERE day >= ?", since),
     };
   }

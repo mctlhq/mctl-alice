@@ -136,12 +136,24 @@ function resolveRoom(rooms: Array<{ id: string; name: string }>, query: string):
   return room;
 }
 
+/** Settles with `work`, or rejects after `ms`; the late result of `work` is swallowed. */
+function withinMs<T>(work: Promise<T>, ms: number): Promise<T> {
+  work.catch(() => {});
+  let timer: NodeJS.Timeout;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error("user info budget exhausted")), ms);
+  });
+  return Promise.race([work, deadline]).finally(() => clearTimeout(timer));
+}
+
 export class StationService {
   private client: YandexIoTClient | null = null;
   private quasarClient: QuasarClient | null = null;
   private cachedUserInfo: YandexUserInfo | null = null;
   private cacheTimestamp = 0;
   private readonly CACHE_TTL_MS = 30000; // 30 seconds
+  /** Total time getUserInfo may take across the IoT call and the Quasar fallback. Equals the IoT deadline. */
+  private readonly USER_INFO_BUDGET_MS = 15000;
 
   private storage: ITelemetryStorage | null = null;
 
@@ -205,7 +217,9 @@ export class StationService {
   }
 
   /**
-   * Fetch user info with simple in-memory caching and fallback to Quasar client if IoT token is missing/forbidden
+   * Fetch user info with simple in-memory caching and fallback to Quasar client if IoT token is missing/forbidden.
+   * The IoT call and the fallback share one budget: before this, an IoT timeout (15 s) was followed by a
+   * Quasar attempt of up to 10 s more, so a caller waited about 25 s for a single answer.
    */
   async getUserInfo(forceRefresh = false): Promise<YandexUserInfo> {
     const now = Date.now();
@@ -218,9 +232,10 @@ export class StationService {
       this.cacheTimestamp = now;
       return info;
     } catch (err: any) {
-      if (this.quasarClient && this.quasarClient.hasCookie()) {
+      const remainingMs = this.USER_INFO_BUDGET_MS - (Date.now() - now);
+      if (remainingMs > 0 && this.quasarClient && this.quasarClient.hasCookie()) {
         try {
-          const quasarInfo = await this.getUserInfoFromQuasar();
+          const quasarInfo = await withinMs(this.getUserInfoFromQuasar(), remainingMs);
           this.cachedUserInfo = quasarInfo;
           this.cacheTimestamp = now;
           return quasarInfo;

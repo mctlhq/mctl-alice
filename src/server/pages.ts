@@ -224,7 +224,7 @@ export function renderSetupPage(siteUrl: string): string {
         <h2 class="section-title s-96cfba" id="setup-tested" data-i18n="setup_tested_title">Проверенные клиенты</h2>
         <ul class="s-a0190f" data-i18n-html="setup_tested_list">
           <li><strong>Claude</strong> (claude.ai и Claude Desktop): <em>Customize → Connectors → «+» → Add custom connector</em>, вставьте MCP URL и нажмите <em>Add</em>, затем <em>Connect</em>.</li>
-          <li><strong>ChatGPT</strong>: <em>Settings → Apps &amp; Connectors → Advanced settings</em> → включите <em>Developer mode</em>, затем <em>Apps &amp; Connectors → Create</em> и вставьте MCP URL.</li>
+          <li><strong>ChatGPT</strong>: <em>Plugins → «+» → custom MCP server</em>, вставьте MCP URL и пройдите авторизацию Яндекса.</li>
         </ul>
       </section>
 

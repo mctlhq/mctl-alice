@@ -806,11 +806,19 @@ export function createHttpServer(
     }
   }
 
+  /**
+   * A tool call re-checks the bearer token so a grant revoked while a long request or batch runs is
+   * not honoured. The check that admitted the request itself is milliseconds old, so a call within
+   * this window reuses it instead of repeating the three storage reads.
+   */
+  const REAUTH_AFTER_MS = 1000;
+
   async function handleSingleRpc(
     rpcReq: any,
     req: http.IncomingMessage,
     svc?: StationService,
-    scope?: string
+    scope?: string,
+    admitted?: { auth: AuthResult; at: number },
   ): Promise<any | null> {
     if (!rpcReq || typeof rpcReq !== "object") {
       return {
@@ -859,7 +867,9 @@ export function createHttpServer(
     if (method === "tools/call") {
       const { name, arguments: args } = rpcReq.params || {};
       try {
-        const fresh = await authenticateRequest(req, stationService, quasarClient, oauthStorage, telemetryStorage, authRequired);
+        const fresh = admitted && Date.now() - admitted.at < REAUTH_AFTER_MS
+          ? admitted.auth
+          : await authenticateRequest(req, stationService, quasarClient, oauthStorage, telemetryStorage, authRequired);
         if (!fresh.authenticated) return { jsonrpc: "2.0", id, result: { isError: true, content: [{ type: "text", text: fresh.errorMessage }] } };
         const activeSvc = fresh.service;
         scope = fresh.scope;
@@ -1343,6 +1353,7 @@ export function createHttpServer(
         return;
       }
       const activeSvc = auth.service;
+      const admitted = { auth, at: Date.now() };
 
       const body = await readRequestBody(req, { limit: MCP_BODY_LIMIT });
       {
@@ -1368,7 +1379,7 @@ export function createHttpServer(
             }
             const results = [];
             for (const item of rpcData) {
-              const resItem = await handleSingleRpc(item, req, activeSvc, auth.scope);
+              const resItem = await handleSingleRpc(item, req, activeSvc, auth.scope, admitted);
               if (resItem !== null) {
                 results.push(resItem);
               }
@@ -1379,7 +1390,7 @@ export function createHttpServer(
               sendMcpResponse(req, res, results);
             }
           } else {
-            const result = await handleSingleRpc(rpcData, req, activeSvc, auth.scope);
+            const result = await handleSingleRpc(rpcData, req, activeSvc, auth.scope, admitted);
             if (result === null) {
               sendMcpResponse(req, res, null, 202);
             } else {

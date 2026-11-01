@@ -77,7 +77,7 @@ export async function upstreamFetch<T = Response>(
   try {
     const res = await fetch(url, { ...init, signal: combined });
     const out = read ? await read(res) : (res as unknown as T);
-    recordUpstream(upstream, outcomeForStatus(res.status), elapsed());
+    recordUpstream(upstream, outcomeForStatus(res.status, res.headers.get("location")), elapsed());
     return out;
   } catch (err) {
     if (deadline.aborted && isAbort(err)) {

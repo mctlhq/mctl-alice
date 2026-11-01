@@ -91,7 +91,7 @@ export const rateLimited = new Counter(
 );
 export const upstreamRequests = new Counter(
   "mctl_alice_upstream_requests_total",
-  "Outbound Yandex calls by upstream and outcome (ok, 3xx, 4xx, 5xx, timeout, cancelled, error).",
+  "Outbound Yandex calls by upstream and outcome (ok, 3xx, 4xx, 5xx, blocked, timeout, cancelled, error).",
 );
 export const upstreamDuration = new Histogram(
   "mctl_alice_upstream_request_duration_seconds",
@@ -145,9 +145,20 @@ export function upstreamLabel(upstream: string): string {
   return Object.hasOwn(UPSTREAMS, upstream) ? UPSTREAMS[upstream] : "other";
 }
 
-export type UpstreamOutcome = "ok" | "3xx" | "4xx" | "5xx" | "timeout" | "cancelled" | "error";
+export type UpstreamOutcome = "ok" | "3xx" | "4xx" | "5xx" | "blocked" | "timeout" | "cancelled" | "error";
 
-export function outcomeForStatus(status: number): UpstreamOutcome {
+/** A redirect target that is a bot-check page, not a normal sign-in or API hop. */
+const CHALLENGE_LOCATION = /captcha|showcaptcha|challenge/i;
+
+/**
+ * `blocked` = the upstream is refusing us as a client (HTTP 429, or a redirect to a captcha
+ * page), which is different from a 4xx about one request (bad token, bad device id). It is the
+ * signal for Yandex throttling an egress IP. A plain 403 stays 4xx: Quasar answers 403 for an
+ * expired CSRF token and the client retries it.
+ */
+export function outcomeForStatus(status: number, location?: string | null): UpstreamOutcome {
+  if (status === 429) return "blocked";
+  if (status >= 300 && status < 400 && location && CHALLENGE_LOCATION.test(location)) return "blocked";
   if (status >= 200 && status < 300) return "ok";
   if (status >= 300 && status < 400) return "3xx";
   if (status >= 400 && status < 500) return "4xx";

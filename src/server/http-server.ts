@@ -6,7 +6,7 @@ import { isLocalOrigin } from "./origin.js";
 import { FORM_BODY_LIMIT, MCP_BODY_LIMIT, PayloadTooLargeError, parseRequestBody, readRequestBody, sendPayloadTooLarge } from "./request-body.js";
 import { RateLimiter, clientAddress, rateLimitBucket, resolveRateLimits, trustProxyHopsFromEnv, clientIpHeaderFromEnv, type RateLimitBucket } from "./rate-limit.js";
 import { UpstreamCancelledError, UpstreamError, UpstreamTimeoutError, userRef } from "../client/upstream.js";
-import { authFailures, rateLimited, recordHttpRequest, setSseStreamsSource } from "../metrics.js";
+import { authFailures, rateLimited, recordHttpRequest, registerSseStreamsSource } from "../metrics.js";
 
 export { isLocalOrigin };
 import http from "node:http";
@@ -715,7 +715,7 @@ export function createHttpServer(
   const publicStats = new PublicStatsCache(oauthStorage, () => sseTransports.size);
   // A suite run samples only when a test sets PUBLIC_STATS_REFRESH_MS itself.
   publicStats.start(publicStatsRefreshMs(underTest));
-  setSseStreamsSource(() => sseTransports.size);
+  const unregisterSseStreams = registerSseStreamsSource(() => sseTransports.size);
 
   const browserTransactions = new BrowserTransactions<{ browser: string; expires: number }>(oauthStorage, "consent");
   const loginTransactions = new BrowserTransactions<{ browser: string; expires: number; returnTo: string }>(oauthStorage, "login");
@@ -2430,6 +2430,7 @@ export function createHttpServer(
     for (const transport of sseTransports.values()) void transport.close();
     if (sampler) sampler.stop();
     publicStats.stop();
+    unregisterSseStreams();
     retention?.stop();
     if (!options.storage) void telemetryStorage.close();
   });

@@ -172,14 +172,19 @@ export function recordUpstream(upstream: string, outcome: UpstreamOutcome, secon
   upstreamDuration.observe({ upstream: name }, seconds);
 }
 
-let sseStreams: () => number = () => 0;
+const sseStreamSources = new Set<() => number>();
 /**
- * Reads the open SSE stream count at scrape time instead of counting opens and closes, so a
- * missed close cannot make the gauge drift. Each stream holds a socket and about 0.15 MiB.
+ * Registers one server's open SSE stream count, read at scrape time instead of counting opens
+ * and closes, so a missed close cannot make the gauge drift. Each stream holds a socket and about
+ * 0.15 MiB. Sources are summed, and the returned function removes this one: a second server in
+ * the process (or a restart in a test) no longer replaces the first's count.
  */
-export function setSseStreamsSource(count: () => number): void {
-  sseStreams = count;
+export function registerSseStreamsSource(count: () => number): () => void {
+  sseStreamSources.add(count);
+  return () => { sseStreamSources.delete(count); };
 }
+
+const sseStreams = () => { let n = 0; for (const count of sseStreamSources) n += count(); return n; };
 
 export function renderMetrics(): string {
   return [

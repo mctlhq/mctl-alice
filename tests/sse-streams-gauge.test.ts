@@ -37,4 +37,26 @@ describe("mctl_alice_sse_streams_open", () => {
     await until(() => gauge() === 0);
     expect(gauge()).toBe(0);
   });
+
+  it("sums two servers in one process and drops a closed server's share", async () => {
+    const second = createHttpServer(0, { publicBaseUrl: "http://localhost", enableSampler: false });
+    await new Promise<void>((resolve) => second.listen(0, "127.0.0.1", resolve));
+    const base2 = `http://127.0.0.1:${(second.address() as import("node:net").AddressInfo).port}`;
+    const open = async (b: string) => {
+      const c = new AbortController();
+      const res = await fetch(`${b}/sse`, { signal: c.signal, headers: { Accept: "text/event-stream" } });
+      void res.body!.getReader().read().catch(() => {});
+      return c;
+    };
+    const a = await open(base); const b = await open(base2);
+    await until(() => gauge() === 2);
+    expect(gauge()).toBe(2); // one stream on each server; the second must not replace the first
+    b.abort();
+    second.closeAllConnections();
+    await new Promise<void>((resolve) => second.close(() => resolve()));
+    await until(() => gauge() === 1);
+    expect(gauge()).toBe(1);
+    a.abort();
+    await until(() => gauge() === 0);
+  });
 });

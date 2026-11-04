@@ -64,7 +64,8 @@ describe("CSP, CORS and HTML hardening", () => {
     expect(htmlPages.size).toBe(12);
     for (const [page, { headers }] of htmlPages) {
       const csp = headers.get("content-security-policy") || "";
-      expect(csp, page).toContain("script-src 'self';");
+      expect(csp, page).toContain("script-src 'self' https://stats.mctl.ai;");
+      expect(csp, page).toContain("connect-src 'self' https://stats.mctl.ai;");
       expect(csp, page).toContain("style-src-attr 'none'");
       expect(csp, page).toContain("frame-ancestors 'none'");
       expect(csp, page).not.toContain("unsafe-inline");
@@ -243,5 +244,24 @@ describe("CSP, CORS and HTML hardening", () => {
       expect(formActionSourceFor(unsafe), unsafe).toBeUndefined();
     }
     expect(contentSecurityPolicy(formActionSourceFor("javascript:alert(1)"))).toMatch(/form-action 'self'$/);
+  });
+
+  it("restricts analytics tracking to public informational pages and excludes auth and session pages", () => {
+    const publicPages = ["/", "/setup", "/about", "/privacy", "/terms", "/security", "404"];
+    const sensitivePages = ["/account", "/account (signed in)", "/auth/cookie", "/auth/callback", "consent"];
+
+    for (const page of publicPages) {
+      const body = htmlPages.get(page)?.body;
+      expect(body, page).toBeDefined();
+      expect(body, page).toContain("https://stats.mctl.ai/insights.js");
+      expect(body, page).toContain('data-website-id="b1a11ce0-8b07-4d27-98e6-0b611eeaa707"');
+    }
+
+    for (const page of sensitivePages) {
+      const body = htmlPages.get(page)?.body;
+      expect(body, page).toBeDefined();
+      expect(body, page).not.toContain("https://stats.mctl.ai/insights.js");
+      expect(body, page).not.toContain("b1a11ce0-8b07-4d27-98e6-0b611eeaa707");
+    }
   });
 });

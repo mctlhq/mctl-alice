@@ -170,6 +170,7 @@ function renderAuthPage({
   scriptHtml = "",
   canonical,
   indexable = false,
+  withAnalytics = false,
 }: {
   title: string;
   titleKey?: string;
@@ -179,6 +180,8 @@ function renderAuthPage({
   canonical?: { siteUrl: string; path: string };
   /** Public pages: indexable even without a canonical; everything else is noindex. */
   indexable?: boolean;
+  /** Public content pages: load privacy-friendly analytics script. Omitted on auth/sensitive pages. */
+  withAnalytics?: boolean;
 }): string {
   const canonicalUrl = canonical ? canonical.siteUrl + canonical.path : "";
   const breadcrumbs = canonical && canonical.path && canonical.path !== "/"
@@ -309,7 +312,7 @@ ${breadcrumbs}
     </span>
   </div>
 </footer>
-<script src="/assets/site.js?v=${VERSION}"></script>
+${withAnalytics ? '<script defer src="https://stats.mctl.ai/insights.js" data-website-id="b1a11ce0-8b07-4d27-98e6-0b611eeaa707" data-domains="alice.mctl.ai"></script>\n' : ""}<script src="/assets/site.js?v=${VERSION}"></script>
 ${scriptHtml}
 </body>
 </html>`;
@@ -348,8 +351,9 @@ function renderConsentAccount(user: UserRecord): string {
 export function contentSecurityPolicy(formActionExtra?: string): string {
   return [
     "default-src 'self'",
-    "script-src 'self'",
+    "script-src 'self' https://stats.mctl.ai",
     "script-src-attr 'none'",
+    "connect-src 'self' https://stats.mctl.ai",
     "style-src 'self'",
     "style-src-attr 'none'",
     "font-src 'self'",
@@ -1718,6 +1722,7 @@ export function createHttpServer(
           contentHtml: renderSetupPage(siteUrl),
           canonical: canonicalFor("/setup"),
           indexable: true,
+          withAnalytics: true,
         })
       );
       return;
@@ -1732,6 +1737,7 @@ export function createHttpServer(
           contentHtml: renderAboutPage(baseUrl),
           canonical: canonicalFor("/about"),
           indexable: true,
+          withAnalytics: true,
         })
       );
       return;
@@ -1746,6 +1752,7 @@ export function createHttpServer(
           contentHtml: renderPrivacyPage(baseUrl),
           canonical: canonicalFor("/privacy"),
           indexable: true,
+          withAnalytics: true,
         })
       );
       return;
@@ -1760,6 +1767,7 @@ export function createHttpServer(
           contentHtml: renderTermsPage(baseUrl),
           canonical: canonicalFor("/terms"),
           indexable: true,
+          withAnalytics: true,
         })
       );
       return;
@@ -1774,6 +1782,7 @@ export function createHttpServer(
           contentHtml: renderSecurityPage(baseUrl),
           canonical: canonicalFor("/security"),
           indexable: true,
+          withAnalytics: true,
         })
       );
       return;
@@ -2409,7 +2418,7 @@ export function createHttpServer(
     // API, MCP and OAuth clients.
     if (wantsHtmlNotFound(req, url.pathname)) {
       res.writeHead(404, { "Content-Type": "text/html; charset=utf-8" });
-      res.end(renderAuthPage({ title: "mctl-alice — Страница не найдена", titleKey: "notfound_page_title", contentHtml: renderNotFoundPage() }));
+      res.end(renderAuthPage({ title: "mctl-alice — Страница не найдена", titleKey: "notfound_page_title", contentHtml: renderNotFoundPage(), withAnalytics: true }));
       return;
     }
     res.writeHead(404, { "Content-Type": "application/json" });

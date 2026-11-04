@@ -64,7 +64,8 @@ describe("CSP, CORS and HTML hardening", () => {
     expect(htmlPages.size).toBe(12);
     for (const [page, { headers }] of htmlPages) {
       const csp = headers.get("content-security-policy") || "";
-      expect(csp, page).toContain("script-src 'self';");
+      expect(csp, page).toContain("script-src 'self' https://stats.mctl.ai;");
+      expect(csp, page).toContain("connect-src 'self' https://stats.mctl.ai;");
       expect(csp, page).toContain("style-src-attr 'none'");
       expect(csp, page).toContain("frame-ancestors 'none'");
       expect(csp, page).not.toContain("unsafe-inline");

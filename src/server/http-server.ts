@@ -309,6 +309,7 @@ ${breadcrumbs}
     </span>
   </div>
 </footer>
+<script defer src="https://stats.mctl.ai/insights.js" data-website-id="b1a11ce0-8b07-4d27-98e6-0b611eeaa707" data-domains="alice.mctl.ai"></script>
 <script src="/assets/site.js?v=${VERSION}"></script>
 ${scriptHtml}
 </body>
@@ -348,8 +349,9 @@ function renderConsentAccount(user: UserRecord): string {
 export function contentSecurityPolicy(formActionExtra?: string): string {
   return [
     "default-src 'self'",
-    "script-src 'self'",
+    "script-src 'self' https://stats.mctl.ai",
     "script-src-attr 'none'",
+    "connect-src 'self' https://stats.mctl.ai",
     "style-src 'self'",
     "style-src-attr 'none'",
     "font-src 'self'",

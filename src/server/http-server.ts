@@ -1007,15 +1007,15 @@ export function createHttpServer(
 
     // robots.txt and the sitemap name absolute URLs, so they are built from
     // the configured public origin rather than shipped as static files.
-    if (url.pathname === "/robots.txt" && req.method === "GET") {
+    if (url.pathname === "/robots.txt" && (req.method === "GET" || req.method === "HEAD")) {
       res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "public, max-age=3600" });
-      res.end(renderRobotsTxt(publicSiteUrl));
+      res.end(req.method === "HEAD" ? "" : renderRobotsTxt(publicSiteUrl));
       return;
     }
 
-    if (url.pathname === "/sitemap.xml" && req.method === "GET" && publicSiteUrl) {
+    if (url.pathname === "/sitemap.xml" && (req.method === "GET" || req.method === "HEAD") && publicSiteUrl) {
       res.writeHead(200, { "Content-Type": "application/xml; charset=utf-8", "Cache-Control": "public, max-age=3600" });
-      res.end(renderSitemapXml(publicSiteUrl));
+      res.end(req.method === "HEAD" ? "" : renderSitemapXml(publicSiteUrl));
       return;
     }
 

@@ -3,6 +3,10 @@
 Versions follow semantic versioning; tags carry no `v` prefix. Full notes for
 every version are on the [Releases page](https://github.com/mctlhq/mctl-alice/releases).
 
+## 2.7.0 (2026-11-05)
+
+- Add cookieless Umami tracking on public marketing and setup pages with strict CSP (#144).
+
 ## 2.6.0 (2026-11-01)
 
 - The home-page strip counts only accounts that hold credentials and have

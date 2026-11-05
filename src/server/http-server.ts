@@ -1717,7 +1717,7 @@ export function createHttpServer(
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       res.end(
         renderAuthPage({
-          title: "mctl-alice — Подключение ассистента",
+          title: "Алиса MCP — подключение Яндекс Станции к Claude и ChatGPT",
           titleKey: "setup_page_title",
           contentHtml: renderSetupPage(siteUrl),
           canonical: canonicalFor("/setup"),

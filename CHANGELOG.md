@@ -3,6 +3,15 @@
 Versions follow semantic versioning; tags carry no `v` prefix. Full notes for
 every version are on the [Releases page](https://github.com/mctlhq/mctl-alice/releases).
 
+## 2.9.0 (2026-11-05)
+
+- Add bilingual contextual links to Telegram MCP, the MCTL platform and platform documentation (#150).
+- Align the embedded site version and asset cache keys with the release tag.
+
+## 2.8.0 (2026-11-05)
+
+- Support crawler HEAD requests for robots.txt and sitemap.xml (#149).
+
 ## 2.7.0 (2026-11-05)
 
 - Add cookieless Umami tracking on public marketing and setup pages with strict CSP (#144).

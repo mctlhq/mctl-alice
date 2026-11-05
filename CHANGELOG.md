@@ -3,6 +3,10 @@
 Versions follow semantic versioning; tags carry no `v` prefix. Full notes for
 every version are on the [Releases page](https://github.com/mctlhq/mctl-alice/releases).
 
+## 2.10.0 (2026-11-06)
+
+- Make the bilingual Alice setup guide describe its smart-home connection intent, prerequisites and first read-only check (#152).
+
 ## 2.9.0 (2026-11-05)
 
 - Add bilingual contextual links to Telegram MCP, the MCTL platform and platform documentation (#150).

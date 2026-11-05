@@ -208,8 +208,8 @@ export function renderNotFoundPage(): string {
 export function renderSetupPage(siteUrl: string): string {
   const mcpUrl = escapeHtml(`${siteUrl}/mcp`);
   return `
-    <h1 class="page-title" data-i18n="setup_page_h1">Подключите своего AI-ассистента</h1>
-    <p class="s-d8f4e6" data-i18n="setup_page_lead">mctl-alice — удалённый MCP-сервер. Добавьте его адрес в ассистента, войдите через Яндекс ID и выберите, что ассистенту можно делать. Дальше просто просите его на обычном языке.</p>
+    <h1 class="page-title" data-i18n="setup_page_h1">Подключите Алису и Яндекс Станцию к Claude или ChatGPT</h1>
+    <p class="s-d8f4e6" data-i18n="setup_page_lead">mctl-alice подключает Яндекс Станцию и устройства из приложения «Дом с Алисой» к AI-ассистенту через MCP. Добавьте адрес сервера, войдите через Яндекс ID и выберите разрешения. После подключения ассистент сможет показывать устройства и выполнять разрешённые действия.</p>
 
     <div class="endpoint">
       <span class="label">MCP URL</span>
@@ -220,6 +220,11 @@ export function renderSetupPage(siteUrl: string): string {
     </div>
 
     <div class="s-71e873 setup-sections">
+      <section class="s-8f4f37" aria-labelledby="setup-prerequisites">
+        <h2 class="section-title s-96cfba" id="setup-prerequisites" data-i18n="setup_prerequisites_title">Что понадобится</h2>
+        <p class="s-2a0ca8" data-i18n="setup_prerequisites_desc">Нужны Яндекс Станция или устройства, уже добавленные в «Дом с Алисой», и доступ к тому же аккаунту Яндекса. Используйте Claude или ChatGPT с возможностью добавления удалённого MCP-сервера. Для просмотра устройств достаточно разрешения iot:view. Quasar не нужен для этой первой проверки.</p>
+      </section>
+
       <section class="s-8f4f37" aria-labelledby="setup-tested">
         <h2 class="section-title s-96cfba" id="setup-tested" data-i18n="setup_tested_title">Проверенные клиенты</h2>
         <ul class="s-a0190f" data-i18n-html="setup_tested_list">
@@ -248,6 +253,11 @@ export function renderSetupPage(siteUrl: string): string {
           <li>Вы возвращаетесь в ассистента и пишете, например: «Какие у меня колонки?» или «Выключи весь свет на кухне».</li>
           <li>По желанию подключаете Quasar в <a href="/account">личном кабинете</a>, чтобы колонки могли произносить фразы и выполнять текстовые команды. Без него остальные функции работают.</li>
         </ol>
+      </section>
+
+      <section class="s-8f4f37" aria-labelledby="setup-check">
+        <h2 class="section-title s-96cfba" id="setup-check" data-i18n="setup_check_title">Первая проверка без управления устройствами</h2>
+        <p class="s-2a0ca8" data-i18n="setup_check_desc">После авторизации попросите ассистента: «Покажи мои устройства умного дома». Он должен вызвать alice_list_devices и показать устройства из вашего аккаунта Яндекса. Если список пуст, проверьте, что вошли в тот же аккаунт, где настроен «Дом с Алисой», и выдали iot:view. Для управления устройствами отдельно разрешите iot:control; речь и текстовые команды на колонках требуют необязательного подключения Quasar.</p>
       </section>
 
       <section class="s-8f4f37" aria-labelledby="setup-data">

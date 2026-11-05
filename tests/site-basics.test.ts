@@ -133,6 +133,15 @@ describe("Public site basics: /setup, 404 page, sitemap, fonts, social preview",
     expect(sitemap.headers.get("content-type")).toContain("application/xml");
     const locs = Array.from((await sitemap.text()).matchAll(/<loc>([^<]+)<\/loc>/g), m => m[1]);
     expect(locs).toEqual(["/", "/setup", "/about", "/privacy", "/terms", "/security"].map(p => PUBLIC_ORIGIN + p));
+
+    // Crawlers issuing HEAD requests must receive 200 rather than 404
+    const robotsHead = await fetch(base + "/robots.txt", { method: "HEAD" });
+    expect(robotsHead.status).toBe(200);
+    expect(robotsHead.headers.get("content-type")).toContain("text/plain");
+
+    const sitemapHead = await fetch(base + "/sitemap.xml", { method: "HEAD" });
+    expect(sitemapHead.status).toBe(200);
+    expect(sitemapHead.headers.get("content-type")).toContain("application/xml");
   });
 
   it("fills canonical and social preview URLs on the landing page from the configured origin", async () => {

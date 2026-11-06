@@ -38,7 +38,7 @@
   function showFailure() {
     var failed = document.createElement("div");
     failed.className = "qr-failed";
-    failed.textContent = "❌";
+    failed.textContent = "×";
     qrFrame.replaceChildren(failed);
   }
 
@@ -102,7 +102,7 @@
         if (data.status === "ok") {
           clearInterval(pollTimer);
           setAlert(qrStatus, "success");
-          qrStatus.textContent = getI18nMsg("cookie_qr_success", "✅ Авторизация успешна! Quasar Cookie настроены автоматически.");
+          qrStatus.textContent = getI18nMsg("cookie_qr_success", "Авторизация успешна! Quasar Cookie настроены автоматически.");
           qrMobileBtn.style.display = "none";
           qrRefreshBtn.style.display = "none";
           qrHomeBtn.style.display = "inline-flex";
@@ -114,7 +114,7 @@
         } else if (data.status === "error") {
           clearInterval(pollTimer);
           setAlert(qrStatus, "error");
-          qrStatus.textContent = "❌ " + (data.message || "Ошибка авторизации");
+          qrStatus.textContent = (data.message || "Ошибка авторизации");
           qrRefreshBtn.style.display = "inline-flex";
         }
       } catch (e) {
@@ -153,16 +153,16 @@
       if (res.ok && data.status === "ok") {
         setAlert(statusEl, "success");
         statusEl.textContent = lang() === "en"
-          ? "✅ Cookie verified and saved successfully! Dynamic TTS and voice text commands are now available."
-          : "✅ Куки успешно проверены и сохранены! Теперь доступны динамический TTS (произвольный текст) и текстовые голосовые команды.";
+          ? "Cookie verified and saved successfully! Dynamic TTS and voice text commands are now available."
+          : "Куки успешно проверены и сохранены! Теперь доступны динамический TTS (произвольный текст) и текстовые голосовые команды.";
       } else {
         setAlert(statusEl, "error");
         var errMsg = data.message || (lang() === "en" ? "failed to obtain CSRF token" : "не удалось получить CSRF токен");
-        statusEl.textContent = (lang() === "en" ? "❌ Cookie verification error: " : "❌ Ошибка проверки куки: ") + errMsg;
+        statusEl.textContent = (lang() === "en" ? "Cookie verification error: " : "Ошибка проверки куки: ") + errMsg;
       }
     } catch (err) {
       setAlert(statusEl, "error");
-      statusEl.textContent = (lang() === "en" ? "❌ Network error: " : "❌ Ошибка сети: ") + err.message;
+      statusEl.textContent = (lang() === "en" ? "Network error: " : "Ошибка сети: ") + err.message;
     } finally {
       btn.disabled = false;
     }

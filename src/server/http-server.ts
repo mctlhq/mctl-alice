@@ -1951,7 +1951,7 @@ export function createHttpServer(
           res.writeHead(err instanceof StorageUnavailableError ? 503 : 500, { "Content-Type": "text/html; charset=utf-8" });
           const content = `
             <h1 class="page-title" data-i18n="callback_error_title">Ошибка авторизации Яндекс</h1>
-            <div class="alert alert-error">❌ ${escapeHtml(err.message)}</div>
+            <div class="alert alert-error">${escapeHtml(err.message)}</div>
             <div class="s-4ef6bf">
               <a href="${baseUrl}/auth/login" class="btn btn-primary" data-i18n="callback_btn_retry">Попробовать снова</a>
               <a href="/" class="btn btn-secondary" data-i18n="callback_btn_home">На главную</a>
@@ -2046,7 +2046,7 @@ export function createHttpServer(
 
           const content = `
             <h1 class="page-title" data-i18n="callback_success_title">mctl-alice — Успешный вход</h1>
-            <div class="alert alert-success" role="status" data-i18n="callback_success_msg">✅ Аккаунт Яндекса подключён: mctl-alice получил доступ к вашему Умному дому. Вернитесь в AI-ассистента и попросите, например, показать список устройств.</div>
+            <div class="alert alert-success" role="status" data-i18n="callback_success_msg">Аккаунт Яндекса подключён: mctl-alice получил доступ к вашему Умному дому. Вернитесь в AI-ассистента и попросите, например, показать список устройств.</div>
             ${speakerHtml}
             <div class="s-4ef6bf">
               <a href="/" class="btn btn-primary" data-i18n="callback_btn_home">На главную</a>
@@ -2061,7 +2061,7 @@ export function createHttpServer(
           res.writeHead(err instanceof StorageUnavailableError ? 503 : 500, { "Content-Type": "text/html; charset=utf-8" });
           const content = `
             <h1 class="page-title" data-i18n="callback_error_title">mctl-alice — Ошибка авторизации</h1>
-            <div class="alert alert-error">❌ Ошибка обмена кода: ${escapeHtml(err.message)}</div>
+            <div class="alert alert-error">Ошибка обмена кода: ${escapeHtml(err.message)}</div>
             <div class="s-4ef6bf">
               <a href="${baseUrl}/auth/login" class="btn btn-primary" data-i18n="callback_btn_retry">Попробовать снова</a>
               <a href="/" class="btn btn-secondary" data-i18n="callback_btn_home">На главную</a>
@@ -2223,9 +2223,9 @@ export function createHttpServer(
               <li data-i18n-html="cookie_step5">Вставьте в поле ввода ниже и нажмите <strong>Сохранить и проверить</strong>.</li>
             </ol>
             <div class="alert alert-warning s-5380fd">
-              <strong>⚠️ Важно о приватности и хранении команд:</strong><br>
+              <strong data-i18n="cookie_scenario_heading">Важно о приватности и хранении команд:</strong><br>
               <span data-i18n="cookie_scenario_disclosure">
-                Воспроизведение произвольного текста (TTS) и выполнение голосовых команд через Quasar происходит путём создания сценариев в вашем умном доме Яндекс. Текст и параметры команды передаются на серверы Яндекса и сохраняются в истории сценариев вашего аккаунта. mctl-alice изолирует сценарии по пользователям и удаляет сценарий сразу после выполнения.
+                Воспроизведение произвольного текста (TTS) и выполнение голосовых команд через Quasar происходит путём создания сценариев в вашем умном доме Яндекс. Текст и параметры команды передаются на серверы Яндекса и сохраняются в истории сценариев вашего аккаунта. mctl-alice создаёт по одному сценарию mctl-* на колонку и переиспользует его. Сервис удаляет сценарии, когда вы отключаете Quasar или удаляете аккаунт. Если Яндекс не выполнит удаление, сценарий останется в вашем Умном доме, и его можно удалить там вручную.
               </span>
               <div class="s-e5a6d3">
                 <label class="s-d3ef24">

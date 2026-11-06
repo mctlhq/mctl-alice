@@ -258,6 +258,8 @@
       privacy_sec3_desc: "Чтобы колонка произнесла фразу или выполнила команду, сервис создаёт в вашем Умном доме сценарий <code>mctl-*</code> для этой колонки и переиспользует его. Сервис удаляет сценарии, когда вы отключаете Quasar или удаляете аккаунт. Если Яндекс не выполнит удаление, сценарий останется в вашем Умном доме, и его можно удалить там вручную. Текст фраз и команд передаётся Яндексу и обрабатывается по политике конфиденциальности ООО «Яндекс».",
       privacy_sec4_title: "4. Полное удаление данных (Right to Erasure)",
       privacy_sec4_desc: "Вы можете в любой момент отозвать доступ ИИ-клиентов и удалить аккаунт в <a href=\"/account\">Личном кабинете</a>. При удалении мы сразу стираем из рабочей базы аккаунт, токены, сессии и cookie и удаляем созданные сервисом сценарии в вашем Умном доме. В резервных копиях данные остаются до истечения срока их хранения, не дольше 14 дней. Отозвать доступ сервиса со стороны Яндекса можно в настройках Яндекс ID, в разделе доступов приложений.",
+      privacy_sec5_title: "5. Кто управляет сервисом",
+      privacy_sec5_desc: "Сервисом управляет Dmitrii Mashkov. Вопросы о ваших данных и запросы на их удаление или копию присылайте на <a href=\"mailto:support@mctl.ai\">support@mctl.ai</a>.",
 
       // Terms of Service Page
       terms_title: "Условия использования",
@@ -509,6 +511,8 @@
       privacy_sec3_desc: "To make a speaker say a phrase or run a command, the service creates one <code>mctl-*</code> scenario per speaker in your Smart Home and reuses it. The service deletes the scenarios when you disconnect Quasar or delete your account. If Yandex does not complete the deletion, a scenario stays in your Smart Home and you can remove it there. Phrase and command text is sent to Yandex and processed under the Yandex privacy policy.",
       privacy_sec4_title: "4. Right to Erasure",
       privacy_sec4_desc: "You can revoke AI client access and delete your account at any time on the <a href=\"/account\">Account</a> page. Deletion immediately removes the account, tokens, sessions and cookie from the live database and deletes the scenarios the service created in your Smart Home. Backups keep the data until they expire, at most 14 days. To revoke the service on the Yandex side, use the app access settings of your Yandex ID.",
+      privacy_sec5_title: "5. Who Operates the Service",
+      privacy_sec5_desc: "The service is operated by Dmitrii Mashkov. Send questions about your data, and requests to delete or copy it, to <a href=\"mailto:support@mctl.ai\">support@mctl.ai</a>.",
 
       // Terms of Service Page
       terms_title: "Terms of Service",

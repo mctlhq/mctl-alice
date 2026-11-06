@@ -1196,7 +1196,7 @@ export function createHttpServer(
           <ul class="s-a0190f">
             <li data-i18n="oauth_retention_tokens">Приложение получит токен MCP на 30 дней; мы храним только его SHA-256 хеш.</li>
             <li data-i18n="oauth_retention_yandex">Ваши токены Яндекса (и cookie Quasar, если вы её подключили) хранятся зашифрованными AES-256-GCM, пока вы не удалите аккаунт.</li>
-            <li data-i18n="oauth_retention_revoke">Отозвать доступ приложения или удалить аккаунт можно в любой момент в личном кабинете; резервные копии хранятся не дольше 14 дней.</li>
+            <li data-i18n="oauth_retention_revoke">Отозвать доступ приложения или удалить аккаунт можно в любой момент в личном кабинете; резервные копии хранятся около 14 дней.</li>
           </ul>
           <p class="consent-links">
             <a href="/privacy" target="_blank" rel="noopener" data-i18n="footer_privacy">Конфиденциальность</a> ·

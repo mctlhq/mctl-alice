@@ -910,6 +910,7 @@ export class PostgresStorage implements IStorage {
     await this.pool.query("DELETE FROM oauth_tokens WHERE expires_at < $1", [now]);
     await this.pool.query("DELETE FROM oauth_spent_secrets WHERE expires_at < $1", [now]);
     await this.pool.query("DELETE FROM web_sessions WHERE expires_at < $1", [now]);
+    await this.pool.query("DELETE FROM browser_transactions WHERE expires_at <= $1", [now]);
   }
 
   async close(): Promise<void> {

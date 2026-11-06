@@ -586,6 +586,16 @@ export class OAuthStorage implements IStorage {
     this.pruneWebSessionsStmt.run(Date.now());
   }
 
+  pruneExpired(): void {
+    const now = Date.now();
+    this.db.prepare("DELETE FROM oauth_pending WHERE expires_at < ?").run(now);
+    this.db.prepare("DELETE FROM oauth_codes WHERE expires_at < ?").run(now);
+    this.db.prepare("DELETE FROM oauth_tokens WHERE expires_at < ?").run(now);
+    this.db.prepare("DELETE FROM oauth_spent_secrets WHERE expires_at < ?").run(now);
+    this.db.prepare("DELETE FROM browser_transactions WHERE expires_at <= ?").run(now);
+    this.pruneExpiredWebSessions();
+  }
+
   // --- Quasar Scenarios ---
 
   saveQuasarScenario(userId: string, deviceId: string, scenarioId: string, scenarioName?: string): void {

@@ -119,8 +119,8 @@ export interface AssistantBreakdown { chatgpt: number; claude: number; other: nu
 /**
  * Buckets an OAuth client name into an assistant family. The name comes from unauthenticated
  * dynamic client registration, so this is a self-reported label for a vanity statistic, not a
- * verified identity. "Connected" also relies on oauth_tokens rows surviving expiry: nothing calls
- * pruneExpired() today, and wiring it in would make lapsed users drop out of the count.
+ * verified identity. "Connected" counts accounts with an oauth_tokens row, so an account drops out
+ * of it once pruneExpired has removed its expired tokens.
  */
 export function assistantFamily(clientName: string | null | undefined): keyof AssistantBreakdown {
   const n = (clientName ?? "").toLowerCase();

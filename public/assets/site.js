@@ -255,7 +255,7 @@
       privacy_sec2_title: "2. Модель угроз и защита данных (Threat Model)",
       privacy_sec2_desc: "<strong>Шифрование at-rest:</strong> Все upstream токены и cookies хранятся в зашифрованном виде с алгоритмом AES-256-GCM. В качестве дополнительных аутентифицированных данных (AAD) используется User ID, что исключает перекрестную подмену токенов между аккаунтами.<br><br><strong>Честное раскрытие архитектурных границ:</strong> В силу архитектуры протокола MCP наш сервер выступает доверенным прокси-исполнителем между ИИ-клиентом и API Яндекса. В момент вызова инструмента токен расшифровывается в оперативной памяти процесса для выполнения запроса к Yandex API. Мы не заявляем о так называемом «Zero-Knowledge», так как любой серверный прокси неизбежно обрабатывает запрос в памяти.",
       privacy_sec3_title: "3. Особенности работы с колонками (Yandex Quasar)",
-      privacy_sec3_desc: "Чтобы колонка произнесла фразу или выполнила команду, сервис создаёт в вашем Умном доме сценарий <code>mctl-*</code> для этой колонки и переиспользует его. Сценарии удаляются, когда вы отключаете Quasar или удаляете аккаунт. Текст фраз и команд передаётся Яндексу и обрабатывается по политике конфиденциальности ООО «Яндекс».",
+      privacy_sec3_desc: "Чтобы колонка произнесла фразу или выполнила команду, сервис создаёт в вашем Умном доме сценарий <code>mctl-*</code> для этой колонки и переиспользует его. Сервис удаляет сценарии, когда вы отключаете Quasar или удаляете аккаунт. Если Яндекс не выполнит удаление, сценарий останется в вашем Умном доме, и его можно удалить там вручную. Текст фраз и команд передаётся Яндексу и обрабатывается по политике конфиденциальности ООО «Яндекс».",
       privacy_sec4_title: "4. Полное удаление данных (Right to Erasure)",
       privacy_sec4_desc: "Вы можете в любой момент отозвать доступ ИИ-клиентов и удалить аккаунт в <a href=\"/account\">Личном кабинете</a>. При удалении мы сразу стираем из рабочей базы аккаунт, токены, сессии и cookie и удаляем созданные сервисом сценарии в вашем Умном доме. В резервных копиях данные остаются до истечения срока их хранения, не дольше 14 дней. Отозвать доступ сервиса со стороны Яндекса можно в настройках Яндекс ID, в разделе доступов приложений.",
 
@@ -281,7 +281,7 @@
 
       // Quasar Cookie Page Additions
       cookie_scenario_heading: "Важно о приватности и хранении команд:",
-      cookie_scenario_disclosure: "Воспроизведение произвольного текста (TTS) и выполнение голосовых команд через Quasar происходит путём создания сценариев в вашем умном доме Яндекс. Текст и параметры команды передаются на серверы Яндекса и сохраняются в истории сценариев вашего аккаунта. mctl-alice создаёт по одному сценарию mctl-* на колонку и переиспользует его. Сценарии удаляются, когда вы отключаете Quasar или удаляете аккаунт.",
+      cookie_scenario_disclosure: "Воспроизведение произвольного текста (TTS) и выполнение голосовых команд через Quasar происходит путём создания сценариев в вашем умном доме Яндекс. Текст и параметры команды передаются на серверы Яндекса и сохраняются в истории сценариев вашего аккаунта. mctl-alice создаёт по одному сценарию mctl-* на колонку и переиспользует его. Сервис удаляет сценарии, когда вы отключаете Quasar или удаляете аккаунт. Если Яндекс не выполнит удаление, сценарий останется в вашем Умном доме, и его можно удалить там вручную.",
       cookie_scenario_ack: "Я понимаю, что команды Quasar сохраняются в истории сценариев Яндекс",
       // Site navigation, setup guide and 404
       skip_link: "Перейти к содержимому",
@@ -506,7 +506,7 @@
       privacy_sec2_title: "2. Threat Model & Data Protection",
       privacy_sec2_desc: "<strong>Encryption At-Rest:</strong> All upstream credentials and cookies are encrypted with AES-256-GCM with the User ID used as Additional Authenticated Data (AAD), preventing cross-tenant substitution attacks.<br><br><strong>Architectural Disclosure:</strong> Under the MCP protocol architecture, our server acts as a trusted proxy between the AI client and the Yandex API. During a tool call, credentials are decrypted in volatile memory to make the outbound HTTPS request. We do not claim 'Zero-Knowledge', as any server-side proxy must process credentials in memory.",
       privacy_sec3_title: "3. Speaker Operations (Yandex Quasar)",
-      privacy_sec3_desc: "To make a speaker say a phrase or run a command, the service creates one <code>mctl-*</code> scenario per speaker in your Smart Home and reuses it. The scenarios are deleted when you disconnect Quasar or delete your account. Phrase and command text is sent to Yandex and processed under the Yandex privacy policy.",
+      privacy_sec3_desc: "To make a speaker say a phrase or run a command, the service creates one <code>mctl-*</code> scenario per speaker in your Smart Home and reuses it. The service deletes the scenarios when you disconnect Quasar or delete your account. If Yandex does not complete the deletion, a scenario stays in your Smart Home and you can remove it there. Phrase and command text is sent to Yandex and processed under the Yandex privacy policy.",
       privacy_sec4_title: "4. Right to Erasure",
       privacy_sec4_desc: "You can revoke AI client access and delete your account at any time on the <a href=\"/account\">Account</a> page. Deletion immediately removes the account, tokens, sessions and cookie from the live database and deletes the scenarios the service created in your Smart Home. Backups keep the data until they expire, at most 14 days. To revoke the service on the Yandex side, use the app access settings of your Yandex ID.",
 
@@ -532,7 +532,7 @@
 
       // Quasar Cookie Page Additions
       cookie_scenario_heading: "Privacy and command history:",
-      cookie_scenario_disclosure: "Arbitrary text-to-speech (TTS) playback and voice commands via Quasar work by dynamically generating routines in your Yandex Smart Home. The command text and parameters are sent to Yandex servers and recorded in your account routine history. mctl-alice creates one mctl-* routine per speaker and reuses it. The routines are deleted when you disconnect Quasar or delete your account.",
+      cookie_scenario_disclosure: "Arbitrary text-to-speech (TTS) playback and voice commands via Quasar work by dynamically generating routines in your Yandex Smart Home. The command text and parameters are sent to Yandex servers and recorded in your account routine history. mctl-alice creates one mctl-* routine per speaker and reuses it. The service deletes the routines when you disconnect Quasar or delete your account. If Yandex does not complete the deletion, a routine stays in your Smart Home and you can remove it there.",
       cookie_scenario_ack: "I understand that Quasar commands are recorded in my Yandex routine history",
       // Site navigation, setup guide and 404
       skip_link: "Skip to content",

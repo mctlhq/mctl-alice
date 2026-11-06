@@ -3,6 +3,12 @@
 Versions follow semantic versioning; tags carry no `v` prefix. Full notes for
 every version are on the [Releases page](https://github.com/mctlhq/mctl-alice/releases).
 
+## 2.11.1 (2026-11-06)
+
+### Bug Fixes
+
+* **privacy:** name the operator on the privacy page ([#158](https://github.com/mctlhq/mctl-alice/pull/158))
+
 ## 2.11.0 (2026-11-06)
 
 - Correct public claims about analytics, tenant isolation and scenario removal, and remove pictographs from the site (#153).

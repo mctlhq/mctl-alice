@@ -238,15 +238,25 @@ export function renderSetupPage(siteUrl: string): string {
         <ul class="s-a0190f" data-i18n-html="setup_tested_list">
           <li><strong>Claude</strong> (claude.ai и Claude Desktop): <em>Customize → Connectors → «+» → Add custom connector</em>, вставьте MCP URL и нажмите <em>Add</em>, затем <em>Connect</em>.</li>
           <li><strong>ChatGPT</strong>: <em>Plugins → «+» → custom MCP server</em>, вставьте MCP URL и пройдите авторизацию Яндекса.</li>
+          <li><strong>Cursor IDE</strong>: добавьте сервер в <code>.cursor/mcp.json</code> (см. конфигурацию ниже).</li>
+          <li><strong>Claude Code</strong>: подключите через команду <code>claude mcp add</code> в терминале (см. конфигурацию ниже).</li>
         </ul>
       </section>
 
       <section class="s-8f4f37" aria-labelledby="setup-other">
-        <h2 class="section-title s-96cfba" id="setup-other" data-i18n="setup_other_title">Другие MCP-клиенты</h2>
-        <p class="s-2a0ca8" data-i18n="setup_other_desc">Подойдёт любой клиент, который подключает удалённые MCP-серверы с авторизацией OAuth 2.1, например Claude Code, Codex или Cursor. Мы их сами не проверяли, поэтому напишите нам, если что-то не работает.</p>
+        <h2 class="section-title s-96cfba" id="setup-other" data-i18n="setup_other_title">Конфигурации для других MCP-клиентов</h2>
+        <p class="s-2a0ca8" data-i18n="setup_other_desc">Подойдёт любой клиент, который подключает удалённые MCP-серверы с авторизацией OAuth 2.1 (Claude Code, Cursor, Windsurf, Zed). Скопируйте нужный формат:</p>
+        <p class="s-2a0ca8"><strong>Claude Code CLI:</strong></p>
         <pre><code>claude mcp add --transport http alice <span class="mcp-url-slot">${mcpUrl}</span></code></pre>
+        <p class="s-2a0ca8"><strong>Cursor IDE (<code>.cursor/mcp.json</code>) & Windsurf (<code>mcp_config.json</code>):</strong></p>
         <pre><code>{
   "mcpServers": {
+    "alice": { "url": "<span class="mcp-url-slot">${mcpUrl}</span>" }
+  }
+}</code></pre>
+        <p class="s-2a0ca8"><strong>Zed Editor (<code>settings.json</code>):</strong></p>
+        <pre><code>{
+  "context_servers": {
     "alice": { "url": "<span class="mcp-url-slot">${mcpUrl}</span>" }
   }
 }</code></pre>

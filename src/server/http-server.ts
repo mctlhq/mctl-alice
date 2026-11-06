@@ -167,6 +167,8 @@ function escapeHtml(str: string): string {
 function renderAuthPage({
   title,
   titleKey,
+  description,
+  descriptionKey,
   contentHtml,
   scriptHtml = "",
   canonical,
@@ -176,6 +178,8 @@ function renderAuthPage({
 }: {
   title: string;
   titleKey?: string;
+  description?: string;
+  descriptionKey?: string;
   contentHtml: string;
   scriptHtml?: string;
   /** The page's absolute URL, given only when a public origin is configured. */
@@ -231,13 +235,18 @@ function renderAuthPage({
       : `<link rel="canonical" href="${escapeHtml(canonicalUrl)}">
 <meta name="robots" content="${escapeHtml(robotsDirective || "noindex, follow")}">`
     : defaultRobots;
+  const descMeta = description
+    ? `\n<meta name="description" content="${escapeHtml(description)}"${descriptionKey ? ` data-page-description-key="${escapeHtml(descriptionKey)}"` : ""}>
+<meta property="og:description" content="${escapeHtml(description)}">
+<meta name="twitter:description" content="${escapeHtml(description)}">`
+    : "";
   return `<!doctype html>
-<html lang="ru"${titleKey ? ` data-page-title-key="${escapeHtml(titleKey)}"` : ""}>
+<html lang="ru"${titleKey ? ` data-page-title-key="${escapeHtml(titleKey)}"` : ""}${descriptionKey ? ` data-page-description-key="${escapeHtml(descriptionKey)}"` : ""}>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <script src="/assets/theme-init.js?v=${VERSION}"></script>
-<title>${escapeHtml(title)}</title>
+<title>${escapeHtml(title)}</title>${descMeta}
 ${indexing}
 <script type="application/ld+json">
 {
@@ -1736,8 +1745,10 @@ export function createHttpServer(
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       res.end(
         renderAuthPage({
-          title: "Алиса MCP — подключение Яндекс Станции к Claude и ChatGPT",
+          title: "Алиса MCP — подключение Яндекс Станции к Claude, ChatGPT и Cursor",
           titleKey: "setup_page_title",
+          description: "Пошаговая инструкция по подключению Яндекс Станции и умного дома с Алисой к Claude Desktop, ChatGPT, Cursor и другим AI-ассистентам через протокол MCP.",
+          descriptionKey: "setup_page_description",
           contentHtml: renderSetupPage(siteUrl),
           canonical: canonicalFor("/setup"),
           indexable: true,
@@ -1753,6 +1764,8 @@ export function createHttpServer(
         renderAuthPage({
           title: "mctl-alice — О сервисе",
           titleKey: "about_title",
+          description: "mctl-alice — открытый облачный MCP-сервер для интеграции умного дома Яндекса и колонок с Алисой в современные LLM-ассистенты.",
+          descriptionKey: "about_page_description",
           contentHtml: renderAboutPage(baseUrl),
           canonical: canonicalFor("/about"),
           indexable: true,
@@ -1806,6 +1819,8 @@ export function createHttpServer(
         renderAuthPage({
           title: "mctl-alice — Безопасность",
           titleKey: "security_title",
+          description: "Архитектура безопасности mctl-alice: авторизация OAuth 2.1, шифрование токенов, отсутствие хранения истории устройств и прямой вызов API Яндекса.",
+          descriptionKey: "security_page_description",
           contentHtml: renderSecurityPage(baseUrl),
           canonical: canonicalFor("/security"),
           indexable: true,

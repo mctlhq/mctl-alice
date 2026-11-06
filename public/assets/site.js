@@ -293,7 +293,10 @@
       footer_setup: "Подключение",
       hero_connect_btn: "Подключить ассистента",
       setup_more_link: "Другие клиенты, пошаговый сценарий и как отозвать доступ →",
-      setup_page_title: "Алиса MCP — подключение Яндекс Станции к Claude и ChatGPT",
+      setup_page_title: "Алиса MCP — подключение Яндекс Станции к Claude, ChatGPT и Cursor",
+      setup_page_description: "Пошаговое руководство по подключению Яндекс Станции и умного дома с Алисой к Claude, ChatGPT и Cursor через протокол MCP с авторизацией OAuth 2.1.",
+      about_page_description: "О сервисе mctl-alice: независимый открытый MCP-сервер для интеграции голосового ассистента Алиса и умного дома Яндекса с искусственным интеллектом.",
+      security_page_description: "Политика безопасности и архитектура авторизации mctl-alice: OAuth 2.1, PKCE, шифрование токенов в покое и модель изолированных разрешений.",
       setup_page_h1: "Подключите Алису и Яндекс Станцию к Claude или ChatGPT",
       setup_page_lead: "mctl-alice подключает Яндекс Станцию и устройства из приложения «Дом с Алисой» к AI-ассистенту через MCP. Добавьте адрес сервера, войдите через Яндекс ID и выберите разрешения. После подключения ассистент сможет показывать устройства и выполнять разрешённые действия.",
       setup_prerequisites_title: "Что понадобится",
@@ -301,9 +304,9 @@
       setup_check_title: "Первая проверка без управления устройствами",
       setup_check_desc: "После авторизации попросите ассистента: «Покажи мои устройства умного дома». Он должен вызвать alice_list_devices и показать устройства из вашего аккаунта Яндекса. Если список пуст, проверьте, что вошли в тот же аккаунт, где настроен «Дом с Алисой», и выдали iot:view. Для управления устройствами отдельно разрешите iot:control; речь и текстовые команды на колонках требуют необязательного подключения Quasar.",
       setup_tested_title: "Проверенные клиенты",
-      setup_tested_list: "<li><strong>Claude</strong> (claude.ai и Claude Desktop): <em>Customize → Connectors → «+» → Add custom connector</em>, вставьте MCP URL и нажмите <em>Add</em>, затем <em>Connect</em>.</li><li><strong>ChatGPT</strong>: <em>Plugins → «+» → custom MCP server</em>, вставьте MCP URL и пройдите авторизацию Яндекса.</li>",
-      setup_other_title: "Другие MCP-клиенты",
-      setup_other_desc: "Подойдёт любой клиент, который подключает удалённые MCP-серверы с авторизацией OAuth 2.1, например Claude Code, Codex или Cursor. Мы их сами не проверяли, поэтому напишите нам, если что-то не работает.",
+      setup_tested_list: "<li><strong>Claude</strong> (claude.ai и Claude Desktop): <em>Customize → Connectors → «+» → Add custom connector</em>, вставьте MCP URL и нажмите <em>Add</em>, затем <em>Connect</em>.</li><li><strong>ChatGPT</strong>: <em>Plugins → «+» → custom MCP server</em>, вставьте MCP URL и пройдите авторизацию Яндекса.</li><li><strong>Cursor IDE</strong>: добавьте сервер в <code>.cursor/mcp.json</code> (см. конфигурацию ниже).</li><li><strong>Claude Code</strong>: подключите через команду <code>claude mcp add</code> в терминале (см. конфигурацию ниже).</li>",
+      setup_other_title: "Конфигурации для других MCP-клиентов",
+      setup_other_desc: "Подойдёт любой клиент, который подключает удалённые MCP-серверы с авторизацией OAuth 2.1 (Claude Code, Cursor, Windsurf, Zed). Скопируйте нужный формат:",
       setup_walk_title: "Как это проходит",
       setup_walk_list: "<li>Вы добавляете MCP URL, и ассистент открывает окно входа.</li><li>Вы входите через Яндекс ID и разрешаете mctl-alice доступ к Умному дому.</li><li>На странице согласия вы видите, какой ассистент просит доступ, и можете снять лишние разрешения: <code>iot:view</code> (смотреть устройства), <code>iot:control</code> (управлять ими), <code>quasar</code> (речь и текстовые команды на колонках).</li><li>Вы возвращаетесь в ассистента и пишете, например: «Какие у меня колонки?» или «Выключи весь свет на кухне».</li><li>По желанию подключаете Quasar в <a href=\"/account\">личном кабинете</a>, чтобы колонки могли произносить фразы и выполнять текстовые команды. Без него остальные функции работают.</li>",
       setup_data_title: "Ваши данные и как отозвать доступ",
@@ -546,7 +549,10 @@
       footer_setup: "Connect",
       hero_connect_btn: "Connect your assistant",
       setup_more_link: "Other clients, a walkthrough and how to revoke access →",
-      setup_page_title: "Alice MCP — connect Yandex Station to Claude and ChatGPT",
+      setup_page_title: "Alice MCP — connect Yandex Station to Claude, ChatGPT, and Cursor",
+      setup_page_description: "Step-by-step guide to connect Yandex Station and Alice Smart Home to Claude, ChatGPT, and Cursor via Model Context Protocol (MCP) with OAuth 2.1.",
+      about_page_description: "About mctl-alice: independent open-source MCP server connecting Yandex Alice smart home to LLMs and AI assistants.",
+      security_page_description: "Security architecture and authorization policy of mctl-alice: OAuth 2.1, PKCE, token encryption at rest, and granular permission boundaries.",
       setup_page_h1: "Connect Alice and Yandex Station to Claude or ChatGPT",
       setup_page_lead: "mctl-alice connects Yandex Station and devices in the Yandex Smart Home app to an AI assistant through MCP. Add the server URL, sign in with Yandex ID and choose permissions. Once connected, the assistant can list devices and perform the actions you allow.",
       setup_prerequisites_title: "Before you connect",
@@ -554,9 +560,9 @@
       setup_check_title: "First check without controlling devices",
       setup_check_desc: "After signing in, ask the assistant: “Show my smart home devices.” It should call alice_list_devices and show the devices in your Yandex account. If the list is empty, check that you signed in to the account used by Yandex Smart Home and granted iot:view. Device control separately requires iot:control; speech and text commands on speakers require the optional Quasar connection.",
       setup_tested_title: "Tested clients",
-      setup_tested_list: "<li><strong>Claude</strong> (claude.ai and Claude Desktop): <em>Customize → Connectors → “+” → Add custom connector</em>, paste the MCP URL, click <em>Add</em>, then <em>Connect</em>.</li><li><strong>ChatGPT</strong>: <em>Plugins → “+” → custom MCP server</em>, paste the MCP URL and complete the Yandex authorization.</li>",
-      setup_other_title: "Other MCP clients",
-      setup_other_desc: "Any client that connects to remote MCP servers with OAuth 2.1 authorization should work, for example Claude Code, Codex or Cursor. We have not tested them ourselves, so let us know if something does not work.",
+      setup_tested_list: "<li><strong>Claude</strong> (claude.ai and Claude Desktop): <em>Customize → Connectors → “+” → Add custom connector</em>, paste the MCP URL, click <em>Add</em>, then <em>Connect</em>.</li><li><strong>ChatGPT</strong>: <em>Plugins → “+” → custom MCP server</em>, paste the MCP URL and complete the Yandex authorization.</li><li><strong>Cursor IDE</strong>: add server to <code>.cursor/mcp.json</code> (see configuration below).</li><li><strong>Claude Code</strong>: connect using the <code>claude mcp add</code> command in your terminal (see configuration below).</li>",
+      setup_other_title: "Configurations for other MCP clients",
+      setup_other_desc: "Any client that connects to remote MCP servers with OAuth 2.1 authorization (Claude Code, Cursor, Windsurf, Zed) will work. Copy the configuration format below:",
       setup_walk_title: "What happens",
       setup_walk_list: "<li>You add the MCP URL and the assistant opens a sign-in window.</li><li>You sign in with Yandex ID and allow mctl-alice to access your Smart Home.</li><li>The consent page shows which assistant is asking, and you can untick permissions you do not want: <code>iot:view</code> (see devices), <code>iot:control</code> (control them), <code>quasar</code> (speech and text commands on speakers).</li><li>You go back to the assistant and write, for example: “Which speakers do I have?” or “Turn off all the lights in the kitchen”.</li><li>Optionally, connect Quasar on the <a href=\"/account\">account page</a> so speakers can say phrases and run text commands. Everything else works without it.</li>",
       setup_data_title: "Your data and how to revoke access",
@@ -581,7 +587,13 @@
       document.title = dict.meta_title;
     }
     var metaDesc = document.querySelector('meta[name="description"]');
-    if (metaDesc && dict.meta_desc) metaDesc.setAttribute("content", dict.meta_desc);
+    var pageDescKey = document.documentElement.getAttribute("data-page-description-key") || (metaDesc && metaDesc.getAttribute("data-page-description-key"));
+    var targetDesc = (pageDescKey && dict[pageDescKey]) || dict.meta_desc;
+    if (metaDesc && targetDesc) metaDesc.setAttribute("content", targetDesc);
+    var ogDesc = document.querySelector('meta[property="og:description"]');
+    if (ogDesc && targetDesc) ogDesc.setAttribute("content", targetDesc);
+    var twDesc = document.querySelector('meta[name="twitter:description"]');
+    if (twDesc && targetDesc) twDesc.setAttribute("content", targetDesc);
 
     // Update page titles if data-i18n exists on title or body
     var pageTitleKey = document.documentElement.getAttribute("data-page-title-key");

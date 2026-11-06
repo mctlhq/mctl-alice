@@ -250,7 +250,9 @@ ${indexing}
 }
 </script>
 ${breadcrumbs}
-<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg?v=${VERSION}">
+<link rel="icon" href="/favicon.ico?v=${VERSION}" sizes="any">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png?v=${VERSION}">
 <link rel="stylesheet" href="/assets/fonts.css?v=${VERSION}">
 <link rel="stylesheet" href="/assets/tokens.css?v=${VERSION}">
 <link rel="stylesheet" href="/assets/components.css?v=${VERSION}">
@@ -1006,8 +1008,10 @@ export function createHttpServer(
     if (
       (url.pathname === "/favicon.svg" ||
         url.pathname === "/favicon.ico" ||
+        url.pathname === "/apple-touch-icon.png" ||
+        url.pathname === "/icon-192.png" ||
         url.pathname === "/og-image.png") &&
-      req.method === "GET"
+      (req.method === "GET" || req.method === "HEAD")
     ) {
       const served = serveStaticFile(url.pathname, res);
       if (served) return;

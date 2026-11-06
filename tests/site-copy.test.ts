@@ -76,9 +76,28 @@ describe("HSTS", () => {
 });
 
 describe("contact details", () => {
-  it("names no operator or city on the about page", () => {
+  const NAME = /Машков|Mashkov/;
+  const CITY = /Подгорица|Podgorica/;
+
+  it("names the operator on the privacy page and nowhere else", () => {
+    const pages = read("src/server/pages.ts");
+    const privacyStart = pages.indexOf("export function renderPrivacyPage");
+    const privacyEnd = pages.indexOf("export function ", privacyStart + 1);
+    expect(privacyStart).toBeGreaterThan(-1);
+    expect(privacyEnd).toBeGreaterThan(privacyStart);
+    expect(pages.slice(privacyStart, privacyEnd)).toMatch(NAME);
+    expect(pages.slice(0, privacyStart) + pages.slice(privacyEnd)).not.toMatch(NAME);
+
+    const named = read("public/assets/site.js")
+      .split("\n")
+      .filter((line) => NAME.test(line))
+      .map((line) => line.trim().split(":")[0]);
+    expect(named).toEqual(["privacy_sec5_desc", "privacy_sec5_desc"]);
+  });
+
+  it("names no city", () => {
     for (const file of ["src/server/pages.ts", "public/assets/site.js"]) {
-      expect(read(file), file).not.toMatch(/Машков|Mashkov|Подгорица|Podgorica/);
+      expect(read(file), file).not.toMatch(CITY);
     }
   });
 });

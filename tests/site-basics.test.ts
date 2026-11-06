@@ -132,7 +132,17 @@ describe("Public site basics: /setup, 404 page, sitemap, fonts, social preview",
     expect(sitemap.status).toBe(200);
     expect(sitemap.headers.get("content-type")).toContain("application/xml");
     const locs = Array.from((await sitemap.text()).matchAll(/<loc>([^<]+)<\/loc>/g), m => m[1]);
-    expect(locs).toEqual(["/", "/setup", "/about", "/privacy", "/terms", "/security"].map(p => PUBLIC_ORIGIN + p));
+    expect(locs).toEqual(["/", "/setup", "/about", "/security"].map(p => PUBLIC_ORIGIN + p));
+
+    for (const page of ["/privacy", "/terms"]) {
+      const pageRes = await fetch(base + page, { headers: html });
+      expect(pageRes.status).toBe(200);
+      expect(pageRes.headers.get("x-robots-tag")).toBe("noindex, follow");
+      const body = await pageRes.text();
+      expect(body).toContain('<meta name="robots" content="noindex, follow">');
+    }
+    const indexableRes = await fetch(base + "/setup", { headers: html });
+    expect(indexableRes.headers.get("x-robots-tag")).toBeNull();
 
     // Crawlers issuing HEAD requests must receive 200 rather than 404
     const robotsHead = await fetch(base + "/robots.txt", { method: "HEAD" });
@@ -234,10 +244,14 @@ describe("Public site without a configured public origin", () => {
     expect((await fetch(base + "/sitemap.xml")).status).toBe(404);
   });
 
-  it("keeps the public pages indexable, like the landing page, and private ones not", async () => {
-    for (const page of ["/", "/setup", "/about", "/privacy", "/terms", "/security"]) {
+  it("keeps primary landing and guide pages indexable, and private or utility pages noindex", async () => {
+    for (const page of ["/", "/setup", "/about", "/security"]) {
       const body = await (await fetch(base + page, { headers: { Accept: "text/html" } })).text();
       expect(body, page).not.toContain('name="robots"');
+    }
+    for (const page of ["/privacy", "/terms"]) {
+      const body = await (await fetch(base + page, { headers: { Accept: "text/html" } })).text();
+      expect(body, page).toContain('<meta name="robots" content="noindex, follow">');
     }
     const account = await (await fetch(base + "/account", { headers: { Accept: "text/html" } })).text();
     expect(account).toContain('<meta name="robots" content="noindex">');

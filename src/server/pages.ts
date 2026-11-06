@@ -169,8 +169,11 @@ export function renderSecurityPage(baseUrl: string): string {
   `;
 }
 
-/** Pages listed in the sitemap; everything else is either private or not a page. */
+/** All public HTML pages. */
 export const PUBLIC_PAGE_PATHS = ["/", "/setup", "/about", "/privacy", "/terms", "/security"];
+
+/** Indexable pages listed in the sitemap; utility/legal pages (/privacy, /terms) carry noindex to prevent brand cannibalization. */
+export const SITEMAP_PAGE_PATHS = ["/", "/setup", "/about", "/security"];
 
 /** `siteUrl` is empty when no public origin is configured: no Sitemap line then. */
 export function renderRobotsTxt(siteUrl: string): string {
@@ -186,7 +189,7 @@ export function renderRobotsTxt(siteUrl: string): string {
 }
 
 export function renderSitemapXml(siteUrl: string): string {
-  const urls = PUBLIC_PAGE_PATHS.map((p) => `  <url><loc>${escapeHtml(siteUrl + p)}</loc></url>`).join("\n");
+  const urls = SITEMAP_PAGE_PATHS.map((p) => `  <url><loc>${escapeHtml(siteUrl + p)}</loc></url>`).join("\n");
   return `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
 ${urls}

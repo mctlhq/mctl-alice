@@ -171,6 +171,7 @@ function renderAuthPage({
   scriptHtml = "",
   canonical,
   indexable = false,
+  robotsDirective,
   withAnalytics = false,
 }: {
   title: string;
@@ -181,6 +182,8 @@ function renderAuthPage({
   canonical?: { siteUrl: string; path: string };
   /** Public pages: indexable even without a canonical; everything else is noindex. */
   indexable?: boolean;
+  /** Custom robots meta directive (e.g. "noindex, follow"). Defaults to "noindex" if not indexable. */
+  robotsDirective?: string;
   /** Public content pages: load privacy-friendly analytics script. Omitted on auth/sensitive pages. */
   withAnalytics?: boolean;
 }): string {
@@ -213,8 +216,10 @@ function renderAuthPage({
 }
 </script>`
     : "";
+  const defaultRobots = indexable ? "" : `<meta name="robots" content="${escapeHtml(robotsDirective || "noindex")}">`;
   const indexing = canonical
-    ? `<link rel="canonical" href="${escapeHtml(canonicalUrl)}">
+    ? indexable
+      ? `<link rel="canonical" href="${escapeHtml(canonicalUrl)}">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="mctl-alice">
 <meta property="og:title" content="${escapeHtml(title)}">
@@ -223,7 +228,9 @@ function renderAuthPage({
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta name="twitter:card" content="summary_large_image">`
-    : indexable ? "" : `<meta name="robots" content="noindex">`;
+      : `<link rel="canonical" href="${escapeHtml(canonicalUrl)}">
+<meta name="robots" content="${escapeHtml(robotsDirective || "noindex, follow")}">`
+    : defaultRobots;
   return `<!doctype html>
 <html lang="ru"${titleKey ? ` data-page-title-key="${escapeHtml(titleKey)}"` : ""}>
 <head>
@@ -1756,14 +1763,18 @@ export function createHttpServer(
     }
 
     if (url.pathname === "/privacy" && (req.method === "GET" || req.method === "HEAD")) {
-      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.writeHead(200, {
+        "Content-Type": "text/html; charset=utf-8",
+        "X-Robots-Tag": "noindex, follow",
+      });
       res.end(
         renderAuthPage({
           title: "mctl-alice — Политика конфиденциальности",
           titleKey: "privacy_title",
           contentHtml: renderPrivacyPage(baseUrl),
           canonical: canonicalFor("/privacy"),
-          indexable: true,
+          indexable: false,
+          robotsDirective: "noindex, follow",
           withAnalytics: true,
         })
       );
@@ -1771,14 +1782,18 @@ export function createHttpServer(
     }
 
     if (url.pathname === "/terms" && (req.method === "GET" || req.method === "HEAD")) {
-      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.writeHead(200, {
+        "Content-Type": "text/html; charset=utf-8",
+        "X-Robots-Tag": "noindex, follow",
+      });
       res.end(
         renderAuthPage({
           title: "mctl-alice — Условия использования",
           titleKey: "terms_title",
           contentHtml: renderTermsPage(baseUrl),
           canonical: canonicalFor("/terms"),
-          indexable: true,
+          indexable: false,
+          robotsDirective: "noindex, follow",
           withAnalytics: true,
         })
       );

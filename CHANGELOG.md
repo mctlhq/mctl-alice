@@ -5,9 +5,7 @@ every version are on the [Releases page](https://github.com/mctlhq/mctl-alice/re
 
 ## 2.11.1 (2026-11-06)
 
-### Bug Fixes
-
-* **privacy:** name the operator on the privacy page ([#158](https://github.com/mctlhq/mctl-alice/pull/158))
+- Name the operator and a contact address on the privacy page (#158).
 
 ## 2.11.0 (2026-11-06)
 

@@ -38,7 +38,7 @@
 
   if (!token) {
     setAlert(statusEl, "error");
-    statusEl.textContent = getI18nText("callback_status_token_missing", "❌ Токен не найден в URL редиректа.");
+    statusEl.textContent = getI18nText("callback_status_token_missing", "Токен не найден в URL редиректа.");
     return;
   }
 
@@ -52,7 +52,7 @@
     .then(function (data) {
       if (data.status === "ok") {
         setAlert(statusEl, "success");
-        statusEl.textContent = getI18nText("callback_status_connected", "✅ Успешно! Умный дом подключен к mctl-alice.");
+        statusEl.textContent = getI18nText("callback_status_connected", "Успешно! Умный дом подключен к mctl-alice.");
         actionsEl.style.display = "flex";
         if (Array.isArray(data.speakers) && data.speakers.length > 0) {
           speakersEl.style.display = "block";
@@ -60,13 +60,13 @@
         }
       } else {
         setAlert(statusEl, "error");
-        var errPrefix = lang() === "en" ? "❌ Verification error: " : "❌ Ошибка проверки: ";
+        var errPrefix = lang() === "en" ? "Verification error: " : "Ошибка проверки: ";
         var unknownErr = lang() === "en" ? "unknown error" : "неизвестная ошибка";
         statusEl.textContent = errPrefix + (data.message || unknownErr);
       }
     })
     .catch(function (err) {
       setAlert(statusEl, "error");
-      statusEl.textContent = (lang() === "en" ? "❌ Error: " : "❌ Ошибка: ") + err.message;
+      statusEl.textContent = (lang() === "en" ? "Error: " : "Ошибка: ") + err.message;
     });
 })();

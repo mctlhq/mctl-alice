@@ -85,8 +85,8 @@ export function renderAccountPage({
         <p class="s-563961">
           <span data-i18n="account_status_label">Статус</span>: <strong>${
             hasQuasar
-              ? '<span data-i18n="account_quasar_status_connected">🟢 Подключено (доступны произвольные фразы и команды)</span>'
-              : '<span data-i18n="account_quasar_status_not_configured">⚪ Не настроено</span>'
+              ? '<span data-i18n="account_quasar_status_connected">Подключено (доступны произвольные фразы и команды)</span>'
+              : '<span data-i18n="account_quasar_status_not_configured">Не настроено</span>'
           }</strong>
         </p>
         <div class="s-04e22a">

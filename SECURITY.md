@@ -17,10 +17,13 @@ We strive to acknowledge receipt of security vulnerability reports within 24 hou
 
 ## Safe Harbor for Security Researchers
 
-We consider security research conducted in accordance with this policy to be authorized and protected:
-- We will not pursue civil or criminal action against researchers who make a good-faith effort to avoid privacy violations, data destruction, and service interruption.
-- Please do not access or modify data belonging to other users. Test vulnerabilities only against accounts you own.
-- Please give us reasonable time to resolve the vulnerability before any public disclosure.
+We will not pursue legal action against researchers who follow these rules in good faith:
+- Test only on accounts and devices you own.
+- Do not access or change other people's data. If you come across it by accident, stop, tell us and delete it.
+- Do not run denial-of-service attacks, spam or social engineering.
+- Report the vulnerability to us and allow reasonable time for a fix before public disclosure.
+
+This covers our service only. It does not extend to systems of Yandex, Cloudflare or other companies, and we cannot authorize testing them.
 
 ---
 

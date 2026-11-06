@@ -25,12 +25,12 @@ describe("Public Informational Pages and Account Dashboard", () => {
     storage.close();
   });
 
-  it("should serve /about page with operator info and license", async () => {
+  it("should serve /about page with contacts and license", async () => {
     const res = await fetch(`${baseUrl}/about`);
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toContain("О сервисе mctl-alice");
-    expect(html).toContain("Дмитрий Машков");
+    expect(html).toContain("support@mctl.ai");
     expect(html).toContain("Apache 2.0");
   });
 

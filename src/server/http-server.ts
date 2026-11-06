@@ -40,6 +40,7 @@ import { getOpenApiSpec } from "./openapi.js";
 import { TelemetryStorage, ITelemetryStorage } from "../storage/telemetry-storage.js";
 import { TelemetrySampler } from "../services/telemetry-sampler.js";
 import { TelemetryRetention, TelemetryRetentionOptions } from "../services/telemetry-retention.js";
+import { ExpiredRecordPruner, ExpiredRecordPrunerOptions } from "../services/expired-records.js";
 import { IStorage, createStorage, createTelemetryStorage, OAuthStorage } from "../storage/index.js";
 import { OAuthController, OAuthError } from "../auth/oauth-controller.js";
 import { initQrAuth, checkQrAuthStatus } from "../auth/yandex-qr-auth.js";
@@ -611,6 +612,8 @@ export interface HttpServerOptions {
   clientId?: string;
   clientSecret?: string;
   publicBaseUrl?: string;
+  /** Options for pruning expired storage rows, or false to turn it off. Off by default under the test runner. */
+  expiredRecordPruning?: ExpiredRecordPrunerOptions | false;
   storage?: ITelemetryStorage;
   enableSampler?: boolean;
   /** Retention schedule for telemetry samples; runs in every mode. `false` turns it off (the default under Vitest). */
@@ -712,6 +715,9 @@ export function createHttpServer(
   const retentionOptions = options.retention ?? (underTest ? false : {});
   const retention = retentionOptions === false ? null : new TelemetryRetention(telemetryStorage, retentionOptions);
   retention?.start();
+  const pruningOptions = options.expiredRecordPruning ?? (underTest ? false : {});
+  const expiredRecords = pruningOptions === false ? null : new ExpiredRecordPruner(oauthStorage, pruningOptions);
+  expiredRecords?.start();
 
   // Keep track of active legacy SSE transports
   const sseTransports = new Map<string, SSEServerTransport>();
@@ -929,6 +935,8 @@ export function createHttpServer(
     }
 
     setSecurityHeaders(res);
+    // Only this host: no includeSubDomains, since other mctl.ai hosts are not ours to pin from here.
+    if (baseUrl.startsWith("https://")) res.setHeader("Strict-Transport-Security", "max-age=31536000");
 
     const corsPath = isCorsPath(url.pathname);
     // Without auth any page the operator visits could drive the local server
@@ -2441,6 +2449,7 @@ export function createHttpServer(
     publicStats.stop();
     unregisterSseStreams();
     retention?.stop();
+    expiredRecords?.stop();
     if (!options.storage) void telemetryStorage.close();
   });
 

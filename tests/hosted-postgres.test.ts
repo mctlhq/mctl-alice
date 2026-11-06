@@ -42,6 +42,22 @@ describe.skipIf(!connectionString)("hosted isolation with real PostgreSQL", () =
     expect(await auth("bob")).toMatchObject({ authenticated: false, status: 401 });
     expect(await storage.getTokenByRefreshToken("rt-bob")).toBeNull();
   });
+  it("prunes expired rows and keeps live ones", async () => {
+    const now = Date.now();
+    await storage.saveToken({ accessToken: "prune-old", refreshToken: "rt-prune-old", userId: "prune", clientId: "client", scope: "iot:view", createdAt: now - 2000, expiresAt: now - 1000 } as any);
+    await storage.saveToken({ accessToken: "prune-new", refreshToken: "rt-prune-new", userId: "prune", clientId: "client", scope: "iot:view", createdAt: now, expiresAt: now + 60000 } as any);
+    await storage.saveBrowserTransaction("prune-tx-new", "{}", now + 60000);
+    // Written directly: saving through storage would itself sweep expired rows.
+    await pool.query("INSERT INTO browser_transactions VALUES ($1, $2, $3)", ["prune-tx-old", "{}", now - 1000]);
+    await storage.pruneExpired();
+    const tokens = await pool.query("SELECT COUNT(*)::int AS n FROM oauth_tokens WHERE user_id = 'prune'");
+    expect(tokens.rows[0].n).toBe(1);
+    expect(await storage.getTokenByRefreshToken("rt-prune-new")).not.toBeNull();
+    expect(await storage.getBrowserTransaction("prune-tx-new")).toBe("{}");
+    const expired = await pool.query("SELECT COUNT(*)::int AS n FROM browser_transactions WHERE expires_at <= $1", [now]);
+    expect(expired.rows[0].n).toBe(0);
+  });
+
   it("revokes both access and refresh tokens only for the selected user/client", async () => {
     for (const [userId, clientId] of [["erin", "one"], ["erin", "two"], ["frank", "one"]]) {
       const key = `${userId}-${clientId}`;

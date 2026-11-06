@@ -59,6 +59,43 @@ describe("Public Informational Pages and Account Dashboard", () => {
     expect(html).toContain("security@mctl.ai");
   });
 
+  it("should serve /setup page with client configurators and meta descriptions", async () => {
+    const res = await fetch(`${baseUrl}/setup`);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('name="description"');
+    expect(html).toContain('data-page-description-key="setup_page_description"');
+    expect(html).toContain("claude mcp add --transport http alice");
+    expect(html).toContain(".cursor/mcp.json");
+    expect(html).toContain("Zed Editor");
+  });
+
+  it("should render meta description and description key on /about and /security", async () => {
+    const aboutRes = await fetch(`${baseUrl}/about`);
+    const aboutHtml = await aboutRes.text();
+    expect(aboutHtml).toContain('data-page-description-key="about_page_description"');
+
+    const secRes = await fetch(`${baseUrl}/security`);
+    const secHtml = await secRes.text();
+    expect(secHtml).toContain('data-page-description-key="security_page_description"');
+  });
+
+  it("should maintain i18n description and title key parity between RU and EN dictionaries", async () => {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const siteJs = fs.readFileSync(path.resolve("public/assets/site.js"), "utf-8");
+    const keys = [
+      "setup_page_description",
+      "about_page_description",
+      "security_page_description",
+      "setup_page_title",
+    ];
+    for (const key of keys) {
+      const occurrences = (siteJs.match(new RegExp(`${key}:`, "g")) || []).length;
+      expect(occurrences).toBe(2);
+    }
+  });
+
   it("should serve /account dashboard for unauthenticated user", async () => {
     const res = await fetch(`${baseUrl}/account`);
     expect(res.status).toBe(200);

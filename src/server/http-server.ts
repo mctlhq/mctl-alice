@@ -241,7 +241,7 @@ function renderAuthPage({
 <meta name="twitter:description" content="${escapeHtml(description)}">`
     : "";
   return `<!doctype html>
-<html lang="ru"${titleKey ? ` data-page-title-key="${escapeHtml(titleKey)}"` : ""}>
+<html lang="ru"${titleKey ? ` data-page-title-key="${escapeHtml(titleKey)}"` : ""}${descriptionKey ? ` data-page-description-key="${escapeHtml(descriptionKey)}"` : ""}>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">

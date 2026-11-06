@@ -239,7 +239,7 @@ export function renderSetupPage(siteUrl: string): string {
           <li><strong>Claude</strong> (claude.ai и Claude Desktop): <em>Customize → Connectors → «+» → Add custom connector</em>, вставьте MCP URL и нажмите <em>Add</em>, затем <em>Connect</em>.</li>
           <li><strong>ChatGPT</strong>: <em>Plugins → «+» → custom MCP server</em>, вставьте MCP URL и пройдите авторизацию Яндекса.</li>
           <li><strong>Cursor IDE</strong>: добавьте сервер в <code>.cursor/mcp.json</code> (см. конфигурацию ниже).</li>
-          <li><strong>Claude Code</strong>: выполните <code>claude mcp add --transport http alice ...</code> в терминале.</li>
+          <li><strong>Claude Code</strong>: подключите через команду <code>claude mcp add</code> в терминале (см. конфигурацию ниже).</li>
         </ul>
       </section>
 
@@ -248,7 +248,7 @@ export function renderSetupPage(siteUrl: string): string {
         <p class="s-2a0ca8" data-i18n="setup_other_desc">Подойдёт любой клиент, который подключает удалённые MCP-серверы с авторизацией OAuth 2.1 (Claude Code, Cursor, Windsurf, Zed). Скопируйте нужный формат:</p>
         <p class="s-2a0ca8"><strong>Claude Code CLI:</strong></p>
         <pre><code>claude mcp add --transport http alice <span class="mcp-url-slot">${mcpUrl}</span></code></pre>
-        <p class="s-2a0ca8"><strong>Cursor IDE / Claude Desktop (<code>mcp.json</code>):</strong></p>
+        <p class="s-2a0ca8"><strong>Cursor IDE (<code>.cursor/mcp.json</code>) & Windsurf (<code>mcp_config.json</code>):</strong></p>
         <pre><code>{
   "mcpServers": {
     "alice": { "url": "<span class="mcp-url-slot">${mcpUrl}</span>" }

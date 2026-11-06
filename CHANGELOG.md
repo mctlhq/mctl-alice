@@ -3,6 +3,11 @@
 Versions follow semantic versioning; tags carry no `v` prefix. Full notes for
 every version are on the [Releases page](https://github.com/mctlhq/mctl-alice/releases).
 
+## 2.11.0 (2026-11-06)
+
+- Correct public claims about analytics, tenant isolation and scenario removal, and remove pictographs from the site (#153).
+- Send HSTS on https deployments, delete expired records on a 6-hour schedule, and publish a Safe Harbor scope; the about page now lists contacts only (#155).
+
 ## 2.10.0 (2026-11-06)
 
 - Make the bilingual Alice setup guide describe its smart-home connection intent, prerequisites and first read-only check (#152).

@@ -27,7 +27,7 @@ jobs:
       # the run a startup_failure, which is why no review ever ran here.
       actions: read
     with:
-      allowed-bots: "mctl-claude-remote,github-actions,dependabot,mctl-agents"
+      allowed-bots: "mctl-claude-remote,github-actions,dependabot,mctl-agents,mctl-codex"
       # Everything that decides who a caller is, or what a verified identity
       # is allowed to do to the Yandex account behind it, lives here.
       sensitive-paths: '^src/(auth|tools)/'

@@ -15,6 +15,7 @@ import { StationService } from "./services/station-service.js";
 import { YandexIoTClient } from "./client/yandex-api.js";
 import { createHttpServer } from "./server/http-server.js";
 import { listenMetrics, metricsPortFromEnv } from "./metrics.js";
+import { applyNetDefaults } from "./client/net-defaults.js";
 
 async function runStdioServer() {
   const token = process.env.YANDEX_OAUTH_TOKEN;
@@ -80,6 +81,7 @@ async function runHttpServer(port: number) {
 }
 
 async function main() {
+  applyNetDefaults();
   const isHttpMode = Boolean(process.env.PORT) || process.argv.includes("--http");
   if (isHttpMode) {
     const port = parseInt(process.env.PORT || "8080", 10);

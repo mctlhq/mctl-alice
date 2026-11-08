@@ -109,7 +109,11 @@ pre {
     margin-left: auto;
   }
 
-  .mctl-site-burger {
+  /* site.css sets margin-left:auto on the burger through a :has() selector
+     (specificity 0,3,0), so a bare .mctl-site-burger here loses and the free
+     space is split between the actions and the burger. Repeat the selector;
+     this sheet loads after site.css, so a tie goes to it. */
+  .mctl-site-header--drawer-wide:has(.mctl-site-burger) .mctl-site-burger {
     margin-left: 0;
   }
 }

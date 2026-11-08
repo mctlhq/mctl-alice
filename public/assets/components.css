@@ -115,8 +115,9 @@ pre {
 }
 
 /* Phones: brand, chip, language switch, theme toggle and burger share one row
-   of 360px or so. Tighter gaps first; below 420px the header chip goes, the
-   hero carries its own BETA marker. */
+   of 360px or so. Tighter gaps first; below 420px the header chip goes on
+   pages whose hero carries its own BETA marker (the landing page). Other
+   pages keep it. */
 @media (max-width: 560px) {
   .mctl-site-header__inner,
   .mctl-site-header__actions {
@@ -125,7 +126,7 @@ pre {
 }
 
 @media (max-width: 420px) {
-  .mctl-site-header .mctl-site-chip {
+  body:has(.hero .chip-beta) .mctl-site-header .mctl-site-chip {
     display: none;
   }
 }

@@ -56,9 +56,13 @@
       if (event.target.closest && event.target.closest("a")) closeNav(false);
     });
     if (window.matchMedia) {
-      window.matchMedia("(min-width: 981px)").addEventListener("change", function (event) {
+      var wideQuery = window.matchMedia("(min-width: 981px)");
+      var onWide = function (event) {
         if (event.matches) closeNav(false);
-      });
+      };
+      // Safari before 14 only has the deprecated addListener.
+      if (wideQuery.addEventListener) wideQuery.addEventListener("change", onWide);
+      else if (wideQuery.addListener) wideQuery.addListener(onWide);
     }
   }
 

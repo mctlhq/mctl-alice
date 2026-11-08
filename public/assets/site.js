@@ -21,6 +21,47 @@
     });
   }
 
+  // ── Mobile navigation drawer ─────────────────────────────────────────────
+  // site.css owns the look (data-nav-open on the header opens the drawer, up to
+  // 980px); the behaviour is here: toggle, Escape, click outside, resize past
+  // the breakpoint, and focus back to the burger.
+  var navHeader = document.querySelector(".mctl-site-header");
+  var navBurger = document.getElementById("nav-burger");
+  var navList = document.getElementById("site-nav");
+  if (navHeader && navBurger && navList) {
+    var closeNav = function (returnFocus) {
+      if (!navHeader.hasAttribute("data-nav-open")) return;
+      navHeader.removeAttribute("data-nav-open");
+      navBurger.setAttribute("aria-expanded", "false");
+      if (returnFocus) navBurger.focus();
+    };
+    navBurger.addEventListener("click", function () {
+      var open = navHeader.hasAttribute("data-nav-open");
+      if (open) {
+        closeNav(false);
+      } else {
+        navHeader.setAttribute("data-nav-open", "");
+        navBurger.setAttribute("aria-expanded", "true");
+      }
+    });
+    document.addEventListener("keydown", function (event) {
+      if (event.key === "Escape") closeNav(true);
+    });
+    document.addEventListener("pointerdown", function (event) {
+      if (!navHeader.hasAttribute("data-nav-open")) return;
+      if (navList.contains(event.target) || navBurger.contains(event.target)) return;
+      closeNav(false);
+    });
+    navList.addEventListener("click", function (event) {
+      if (event.target.closest && event.target.closest("a")) closeNav(false);
+    });
+    if (window.matchMedia) {
+      window.matchMedia("(min-width: 981px)").addEventListener("change", function (event) {
+        if (event.matches) closeNav(false);
+      });
+    }
+  }
+
   // ── Dynamic MCP endpoint URL based on current host ──────────────────────
   var origin = window.location.origin;
   var mcpUrl = origin + "/mcp";
@@ -288,6 +329,7 @@
       // Site navigation, setup guide and 404
       skip_link: "Перейти к содержимому",
       nav_main_label: "Основное меню",
+      nav_menu_label: "Меню",
       theme_toggle_label: "Переключить тему оформления",
       nav_setup: "Подключение",
       footer_setup: "Подключение",
@@ -544,6 +586,7 @@
       // Site navigation, setup guide and 404
       skip_link: "Skip to content",
       nav_main_label: "Main navigation",
+      nav_menu_label: "Menu",
       theme_toggle_label: "Toggle color theme",
       nav_setup: "Connect",
       footer_setup: "Connect",

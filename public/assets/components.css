@@ -90,44 +90,44 @@ pre {
   padding-inline: 24px;
 }
 
-/* ── top bar ─────────────────────────────────────────────────────────── */
+/* ── site header ─────────────────────────────────────────────────────
+   The header itself is the shared shell (assets/site.css, vendored from
+   ui.mctl.ai by scripts/sync-tokens.mjs). Only what alice adds is here. */
 
-.topbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding-block: 20px;
-  border-bottom: 1px solid var(--surface-line);
+.mctl-site-brand {
+  white-space: nowrap;
 }
 
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  color: var(--surface-fg);
-}
-
-.brand-mark {
-  width: 28px;
-  height: 28px;
+.mctl-site-burger {
   flex: none;
 }
 
-.topbar-links {
-  display: flex;
-  align-items: center;
-  gap: 20px;
-  font-size: 14px;
+/* Up to 980px the nav is the drawer: the language and theme controls stay in
+   the bar, pushed to the right edge next to the burger. */
+@media (max-width: 980px) {
+  .mctl-site-header__actions {
+    margin-left: auto;
+  }
+
+  .mctl-site-burger {
+    margin-left: 0;
+  }
 }
 
-.topbar-links a {
-  color: var(--surface-fg-muted);
+/* Phones: brand, chip, language switch, theme toggle and burger share one row
+   of 360px or so. Tighter gaps first; below 420px the header chip goes, the
+   hero carries its own BETA marker. */
+@media (max-width: 560px) {
+  .mctl-site-header__inner,
+  .mctl-site-header__actions {
+    gap: 8px;
+  }
 }
-.topbar-links a:hover {
-  color: var(--surface-fg);
+
+@media (max-width: 420px) {
+  .mctl-site-header .mctl-site-chip {
+    display: none;
+  }
 }
 
 .theme-toggle {
@@ -624,13 +624,6 @@ footer a {
   }
   .hero {
     padding-block-start: 52px;
-  }
-  .topbar-links {
-    gap: 10px;
-    font-size: 13px;
-    flex-wrap: wrap;
-    justify-content: flex-end;
-    row-gap: 6px;
   }
   .cta-row .btn {
     flex: 1 1 100%;

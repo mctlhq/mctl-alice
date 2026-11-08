@@ -344,6 +344,27 @@ describe("HTTP Server & ChatGPT REST API", () => {
     expect(html).toContain('data-i18n="cookie_qr_title"');
   });
 
+  it("renders the shared site header with a burger drawer on every page and on the landing page", async () => {
+    for (const pathname of ["/", "/auth/cookie", "/auth/callback"]) {
+      const res = await fetch(`${baseUrl}${pathname}`);
+      expect(res.status).toBe(200);
+      const html = await res.text();
+      expect(html).toContain("/assets/site.css");
+      expect(html).toContain("mctl-site-header--app mctl-site-header--drawer-wide");
+      expect(html).toContain('class="mctl-site-nav" id="site-nav"');
+      expect(html).toMatch(/<button class="mctl-site-burger" id="nav-burger"[^>]*aria-controls="site-nav" aria-expanded="false"/);
+      expect(html).toContain('class="mctl-site-chip">BETA');
+      expect(html).not.toContain("topbar");
+    }
+  });
+
+  it("serves the vendored site.css with the wide drawer", async () => {
+    const res = await fetch(`${baseUrl}/assets/site.css`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/css");
+    expect(await res.text()).toContain("mctl-site-header--drawer-wide");
+  });
+
   it("should serve unified styled page on /auth/callback without code with i18n", async () => {
     const res = await fetch(`${baseUrl}/auth/callback`);
     expect(res.status).toBe(200);

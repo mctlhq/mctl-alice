@@ -180,11 +180,25 @@ describe("rate limits over HTTP", () => {
     expect(getUser).toHaveBeenCalledTimes(2);
   });
 
-  it("cannot be bypassed by rotating bearer tokens", async () => {
+  it("limits authorized MCP requests per bearer token without blocking other tokens on the same IP", async () => {
     const base = await start({ rateLimits: { mcp: 2 } });
     const call = (token: string) => fetch(`${base}/mcp`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: "{}" });
-    await call("token-a"); await call("token-b");
-    expect((await call("token-c")).status).toBe(429);
+    const unauth = () => fetch(`${base}/mcp`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+
+    // token-a uses its full budget of 2 requests, 3rd gets 429
+    expect((await call("token-a")).status).not.toBe(429);
+    expect((await call("token-a")).status).not.toBe(429);
+    expect((await call("token-a")).status).toBe(429);
+
+    // token-b from the same client IP (e.g. shared OpenAI egress IP) has its own budget
+    expect((await call("token-b")).status).not.toBe(429);
+    expect((await call("token-b")).status).not.toBe(429);
+    expect((await call("token-b")).status).toBe(429);
+
+    // Unauthenticated calls are limited by IP
+    expect((await unauth()).status).not.toBe(429);
+    expect((await unauth()).status).not.toBe(429);
+    expect((await unauth()).status).toBe(429);
   });
 
   it("polling /auth/qr-status does not exhaust the login bucket", async () => {

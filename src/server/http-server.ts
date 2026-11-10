@@ -983,9 +983,13 @@ export function createHttpServer(
 
     const bucket = rateLimitBucket(url.pathname, req.method, String(req.headers.accept || ""));
     if (bucket) {
-      // Always charge the address bucket: a token is unvalidated here, so it may only add a dimension.
-      let verdict = limiters[bucket].hit(`ip:${clientAddress(req, proxyHops, ipHeader)}`);
-      if (verdict.allowed && bucket === "mcp" && req.headers.authorization) verdict = limiters[bucket].hit(`token:${fingerprint(req)}`);
+      // For authorized MCP calls, rate-limit strictly by bearer token so shared client egress IPs
+      // (such as OpenAI ChatGPT actions) do not exhaust each other's budgets.
+      const authHeader = req.headers.authorization;
+      const isBearerMcp = bucket === "mcp" && Boolean(authHeader && /^Bearer\s+\S/i.test(authHeader.trim()));
+      const verdict = isBearerMcp
+        ? limiters[bucket].hit(`token:${fingerprint(req)}`)
+        : limiters[bucket].hit(`ip:${clientAddress(req, proxyHops, ipHeader)}`);
       if (!verdict.allowed) {
         rateLimited.inc({ bucket });
         res.writeHead(429, { "Content-Type": "application/json; charset=utf-8", "Retry-After": String(verdict.retryAfterSec), "Cache-Control": "no-store" });

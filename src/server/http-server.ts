@@ -1,5 +1,5 @@
 import { BrowserTransactions } from "../storage/browser-transactions.js";
-import { CredentialDecryptionError } from "../storage/storage-interface.js";
+import { CredentialDecryptionError, type OAuthTokenRecord } from "../storage/storage-interface.js";
 import { getKeyring } from "../storage/crypto.js";
 import { VERSION } from "../version.js";
 import { isLocalOrigin } from "./origin.js";

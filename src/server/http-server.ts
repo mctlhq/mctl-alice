@@ -496,11 +496,16 @@ export type AuthResult =
 export type AuthFailureReason =
   | "missing_token" | "cookie_header" | "malformed" | "invalid_token" | "invalid_grant" | "reconnect_required" | "storage_unavailable";
 
-const admittedTokens = new WeakMap<http.IncomingMessage, OAuthTokenRecord>();
+const admittedTokens = new WeakMap<http.IncomingMessage, OAuthTokenRecord | null>();
 const negativeTokenCache = new Map<string, number>();
 const NEGATIVE_TOKEN_TTL_MS = 60_000;
 
+function hashToken(rawToken: string): string {
+  return createHash("sha256").update(rawToken).digest("hex");
+}
+
 function recordNegativeToken(rawToken: string, now = Date.now()): void {
+  const tokenHash = hashToken(rawToken);
   if (negativeTokenCache.size >= 10_000) {
     for (const [k, exp] of negativeTokenCache) {
       if (exp <= now) negativeTokenCache.delete(k);
@@ -512,7 +517,7 @@ function recordNegativeToken(rawToken: string, now = Date.now()): void {
       }
     }
   }
-  negativeTokenCache.set(rawToken, now + NEGATIVE_TOKEN_TTL_MS);
+  negativeTokenCache.set(tokenHash, now + NEGATIVE_TOKEN_TTL_MS);
 }
 
 export function buildWwwAuthenticate(baseUrl: string, error?: string): string {
@@ -1013,22 +1018,24 @@ export function createHttpServer(
       // Only switch to token-only keying after the bearer token resolves to an active, unexpired session in storage
       // (or an exact match on YANDEX_OAUTH_TOKEN in local mode). Unauthenticated callers or rotating fake tokens
       // remain charged to the IP bucket so the limit cannot be bypassed.
-      let validToken = false;
+      let validTokenKey: string | null = null;
       if (bucket === "mcp" && rawToken) {
         if (!authRequired && stationService && process.env.YANDEX_OAUTH_TOKEN && rawToken === process.env.YANDEX_OAUTH_TOKEN) {
-          validToken = true;
+          validTokenKey = `token:${hashToken(rawToken)}`;
         } else if (oauthStorage) {
-          // If the IP is already over budget, reject immediately without touching storage to stop storage flooding.
-          const ipVerdict = limiters[bucket].peek(ipKey);
-          const isKnownNegative = (negativeTokenCache.get(rawToken) || 0) > Date.now();
-          if (ipVerdict.allowed && !isKnownNegative) {
+          const tokenHash = hashToken(rawToken);
+          const isKnownNegative = (negativeTokenCache.get(tokenHash) || 0) > Date.now();
+          if (isKnownNegative) {
+            admittedTokens.set(req, null);
+          } else {
             try {
               const tokenRecord = await oauthStorage.getToken(rawToken);
               if (tokenRecord && Number.isFinite(tokenRecord.expiresAt) && tokenRecord.expiresAt > Date.now()) {
-                validToken = true;
+                validTokenKey = `token:${tokenHash}`;
                 admittedTokens.set(req, tokenRecord);
               } else {
                 recordNegativeToken(rawToken);
+                admittedTokens.set(req, null);
               }
             } catch {
               // storage error falls back to IP rate limiting
@@ -1037,8 +1044,8 @@ export function createHttpServer(
         }
       }
 
-      const verdict = validToken
-        ? limiters[bucket].hit(`token:${fingerprint(req)}`)
+      const verdict = validTokenKey
+        ? limiters[bucket].hit(validTokenKey)
         : limiters[bucket].hit(ipKey);
       if (!verdict.allowed) {
         rateLimited.inc({ bucket });

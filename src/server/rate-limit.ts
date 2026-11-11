@@ -29,24 +29,6 @@ export class RateLimiter {
     return this.entries.has(key);
   }
 
-  peek(key: string, now = Date.now()): RateLimitResult {
-    const entry = this.entries.get(key);
-    if (!entry) return { allowed: true };
-    const elapsedWindows = Math.floor((now - entry.windowStart) / this.windowMs);
-    if (elapsedWindows >= 2) return { allowed: true };
-    const prev = elapsedWindows === 1 ? entry.count : entry.previous;
-    const curr = elapsedWindows === 1 ? 0 : entry.count;
-    const windowStart = entry.windowStart + (elapsedWindows === 1 ? this.windowMs : 0);
-    const progress = (now - windowStart) / this.windowMs;
-    const used = prev * (1 - progress) + curr;
-    if (used >= this.limit) {
-      const needed = used - this.limit + 1;
-      const waitMs = prev > 0 ? Math.min(this.windowMs, (needed / prev) * this.windowMs) : windowStart + this.windowMs - now;
-      return { allowed: false, retryAfterSec: Math.max(1, Math.ceil(waitMs / 1000)) };
-    }
-    return { allowed: true };
-  }
-
   hit(key: string, now = Date.now()): RateLimitResult {
     let entry = this.entries.get(key);
     if (entry) {

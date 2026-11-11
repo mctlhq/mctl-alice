@@ -672,6 +672,8 @@ export interface HttpServerOptions {
   authRequired?: boolean;
   /** Per-bucket requests per minute, over RATE_LIMIT_<BUCKET> and the defaults. */
   rateLimits?: Partial<Record<RateLimitBucket, number>>;
+  /** Per-IP limit on database token lookups per minute for unknown bearer tokens; defaults to rateLimits.mcp. */
+  tokenLookupLimit?: number;
   /** Number of trusted proxy hops in X-Forwarded-For; defaults to TRUST_PROXY_HOPS or 0. */
   trustProxyHops?: number;
   /** Header that carries the client address (e.g. cf-connecting-ip); defaults to CLIENT_IP_HEADER, unset = off. */
@@ -684,6 +686,7 @@ export interface HttpServerOptions {
 
 const CLEANUP_DEADLINE_MS = 20_000;
 const READINESS_TIMEOUT_MS = 3_000;
+const DEFAULT_TOKEN_LOOKUP_LIMIT = 100;
 
 /** /oauth/token error codes as auth-failure reasons; an unlisted code counts as token_other. */
 const TOKEN_ERROR_REASONS: Record<string, string> = {
@@ -791,6 +794,8 @@ export function createHttpServer(
   const limiters = Object.fromEntries(
     (Object.keys(limits) as RateLimitBucket[]).map((bucket) => [bucket, new RateLimiter({ limit: limits[bucket], windowMs: 60_000 })]),
   ) as Record<RateLimitBucket, RateLimiter>;
+  const tokenLookupLimit = options.tokenLookupLimit ?? (Number.parseInt(process.env.RATE_LIMIT_TOKEN_LOOKUP || "", 10) || DEFAULT_TOKEN_LOOKUP_LIMIT);
+  const tokenLookupLimiter = new RateLimiter({ limit: tokenLookupLimit, windowMs: 60_000 });
   const proxyHops = options.trustProxyHops ?? trustProxyHopsFromEnv();
   const ipHeader = (options.clientIpHeader ?? clientIpHeaderFromEnv()).toLowerCase();
   const clearSessionCookie = `mctl_session=; Path=/; HttpOnly; SameSite=Lax; ${authRequired ? "Secure; " : ""}Max-Age=0`;
@@ -1024,21 +1029,28 @@ export function createHttpServer(
           validTokenKey = `token:${hashToken(rawToken)}`;
         } else if (oauthStorage) {
           const tokenHash = hashToken(rawToken);
-          const isKnownNegative = (negativeTokenCache.get(tokenHash) || 0) > Date.now();
+          const now = Date.now();
+          const isKnownNegative = (negativeTokenCache.get(tokenHash) || 0) > now;
           if (isKnownNegative) {
             admittedTokens.set(req, null);
           } else {
-            try {
-              const tokenRecord = await oauthStorage.getToken(rawToken);
-              if (tokenRecord && Number.isFinite(tokenRecord.expiresAt) && tokenRecord.expiresAt > Date.now()) {
-                validTokenKey = `token:${tokenHash}`;
-                admittedTokens.set(req, tokenRecord);
-              } else {
-                recordNegativeToken(rawToken);
-                admittedTokens.set(req, null);
+            // Bound database lookups for unknown tokens per IP so rotating fake tokens cannot flood storage.
+            const lookupVerdict = tokenLookupLimiter.hit(ipKey, now);
+            if (lookupVerdict.allowed) {
+              try {
+                const tokenRecord = await oauthStorage.getToken(rawToken);
+                if (tokenRecord && Number.isFinite(tokenRecord.expiresAt) && tokenRecord.expiresAt > now) {
+                  validTokenKey = `token:${tokenHash}`;
+                  admittedTokens.set(req, tokenRecord);
+                } else {
+                  recordNegativeToken(rawToken, now);
+                  admittedTokens.set(req, null);
+                }
+              } catch {
+                // storage error falls back to IP rate limiting
               }
-            } catch {
-              // storage error falls back to IP rate limiting
+            } else {
+              admittedTokens.set(req, null);
             }
           }
         }

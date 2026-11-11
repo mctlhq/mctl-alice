@@ -241,6 +241,21 @@ describe("rate limits over HTTP", () => {
     expect(getToken).toHaveBeenCalledTimes(1);
   });
 
+  it("caps database token lookups for rotating fake tokens from one IP", async () => {
+    const base = await start({ rateLimits: { mcp: 50 }, tokenLookupLimit: 3 });
+    const storage = servers[servers.length - 1].storage;
+    const getToken = vi.spyOn(storage, "getToken");
+
+    const call = (token: string) => fetch(`${base}/mcp`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: "{}" });
+
+    for (let i = 0; i < 10; i++) {
+      await call(`distinct-fake-token-${i}`);
+    }
+
+    // Only the first 3 reach storage; subsequent distinct tokens are blocked by tokenLookupLimit
+    expect(getToken).toHaveBeenCalledTimes(3);
+  });
+
   it("switches to token rate limiting for exact YANDEX_OAUTH_TOKEN in local mode", async () => {
     const oldEnv = process.env.YANDEX_OAUTH_TOKEN;
     process.env.YANDEX_OAUTH_TOKEN = "local-exact-secret";

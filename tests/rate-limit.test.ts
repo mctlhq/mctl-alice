@@ -33,6 +33,26 @@ describe("RateLimiter", () => {
     expect(limiter.has("expired")).toBe(false);
     expect(limiter.size).toBe(2);
   });
+
+  it("peeks without incrementing or drifting from hit across window rollover", () => {
+    const limiter = new RateLimiter({ limit: 2, windowMs: 60_000 });
+    const t0 = 1_000_000;
+    expect(limiter.peek("k", t0).allowed).toBe(true);
+    limiter.hit("k", t0);
+    expect(limiter.peek("k", t0).allowed).toBe(true);
+    limiter.hit("k", t0);
+    expect(limiter.peek("k", t0).allowed).toBe(false);
+
+    // Rollover: 1 window later (elapsedWindows === 1)
+    const t1 = t0 + 60_000 + 30_000;
+    expect(limiter.peek("k", t1).allowed).toBe(true);
+    limiter.hit("k", t1);
+    expect(limiter.peek("k", t1).allowed).toBe(false);
+
+    // Recovery: 2+ windows later (elapsedWindows >= 2)
+    const t2 = t0 + 3 * 60_000;
+    expect(limiter.peek("k", t2).allowed).toBe(true);
+  });
 });
 
 describe("route buckets and client address", () => {
@@ -242,7 +262,7 @@ describe("rate limits over HTTP", () => {
   });
 
   it("caps database token lookups for rotating fake tokens from one IP", async () => {
-    const base = await start({ rateLimits: { mcp: 50 }, tokenLookupLimit: 3 });
+    const base = await start({ rateLimits: { mcp: 3 }, tokenLookupLimit: 3 });
     const storage = servers[servers.length - 1].storage;
     const getToken = vi.spyOn(storage, "getToken");
 
@@ -252,8 +272,47 @@ describe("rate limits over HTTP", () => {
       await call(`distinct-fake-token-${i}`);
     }
 
-    // Only the first 3 reach storage; subsequent distinct tokens are blocked by tokenLookupLimit
+    // Only the first 3 reach storage; subsequent distinct tokens are blocked once lookup & IP limits are exhausted
     expect(getToken).toHaveBeenCalledTimes(3);
+  });
+
+  it("authenticates a valid token even when tokenLookupLimit was exhausted by fake tokens", async () => {
+    const base = await start({ rateLimits: { mcp: 20 }, tokenLookupLimit: 2 });
+    const storage = servers[servers.length - 1].storage;
+    const now = Date.now();
+    await storage.saveUser({ id: "u-p", yandexUid: "u-p", createdAt: now, updatedAt: now });
+    await storage.saveUserCredentials("u-p", { yandexAccessToken: "y-p", yandexRefreshToken: "r-p" });
+    await storage.saveToken({ accessToken: "tok-valid-post-lookup-exhaust", refreshToken: "rt-p", userId: "u-p", clientId: "c-p", scope: "iot:view", createdAt: now, expiresAt: now + 3600000 });
+
+    const call = (token: string) => fetch(`${base}/mcp`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: "{}" });
+
+    // Exhaust tokenLookupLimit with fake tokens
+    await call("lookup-exhaust-1");
+    await call("lookup-exhaust-2");
+    await call("lookup-exhaust-3");
+
+    // Valid token still authenticates because checkBearer performs its own read on fallback
+    const res = await call("tok-valid-post-lookup-exhaust");
+    expect(res.status).not.toBe(401);
+    expect(res.status).not.toBe(429);
+  });
+
+  it("handles N valid-token requests greater than tokenLookupLimit without exhausting lookup budget", async () => {
+    const base = await start({ rateLimits: { mcp: 20 }, tokenLookupLimit: 2 });
+    const storage = servers[servers.length - 1].storage;
+    const now = Date.now();
+    await storage.saveUser({ id: "u-m", yandexUid: "u-m", createdAt: now, updatedAt: now });
+    await storage.saveUserCredentials("u-m", { yandexAccessToken: "y-m", yandexRefreshToken: "r-m" });
+    await storage.saveToken({ accessToken: "tok-valid-many", refreshToken: "rt-m", userId: "u-m", clientId: "c-m", scope: "iot:view", createdAt: now, expiresAt: now + 3600000 });
+
+    const call = (token: string) => fetch(`${base}/mcp`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: "{}" });
+
+    // 5 requests with valid token (> tokenLookupLimit of 2)
+    for (let i = 0; i < 5; i++) {
+      const res = await call("tok-valid-many");
+      expect(res.status).not.toBe(429);
+      expect(res.status).not.toBe(401);
+    }
   });
 
   it("switches to token rate limiting for exact YANDEX_OAUTH_TOKEN in local mode", async () => {

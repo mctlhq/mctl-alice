@@ -9,11 +9,17 @@ export type RateLimitResult = { allowed: true } | { allowed: false; retryAfterSe
  * one). State is bounded by `maxKeys`; when full, the oldest keys are dropped,
  * so a swept key restarts with a fresh budget (fail open, bounded memory).
  */
+interface RateLimitEntry {
+  windowStart: number;
+  count: number;
+  previous: number;
+}
+
 export class RateLimiter {
   private readonly limit: number;
   private readonly windowMs: number;
   private readonly maxKeys: number;
-  private readonly entries = new Map<string, { windowStart: number; count: number; previous: number }>();
+  private readonly entries = new Map<string, RateLimitEntry>();
 
   constructor({ limit, windowMs = 60_000, maxKeys = 10_000 }: { limit: number; windowMs?: number; maxKeys?: number }) {
     this.limit = limit;
@@ -29,13 +35,33 @@ export class RateLimiter {
     return this.entries.has(key);
   }
 
-  hit(key: string, now = Date.now()): RateLimitResult {
+  private computeUsage(key: string, now: number): { entry: RateLimitEntry | undefined; used: number; waitMs: number } {
     let entry = this.entries.get(key);
     if (entry) {
       const elapsedWindows = Math.floor((now - entry.windowStart) / this.windowMs);
       if (elapsedWindows >= 2) entry = undefined;
       else if (elapsedWindows === 1) entry = { windowStart: entry.windowStart + this.windowMs, count: 0, previous: entry.count };
     }
+    const prev = entry ? entry.previous : 0;
+    const curr = entry ? entry.count : 0;
+    const windowStart = entry ? entry.windowStart : now;
+    const progress = (now - windowStart) / this.windowMs;
+    const used = prev * (1 - progress) + curr;
+    const needed = used - this.limit + 1;
+    const waitMs = prev > 0 ? Math.min(this.windowMs, (needed / prev) * this.windowMs) : windowStart + this.windowMs - now;
+    return { entry, used, waitMs };
+  }
+
+  peek(key: string, now = Date.now()): RateLimitResult {
+    const { used, waitMs } = this.computeUsage(key, now);
+    if (used >= this.limit) {
+      return { allowed: false, retryAfterSec: Math.max(1, Math.ceil(waitMs / 1000)) };
+    }
+    return { allowed: true };
+  }
+
+  hit(key: string, now = Date.now()): RateLimitResult {
+    let { entry, used, waitMs } = this.computeUsage(key, now);
     if (!entry) {
       this.makeRoom(now);
       entry = { windowStart: now, count: 0, previous: 0 };
@@ -44,12 +70,7 @@ export class RateLimiter {
     this.entries.delete(key);
     this.entries.set(key, entry);
 
-    const progress = (now - entry.windowStart) / this.windowMs;
-    const used = entry.previous * (1 - progress) + entry.count;
     if (used >= this.limit) {
-      // Time until the weighted previous window has decayed enough for one more hit.
-      const needed = used - this.limit + 1;
-      const waitMs = entry.previous > 0 ? Math.min(this.windowMs, (needed / entry.previous) * this.windowMs) : entry.windowStart + this.windowMs - now;
       return { allowed: false, retryAfterSec: Math.max(1, Math.ceil(waitMs / 1000)) };
     }
     entry.count++;

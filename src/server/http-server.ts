@@ -1035,7 +1035,8 @@ export function createHttpServer(
             admittedTokens.set(req, null);
           } else {
             // Bound database lookups for unknown tokens per IP so rotating fake tokens cannot flood storage.
-            const lookupVerdict = tokenLookupLimiter.hit(ipKey, now);
+            // On lookup-budget exhaustion, do not set admittedTokens to null: fall back to IP keying and let checkBearer do its own read.
+            const lookupVerdict = tokenLookupLimiter.peek(ipKey, now);
             if (lookupVerdict.allowed) {
               try {
                 const tokenRecord = await oauthStorage.getToken(rawToken);
@@ -1043,14 +1044,13 @@ export function createHttpServer(
                   validTokenKey = `token:${tokenHash}`;
                   admittedTokens.set(req, tokenRecord);
                 } else {
+                  tokenLookupLimiter.hit(ipKey, now);
                   recordNegativeToken(rawToken, now);
                   admittedTokens.set(req, null);
                 }
               } catch {
                 // storage error falls back to IP rate limiting
               }
-            } else {
-              admittedTokens.set(req, null);
             }
           }
         }

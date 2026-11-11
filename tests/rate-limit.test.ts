@@ -33,6 +33,26 @@ describe("RateLimiter", () => {
     expect(limiter.has("expired")).toBe(false);
     expect(limiter.size).toBe(2);
   });
+
+  it("peeks without incrementing or drifting from hit across window rollover", () => {
+    const limiter = new RateLimiter({ limit: 2, windowMs: 60_000 });
+    const t0 = 1_000_000;
+    expect(limiter.peek("k", t0).allowed).toBe(true);
+    limiter.hit("k", t0);
+    expect(limiter.peek("k", t0).allowed).toBe(true);
+    limiter.hit("k", t0);
+    expect(limiter.peek("k", t0).allowed).toBe(false);
+
+    // Rollover: 1 window later (elapsedWindows === 1)
+    const t1 = t0 + 60_000 + 30_000;
+    expect(limiter.peek("k", t1).allowed).toBe(true);
+    limiter.hit("k", t1);
+    expect(limiter.peek("k", t1).allowed).toBe(false);
+
+    // Recovery: 2+ windows later (elapsedWindows >= 2)
+    const t2 = t0 + 3 * 60_000;
+    expect(limiter.peek("k", t2).allowed).toBe(true);
+  });
 });
 
 describe("route buckets and client address", () => {
@@ -185,6 +205,140 @@ describe("rate limits over HTTP", () => {
     const call = (token: string) => fetch(`${base}/mcp`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: "{}" });
     await call("token-a"); await call("token-b");
     expect((await call("token-c")).status).toBe(429);
+  });
+
+  it("limits authorized MCP requests per valid bearer token without blocking other tokens on the same IP", async () => {
+    const base = await start({ rateLimits: { mcp: 2 } });
+    const storage = servers[servers.length - 1].storage;
+    const now = Date.now();
+    await storage.saveToken({ accessToken: "tok-valid-1", refreshToken: "rt-1", userId: "u1", clientId: "c1", scope: "iot:view", createdAt: now, expiresAt: now + 3600000 });
+    await storage.saveToken({ accessToken: "tok-valid-2", refreshToken: "rt-2", userId: "u2", clientId: "c2", scope: "iot:view", createdAt: now, expiresAt: now + 3600000 });
+
+    const call = (token: string) => fetch(`${base}/mcp`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: "{}" });
+
+    // tok-valid-1 uses its budget of 2, 3rd gets 429
+    expect((await call("tok-valid-1")).status).not.toBe(429);
+    expect((await call("tok-valid-1")).status).not.toBe(429);
+    expect((await call("tok-valid-1")).status).toBe(429);
+
+    // tok-valid-2 from the same client IP (e.g. shared OpenAI egress IP) has its own budget
+    expect((await call("tok-valid-2")).status).not.toBe(429);
+    expect((await call("tok-valid-2")).status).not.toBe(429);
+    expect((await call("tok-valid-2")).status).toBe(429);
+  });
+
+  it("allows valid tokens to pass even when IP bucket is exhausted by fake tokens", async () => {
+    const base = await start({ rateLimits: { mcp: 2 } });
+    const storage = servers[servers.length - 1].storage;
+    const now = Date.now();
+    await storage.saveToken({ accessToken: "tok-valid-survivor", refreshToken: "rt-s", userId: "u-s", clientId: "c-s", scope: "iot:view", createdAt: now, expiresAt: now + 3600000 });
+
+    const call = (token: string) => fetch(`${base}/mcp`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: "{}" });
+
+    // Exhaust IP bucket with fake tokens
+    await call("fake-exhaust-1");
+    await call("fake-exhaust-2");
+    expect((await call("fake-exhaust-3")).status).toBe(429);
+
+    // A valid token from the same exhausted IP still passes with its own budget
+    expect((await call("tok-valid-survivor")).status).not.toBe(429);
+    expect((await call("tok-valid-survivor")).status).not.toBe(429);
+    expect((await call("tok-valid-survivor")).status).toBe(429);
+  });
+
+  it("negative token cache avoids repeated storage lookups for invalid tokens", async () => {
+    const base = await start({ rateLimits: { mcp: 10 } });
+    const storage = servers[servers.length - 1].storage;
+    const getToken = vi.spyOn(storage, "getToken");
+
+    const call = (token: string) => fetch(`${base}/mcp`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: "{}" });
+
+    await call("bad-token-lookup");
+    await call("bad-token-lookup");
+    await call("bad-token-lookup");
+
+    // Only the first lookup reaches storage; subsequent ones hit negativeTokenCache
+    expect(getToken).toHaveBeenCalledTimes(1);
+  });
+
+  it("caps database token lookups for rotating fake tokens from one IP", async () => {
+    const base = await start({ rateLimits: { mcp: 3 }, tokenLookupLimit: 3 });
+    const storage = servers[servers.length - 1].storage;
+    const getToken = vi.spyOn(storage, "getToken");
+
+    const call = (token: string) => fetch(`${base}/mcp`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: "{}" });
+
+    for (let i = 0; i < 10; i++) {
+      await call(`distinct-fake-token-${i}`);
+    }
+
+    // Only the first 3 reach storage; subsequent distinct tokens are blocked once lookup & IP limits are exhausted
+    expect(getToken).toHaveBeenCalledTimes(3);
+  });
+
+  it("authenticates a valid token even when tokenLookupLimit was exhausted by fake tokens", async () => {
+    const base = await start({ rateLimits: { mcp: 20 }, tokenLookupLimit: 2 });
+    const storage = servers[servers.length - 1].storage;
+    const now = Date.now();
+    await storage.saveUser({ id: "u-p", yandexUid: "u-p", createdAt: now, updatedAt: now });
+    await storage.saveUserCredentials("u-p", { yandexAccessToken: "y-p", yandexRefreshToken: "r-p" });
+    await storage.saveToken({ accessToken: "tok-valid-post-lookup-exhaust", refreshToken: "rt-p", userId: "u-p", clientId: "c-p", scope: "iot:view", createdAt: now, expiresAt: now + 3600000 });
+
+    const call = (token: string) => fetch(`${base}/mcp`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: "{}" });
+
+    // Exhaust tokenLookupLimit with fake tokens
+    await call("lookup-exhaust-1");
+    await call("lookup-exhaust-2");
+    await call("lookup-exhaust-3");
+
+    // Valid token still authenticates because checkBearer performs its own read on fallback
+    const res = await call("tok-valid-post-lookup-exhaust");
+    expect(res.status).not.toBe(401);
+    expect(res.status).not.toBe(429);
+  });
+
+  it("handles N valid-token requests greater than tokenLookupLimit without exhausting lookup budget", async () => {
+    const base = await start({ rateLimits: { mcp: 20 }, tokenLookupLimit: 2 });
+    const storage = servers[servers.length - 1].storage;
+    const now = Date.now();
+    await storage.saveUser({ id: "u-m", yandexUid: "u-m", createdAt: now, updatedAt: now });
+    await storage.saveUserCredentials("u-m", { yandexAccessToken: "y-m", yandexRefreshToken: "r-m" });
+    await storage.saveToken({ accessToken: "tok-valid-many", refreshToken: "rt-m", userId: "u-m", clientId: "c-m", scope: "iot:view", createdAt: now, expiresAt: now + 3600000 });
+
+    const call = (token: string) => fetch(`${base}/mcp`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: "{}" });
+
+    // 5 requests with valid token (> tokenLookupLimit of 2)
+    for (let i = 0; i < 5; i++) {
+      const res = await call("tok-valid-many");
+      expect(res.status).not.toBe(429);
+      expect(res.status).not.toBe(401);
+    }
+  });
+
+  it("switches to token rate limiting for exact YANDEX_OAUTH_TOKEN in local mode", async () => {
+    const oldEnv = process.env.YANDEX_OAUTH_TOKEN;
+    process.env.YANDEX_OAUTH_TOKEN = "local-exact-secret";
+    try {
+      const mockStationService = {} as any;
+      const base = await start({ rateLimits: { mcp: 2 }, stationService: mockStationService, oauthStorage: null as any });
+      const call = (token: string) => fetch(`${base}/mcp`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: "{}" });
+
+      // Valid exact env token uses token limiter
+      expect((await call("local-exact-secret")).status).not.toBe(429);
+      expect((await call("local-exact-secret")).status).not.toBe(429);
+      expect((await call("local-exact-secret")).status).toBe(429);
+    } finally {
+      if (oldEnv === undefined) delete process.env.YANDEX_OAUTH_TOKEN;
+      else process.env.YANDEX_OAUTH_TOKEN = oldEnv;
+    }
+  });
+
+  it("rotating y0_ tokens from one IP gets 429 in local mode", async () => {
+    const base = await start({ rateLimits: { mcp: 2 } });
+    const call = (token: string) => fetch(`${base}/mcp`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: "{}" });
+    await call("y0_fake_1");
+    await call("y0_fake_2");
+    expect((await call("y0_fake_3")).status).toBe(429);
   });
 
   it("polling /auth/qr-status does not exhaust the login bucket", async () => {

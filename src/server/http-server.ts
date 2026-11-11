@@ -1,5 +1,5 @@
 import { BrowserTransactions } from "../storage/browser-transactions.js";
-import { CredentialDecryptionError } from "../storage/storage-interface.js";
+import { CredentialDecryptionError, type OAuthTokenRecord } from "../storage/storage-interface.js";
 import { getKeyring } from "../storage/crypto.js";
 import { VERSION } from "../version.js";
 import { isLocalOrigin } from "./origin.js";
@@ -496,6 +496,30 @@ export type AuthResult =
 export type AuthFailureReason =
   | "missing_token" | "cookie_header" | "malformed" | "invalid_token" | "invalid_grant" | "reconnect_required" | "storage_unavailable";
 
+const admittedTokens = new WeakMap<http.IncomingMessage, OAuthTokenRecord | null>();
+const negativeTokenCache = new Map<string, number>();
+const NEGATIVE_TOKEN_TTL_MS = 60_000;
+
+function hashToken(rawToken: string): string {
+  return createHash("sha256").update(rawToken).digest("hex");
+}
+
+function recordNegativeToken(rawToken: string, now = Date.now()): void {
+  const tokenHash = hashToken(rawToken);
+  if (negativeTokenCache.size >= 10_000) {
+    for (const [k, exp] of negativeTokenCache) {
+      if (exp <= now) negativeTokenCache.delete(k);
+    }
+    if (negativeTokenCache.size >= 10_000) {
+      for (const k of negativeTokenCache.keys()) {
+        negativeTokenCache.delete(k);
+        if (negativeTokenCache.size < 5_000) break;
+      }
+    }
+  }
+  negativeTokenCache.set(tokenHash, now + NEGATIVE_TOKEN_TTL_MS);
+}
+
 export function buildWwwAuthenticate(baseUrl: string, error?: string): string {
   const metadataUrl = `${baseUrl.replace(/\/+$/, "")}/.well-known/oauth-protected-resource/mcp`;
   return `Bearer realm="mctl-alice", resource_metadata="${metadataUrl}"${error ? `, error="${error}"` : ""}`;
@@ -535,7 +559,9 @@ async function checkBearer(
   if (!match) return fail("malformed", "Bearer token required");
   const rawToken = match[1];
   try {
-    const record = await oauthStorage?.getToken(rawToken);
+    const cached = admittedTokens.get(req);
+    admittedTokens.delete(req);
+    const record = cached !== undefined ? cached : await oauthStorage?.getToken(rawToken);
     if (record) {
       if (!authRequired && defaultService && record.expiresAt > Date.now() &&
           (!record.userId || ["legacy_user", "usr_local"].includes(record.userId))) {
@@ -646,6 +672,8 @@ export interface HttpServerOptions {
   authRequired?: boolean;
   /** Per-bucket requests per minute, over RATE_LIMIT_<BUCKET> and the defaults. */
   rateLimits?: Partial<Record<RateLimitBucket, number>>;
+  /** Per-IP limit on database token lookups per minute for unknown bearer tokens; defaults to rateLimits.mcp. */
+  tokenLookupLimit?: number;
   /** Number of trusted proxy hops in X-Forwarded-For; defaults to TRUST_PROXY_HOPS or 0. */
   trustProxyHops?: number;
   /** Header that carries the client address (e.g. cf-connecting-ip); defaults to CLIENT_IP_HEADER, unset = off. */
@@ -658,6 +686,7 @@ export interface HttpServerOptions {
 
 const CLEANUP_DEADLINE_MS = 20_000;
 const READINESS_TIMEOUT_MS = 3_000;
+const DEFAULT_TOKEN_LOOKUP_LIMIT = 100;
 
 /** /oauth/token error codes as auth-failure reasons; an unlisted code counts as token_other. */
 const TOKEN_ERROR_REASONS: Record<string, string> = {
@@ -765,6 +794,8 @@ export function createHttpServer(
   const limiters = Object.fromEntries(
     (Object.keys(limits) as RateLimitBucket[]).map((bucket) => [bucket, new RateLimiter({ limit: limits[bucket], windowMs: 60_000 })]),
   ) as Record<RateLimitBucket, RateLimiter>;
+  const tokenLookupLimit = options.tokenLookupLimit ?? (Number.parseInt(process.env.RATE_LIMIT_TOKEN_LOOKUP || "", 10) || DEFAULT_TOKEN_LOOKUP_LIMIT);
+  const tokenLookupLimiter = new RateLimiter({ limit: tokenLookupLimit, windowMs: 60_000 });
   const proxyHops = options.trustProxyHops ?? trustProxyHopsFromEnv();
   const ipHeader = (options.clientIpHeader ?? clientIpHeaderFromEnv()).toLowerCase();
   const clearSessionCookie = `mctl_session=; Path=/; HttpOnly; SameSite=Lax; ${authRequired ? "Secure; " : ""}Max-Age=0`;
@@ -983,9 +1014,51 @@ export function createHttpServer(
 
     const bucket = rateLimitBucket(url.pathname, req.method, String(req.headers.accept || ""));
     if (bucket) {
-      // Always charge the address bucket: a token is unvalidated here, so it may only add a dimension.
-      let verdict = limiters[bucket].hit(`ip:${clientAddress(req, proxyHops, ipHeader)}`);
-      if (verdict.allowed && bucket === "mcp" && req.headers.authorization) verdict = limiters[bucket].hit(`token:${fingerprint(req)}`);
+      const authHeader = req.headers.authorization;
+      const match = authHeader ? /^Bearer\s+([a-zA-Z0-9._~+/-]+=*)$/i.exec(authHeader.trim()) : null;
+      const rawToken = match ? match[1] : null;
+
+      const ipKey = `ip:${clientAddress(req, proxyHops, ipHeader)}`;
+
+      // Only switch to token-only keying after the bearer token resolves to an active, unexpired session in storage
+      // (or an exact match on YANDEX_OAUTH_TOKEN in local mode). Unauthenticated callers or rotating fake tokens
+      // remain charged to the IP bucket so the limit cannot be bypassed.
+      let validTokenKey: string | null = null;
+      if (bucket === "mcp" && rawToken) {
+        if (!authRequired && stationService && process.env.YANDEX_OAUTH_TOKEN && rawToken === process.env.YANDEX_OAUTH_TOKEN) {
+          validTokenKey = `token:${hashToken(rawToken)}`;
+        } else if (oauthStorage) {
+          const tokenHash = hashToken(rawToken);
+          const now = Date.now();
+          const isKnownNegative = (negativeTokenCache.get(tokenHash) || 0) > now;
+          if (isKnownNegative) {
+            admittedTokens.set(req, null);
+          } else {
+            // Bound database lookups for unknown tokens per IP so rotating fake tokens cannot flood storage.
+            // On lookup-budget exhaustion, do not set admittedTokens to null: fall back to IP keying and let checkBearer do its own read.
+            const lookupVerdict = tokenLookupLimiter.peek(ipKey, now);
+            if (lookupVerdict.allowed) {
+              try {
+                const tokenRecord = await oauthStorage.getToken(rawToken);
+                if (tokenRecord && Number.isFinite(tokenRecord.expiresAt) && tokenRecord.expiresAt > now) {
+                  validTokenKey = `token:${tokenHash}`;
+                  admittedTokens.set(req, tokenRecord);
+                } else {
+                  tokenLookupLimiter.hit(ipKey, now);
+                  recordNegativeToken(rawToken, now);
+                  admittedTokens.set(req, null);
+                }
+              } catch {
+                // storage error falls back to IP rate limiting
+              }
+            }
+          }
+        }
+      }
+
+      const verdict = validTokenKey
+        ? limiters[bucket].hit(validTokenKey)
+        : limiters[bucket].hit(ipKey);
       if (!verdict.allowed) {
         rateLimited.inc({ bucket });
         res.writeHead(429, { "Content-Type": "application/json; charset=utf-8", "Retry-After": String(verdict.retryAfterSec), "Cache-Control": "no-store" });

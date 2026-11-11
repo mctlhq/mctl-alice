@@ -33,6 +33,15 @@ describe("RateLimiter", () => {
     expect(limiter.has("expired")).toBe(false);
     expect(limiter.size).toBe(2);
   });
+
+  it("peeks without incrementing or changing budget", () => {
+    const limiter = new RateLimiter({ limit: 2, windowMs: 60_000 });
+    expect(limiter.peek("k").allowed).toBe(true);
+    limiter.hit("k");
+    expect(limiter.peek("k").allowed).toBe(true);
+    limiter.hit("k");
+    expect(limiter.peek("k").allowed).toBe(false);
+  });
 });
 
 describe("route buckets and client address", () => {
@@ -205,6 +214,14 @@ describe("rate limits over HTTP", () => {
     expect((await call("tok-valid-2")).status).not.toBe(429);
     expect((await call("tok-valid-2")).status).not.toBe(429);
     expect((await call("tok-valid-2")).status).toBe(429);
+  });
+
+  it("rotating y0_ tokens from one IP gets 429 in local mode", async () => {
+    const base = await start({ rateLimits: { mcp: 2 } });
+    const call = (token: string) => fetch(`${base}/mcp`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: "{}" });
+    await call("y0_fake_1");
+    await call("y0_fake_2");
+    expect((await call("y0_fake_3")).status).toBe(429);
   });
 
   it("polling /auth/qr-status does not exhaust the login bucket", async () => {

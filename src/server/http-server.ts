@@ -496,6 +496,25 @@ export type AuthResult =
 export type AuthFailureReason =
   | "missing_token" | "cookie_header" | "malformed" | "invalid_token" | "invalid_grant" | "reconnect_required" | "storage_unavailable";
 
+const admittedTokens = new WeakMap<http.IncomingMessage, OAuthTokenRecord>();
+const negativeTokenCache = new Map<string, number>();
+const NEGATIVE_TOKEN_TTL_MS = 60_000;
+
+function recordNegativeToken(rawToken: string, now = Date.now()): void {
+  if (negativeTokenCache.size >= 10_000) {
+    for (const [k, exp] of negativeTokenCache) {
+      if (exp <= now) negativeTokenCache.delete(k);
+    }
+    if (negativeTokenCache.size >= 10_000) {
+      for (const k of negativeTokenCache.keys()) {
+        negativeTokenCache.delete(k);
+        if (negativeTokenCache.size < 5_000) break;
+      }
+    }
+  }
+  negativeTokenCache.set(rawToken, now + NEGATIVE_TOKEN_TTL_MS);
+}
+
 export function buildWwwAuthenticate(baseUrl: string, error?: string): string {
   const metadataUrl = `${baseUrl.replace(/\/+$/, "")}/.well-known/oauth-protected-resource/mcp`;
   return `Bearer realm="mctl-alice", resource_metadata="${metadataUrl}"${error ? `, error="${error}"` : ""}`;
@@ -535,8 +554,8 @@ async function checkBearer(
   if (!match) return fail("malformed", "Bearer token required");
   const rawToken = match[1];
   try {
-    const cached = (req as any)._mctlToken;
-    delete (req as any)._mctlToken;
+    const cached = admittedTokens.get(req);
+    admittedTokens.delete(req);
     const record = cached !== undefined ? cached : await oauthStorage?.getToken(rawToken);
     if (record) {
       if (!authRequired && defaultService && record.expiresAt > Date.now() &&
@@ -989,28 +1008,38 @@ export function createHttpServer(
       const match = authHeader ? /^Bearer\s+([a-zA-Z0-9._~+/-]+=*)$/i.exec(authHeader.trim()) : null;
       const rawToken = match ? match[1] : null;
 
-      // Only switch to token-only keying after the bearer token resolves to an active, unexpired session in storage.
-      // Unauthenticated callers or rotating fake tokens remain charged to the IP bucket so the limit cannot be bypassed.
+      const ipKey = `ip:${clientAddress(req, proxyHops, ipHeader)}`;
+
+      // Only switch to token-only keying after the bearer token resolves to an active, unexpired session in storage
+      // (or an exact match on YANDEX_OAUTH_TOKEN in local mode). Unauthenticated callers or rotating fake tokens
+      // remain charged to the IP bucket so the limit cannot be bypassed.
       let validToken = false;
       if (bucket === "mcp" && rawToken) {
-        if (!authRequired && stationService && (rawToken === process.env.YANDEX_OAUTH_TOKEN || /^(y0_|y1_|AQAAAA)/.test(rawToken))) {
+        if (!authRequired && stationService && process.env.YANDEX_OAUTH_TOKEN && rawToken === process.env.YANDEX_OAUTH_TOKEN) {
           validToken = true;
         } else if (oauthStorage) {
-          try {
-            const tokenRecord = await oauthStorage.getToken(rawToken);
-            if (tokenRecord && Number.isFinite(tokenRecord.expiresAt) && tokenRecord.expiresAt > Date.now()) {
-              validToken = true;
-              (req as any)._mctlToken = tokenRecord;
+          // If the IP is already over budget, reject immediately without touching storage to stop storage flooding.
+          const ipVerdict = limiters[bucket].peek(ipKey);
+          const isKnownNegative = (negativeTokenCache.get(rawToken) || 0) > Date.now();
+          if (ipVerdict.allowed && !isKnownNegative) {
+            try {
+              const tokenRecord = await oauthStorage.getToken(rawToken);
+              if (tokenRecord && Number.isFinite(tokenRecord.expiresAt) && tokenRecord.expiresAt > Date.now()) {
+                validToken = true;
+                admittedTokens.set(req, tokenRecord);
+              } else {
+                recordNegativeToken(rawToken);
+              }
+            } catch {
+              // storage error falls back to IP rate limiting
             }
-          } catch {
-            // storage error falls back to IP rate limiting
           }
         }
       }
 
       const verdict = validToken
         ? limiters[bucket].hit(`token:${fingerprint(req)}`)
-        : limiters[bucket].hit(`ip:${clientAddress(req, proxyHops, ipHeader)}`);
+        : limiters[bucket].hit(ipKey);
       if (!verdict.allowed) {
         rateLimited.inc({ bucket });
         res.writeHead(429, { "Content-Type": "application/json; charset=utf-8", "Retry-After": String(verdict.retryAfterSec), "Cache-Control": "no-store" });

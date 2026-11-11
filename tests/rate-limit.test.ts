@@ -180,25 +180,31 @@ describe("rate limits over HTTP", () => {
     expect(getUser).toHaveBeenCalledTimes(2);
   });
 
-  it("limits authorized MCP requests per bearer token without blocking other tokens on the same IP", async () => {
+  it("cannot be bypassed by rotating bearer tokens", async () => {
     const base = await start({ rateLimits: { mcp: 2 } });
     const call = (token: string) => fetch(`${base}/mcp`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: "{}" });
-    const unauth = () => fetch(`${base}/mcp`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+    await call("token-a"); await call("token-b");
+    expect((await call("token-c")).status).toBe(429);
+  });
 
-    // token-a uses its full budget of 2 requests, 3rd gets 429
-    expect((await call("token-a")).status).not.toBe(429);
-    expect((await call("token-a")).status).not.toBe(429);
-    expect((await call("token-a")).status).toBe(429);
+  it("limits authorized MCP requests per valid bearer token without blocking other tokens on the same IP", async () => {
+    const base = await start({ rateLimits: { mcp: 2 } });
+    const storage = servers[servers.length - 1].storage;
+    const now = Date.now();
+    await storage.saveToken({ accessToken: "tok-valid-1", refreshToken: "rt-1", userId: "u1", clientId: "c1", scope: "iot:view", createdAt: now, expiresAt: now + 3600000 });
+    await storage.saveToken({ accessToken: "tok-valid-2", refreshToken: "rt-2", userId: "u2", clientId: "c2", scope: "iot:view", createdAt: now, expiresAt: now + 3600000 });
 
-    // token-b from the same client IP (e.g. shared OpenAI egress IP) has its own budget
-    expect((await call("token-b")).status).not.toBe(429);
-    expect((await call("token-b")).status).not.toBe(429);
-    expect((await call("token-b")).status).toBe(429);
+    const call = (token: string) => fetch(`${base}/mcp`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: "{}" });
 
-    // Unauthenticated calls are limited by IP
-    expect((await unauth()).status).not.toBe(429);
-    expect((await unauth()).status).not.toBe(429);
-    expect((await unauth()).status).toBe(429);
+    // tok-valid-1 uses its budget of 2, 3rd gets 429
+    expect((await call("tok-valid-1")).status).not.toBe(429);
+    expect((await call("tok-valid-1")).status).not.toBe(429);
+    expect((await call("tok-valid-1")).status).toBe(429);
+
+    // tok-valid-2 from the same client IP (e.g. shared OpenAI egress IP) has its own budget
+    expect((await call("tok-valid-2")).status).not.toBe(429);
+    expect((await call("tok-valid-2")).status).not.toBe(429);
+    expect((await call("tok-valid-2")).status).toBe(429);
   });
 
   it("polling /auth/qr-status does not exhaust the login bucket", async () => {

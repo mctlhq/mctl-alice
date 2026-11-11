@@ -535,7 +535,9 @@ async function checkBearer(
   if (!match) return fail("malformed", "Bearer token required");
   const rawToken = match[1];
   try {
-    const record = await oauthStorage?.getToken(rawToken);
+    const cached = (req as any)._mctlToken;
+    delete (req as any)._mctlToken;
+    const record = cached !== undefined ? cached : await oauthStorage?.getToken(rawToken);
     if (record) {
       if (!authRequired && defaultService && record.expiresAt > Date.now() &&
           (!record.userId || ["legacy_user", "usr_local"].includes(record.userId))) {
@@ -983,11 +985,30 @@ export function createHttpServer(
 
     const bucket = rateLimitBucket(url.pathname, req.method, String(req.headers.accept || ""));
     if (bucket) {
-      // For authorized MCP calls, rate-limit strictly by bearer token so shared client egress IPs
-      // (such as OpenAI ChatGPT actions) do not exhaust each other's budgets.
       const authHeader = req.headers.authorization;
-      const isBearerMcp = bucket === "mcp" && Boolean(authHeader && /^Bearer\s+\S/i.test(authHeader.trim()));
-      const verdict = isBearerMcp
+      const match = authHeader ? /^Bearer\s+([a-zA-Z0-9._~+/-]+=*)$/i.exec(authHeader.trim()) : null;
+      const rawToken = match ? match[1] : null;
+
+      // Only switch to token-only keying after the bearer token resolves to an active, unexpired session in storage.
+      // Unauthenticated callers or rotating fake tokens remain charged to the IP bucket so the limit cannot be bypassed.
+      let validToken = false;
+      if (bucket === "mcp" && rawToken) {
+        if (!authRequired && stationService && (rawToken === process.env.YANDEX_OAUTH_TOKEN || /^(y0_|y1_|AQAAAA)/.test(rawToken))) {
+          validToken = true;
+        } else if (oauthStorage) {
+          try {
+            const tokenRecord = await oauthStorage.getToken(rawToken);
+            if (tokenRecord && Number.isFinite(tokenRecord.expiresAt) && tokenRecord.expiresAt > Date.now()) {
+              validToken = true;
+              (req as any)._mctlToken = tokenRecord;
+            }
+          } catch {
+            // storage error falls back to IP rate limiting
+          }
+        }
+      }
+
+      const verdict = validToken
         ? limiters[bucket].hit(`token:${fingerprint(req)}`)
         : limiters[bucket].hit(`ip:${clientAddress(req, proxyHops, ipHeader)}`);
       if (!verdict.allowed) {

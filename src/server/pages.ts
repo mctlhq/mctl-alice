@@ -237,10 +237,15 @@ export function renderSetupPage(siteUrl: string): string {
         <h2 class="section-title s-96cfba" id="setup-tested" data-i18n="setup_tested_title">Проверенные клиенты</h2>
         <ul class="s-a0190f" data-i18n-html="setup_tested_list">
           <li><strong>Claude</strong> (claude.ai и Claude Desktop): <em>Customize → Connectors → «+» → Add custom connector</em>, вставьте MCP URL и нажмите <em>Add</em>, затем <em>Connect</em>.</li>
-          <li><strong>ChatGPT</strong>: <em>Plugins → «+» → custom MCP server</em>, вставьте MCP URL и пройдите авторизацию Яндекса.</li>
           <li><strong>Cursor IDE</strong>: добавьте сервер в <code>.cursor/mcp.json</code> (см. конфигурацию ниже).</li>
           <li><strong>Claude Code</strong>: подключите через команду <code>claude mcp add</code> в терминале (см. конфигурацию ниже).</li>
+          <li><strong>ChatGPT</strong>: прямое подключение удалённых MCP-серверов в веб-версии ChatGPT сейчас ограничено; для работы из коробки рекомендуются Claude Desktop, Cursor или Claude Code.</li>
         </ul>
+      </section>
+
+      <section class="s-8f4f37" aria-labelledby="setup-voice-faq">
+        <h2 class="section-title s-96cfba" id="setup-voice-faq" data-i18n="setup_voice_faq_title">Частый вопрос: заменяет ли это Алису на ChatGPT?</h2>
+        <p class="s-2a0ca8" data-i18n="setup_voice_faq_desc">Нет, сервис не меняет прошивку колонки. Яндекс Станция продолжает штатно работать с Алисой. При этом ваш внешний ИИ-ассистент (Claude, Cursor, ChatGPT) получает возможность видеть устройства умного дома, управлять ими и передавать на колонку произвольные голосовые фразы (TTS) или текстовые сценарии.</p>
       </section>
 
       <section class="s-8f4f37" aria-labelledby="setup-other">

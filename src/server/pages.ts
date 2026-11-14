@@ -237,9 +237,9 @@ export function renderSetupPage(siteUrl: string): string {
         <h2 class="section-title s-96cfba" id="setup-tested" data-i18n="setup_tested_title">Проверенные клиенты</h2>
         <ul class="s-a0190f" data-i18n-html="setup_tested_list">
           <li><strong>Claude</strong> (claude.ai и Claude Desktop): <em>Customize → Connectors → «+» → Add custom connector</em>, вставьте MCP URL и нажмите <em>Add</em>, затем <em>Connect</em>.</li>
-          <li><strong>Cursor IDE</strong> и <strong>Windsurf</strong>: добавьте сервер в конфигурацию MCP (<code>.cursor/mcp.json</code> или <code>mcp_config.json</code>).</li>
+          <li><strong>Cursor IDE</strong>: добавьте сервер в <code>.cursor/mcp.json</code> (см. конфигурацию ниже).</li>
           <li><strong>Claude Code</strong>: подключите через команду <code>claude mcp add</code> в терминале (см. конфигурацию ниже).</li>
-          <li><strong>ChatGPT</strong>: удалённые MCP-серверы поддерживаются через Custom GPT Actions или совместимые клиенты. Для прямого подключения без дополнительных настроек рекомендуются Claude Desktop или Cursor.</li>
+          <li><strong>ChatGPT</strong>: прямое подключение удалённых MCP-серверов в веб-версии ChatGPT сейчас ограничено; для работы из коробки рекомендуются Claude Desktop, Cursor или Claude Code.</li>
         </ul>
       </section>
 

@@ -23,6 +23,10 @@ permissions:
 jobs:
   dispatch:
     runs-on: ubuntu-latest
+    # The dispatch key lives only in this environment (branch policy: main;
+    # tag policy: semver tags). A workflow_dispatch from any other branch is
+    # rejected by the environment, which is intended.
+    environment: app-dispatch
     steps:
       - name: Resolve deployment tag
         id: tag
@@ -34,17 +38,19 @@ jobs:
           fi
 
       # The cross-repo dispatch needs a token that can run workflows in
-      # mctl-gitops; the mctl-agents App provides it (org variable
-      # AGENTS_APP_CLIENT_ID and org secret AGENTS_APP_PRIVATE_KEY,
-      # visibility=all).
-      - name: Generate Platform App token
+      # mctl-gitops; the mctl-gitops-dispatch App provides it (actions:write
+      # and metadata:read, installed on mctl-gitops only). The client id is
+      # the org variable DISPATCH_APP_CLIENT_ID; the private key is the
+      # DISPATCH_APP_PRIVATE_KEY secret of the app-dispatch environment.
+      - name: Generate dispatch App token
         id: app
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
-          client-id: ${{ vars.AGENTS_APP_CLIENT_ID }}
-          private-key: ${{ secrets.AGENTS_APP_PRIVATE_KEY }}
+          client-id: ${{ vars.DISPATCH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.DISPATCH_APP_PRIVATE_KEY }}
           owner: mctlhq
           repositories: mctl-gitops
+          permission-actions: write
 
       - name: Dispatch centralized release-deploy
         env:

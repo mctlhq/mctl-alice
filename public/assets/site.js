@@ -106,8 +106,8 @@
   // ── Multi-language (i18n) ────────────────────────────────────────────────
   var translations = {
     ru: {
-      meta_title: "mctl-alice — Управление Яндекс Станцией и умным домом через AI (MCP)",
-      meta_desc: "Model Context Protocol (MCP) сервер для Яндекс Станций и умного дома. Управляйте колонками Алиса, отправляйте голосовые команды, воспроизводите произвольный текст TTS через Claude, ChatGPT и другие MCP-клиенты.",
+      meta_title: "Алиса MCP — Управление Яндекс Станцией и умным домом | mctl-alice",
+      meta_desc: "Готовый MCP-сервер для колонок Яндекс Станция с Алисой. Голосовые команды текстом, музыка, сценарии умного дома, громкость и речь TTS через Claude и Cursor без установки Python.",
       nav_login: "Вход (OAuth)",
       nav_cookie: "Quasar Cookie",
       nav_github: "GitHub",
@@ -365,8 +365,8 @@
       notfound_desc: "Такой страницы нет. Возможно, ссылка устарела или в адресе опечатка."
     },
     en: {
-      meta_title: "mctl-alice — Yandex Station & Smart Home Control via AI (MCP)",
-      meta_desc: "Model Context Protocol (MCP) server for Yandex Station smart speakers and smart home devices. Control Alice speakers, issue voice commands, synthesize text-to-speech (TTS) via Claude, ChatGPT and other MCP clients.",
+      meta_title: "Alice MCP — Yandex Station & Smart Home Control | mctl-alice",
+      meta_desc: "Hosted Model Context Protocol (MCP) server for Yandex Station and Alice smart home. Voice commands via text, music, volume, and TTS via Claude, Cursor and AI without Python setup.",
       nav_login: "Sign In (OAuth)",
       nav_cookie: "Quasar Cookie",
       nav_github: "GitHub",
@@ -651,6 +651,9 @@
     if (pageTitleKey && dict[pageTitleKey]) {
       document.title = dict[pageTitleKey];
     }
+    var ogTitle = document.querySelector('meta[property="og:title"]');
+    var targetTitle = (pageTitleKey && dict[pageTitleKey]) || dict.meta_title;
+    if (ogTitle && targetTitle) ogTitle.setAttribute("content", targetTitle);
 
     // Update copy button dataset
     if (copy) {

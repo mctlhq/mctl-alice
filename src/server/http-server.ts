@@ -256,7 +256,7 @@ ${indexing}
   "applicationCategory": "DeveloperApplication",
   "operatingSystem": "Cloud",
   "url": "https://alice.mctl.ai",
-  "description": "Model Context Protocol (MCP) сервер для Яндекс Станций и умного дома",
+  "description": "Алиса MCP: Model Context Protocol сервер для колонок Яндекс Станция и умного дома",
   "provider": {
     "@type": "Organization",
     "@id": "https://mctl.ai/#organization",

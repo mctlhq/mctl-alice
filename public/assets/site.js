@@ -114,6 +114,8 @@
       hero_eyebrow: "Model Context Protocol",
       hero_title: "Голосовое управление Яндекс Станцией<br>и умным домом для AI-ассистентов",
       hero_lead: "mctl-alice соединяет ваших AI-ассистентов (Claude, ChatGPT и другие MCP-клиенты) с умными колонками Яндекс Станция и устройствами умного дома. Произносите произвольные фразы (TTS), симулируйте голосовые команды текстом, управляйте громкостью, музыкой и сценариями.",
+      meta_og_image_alt: "mctl-alice: AI-ассистенты для колонок Алиса и Умного дома Яндекса",
+      jsonld_description: "Алиса MCP: Model Context Protocol сервер для колонок Яндекс Станция и умного дома",
       hero_copy_idle: "Скопировать MCP URL",
       hero_copy_done: "Скопировано!",
       hero_login_btn: "Войти через Яндекс",
@@ -373,6 +375,8 @@
       hero_eyebrow: "Model Context Protocol",
       hero_title: "Voice Control for Yandex Station<br>& Smart Home for AI Assistants",
       hero_lead: "mctl-alice connects your AI assistants (Claude, ChatGPT and other MCP clients) to Yandex Station smart speakers and smart home devices. Speak arbitrary text (TTS), simulate voice commands via text, adjust volume, control music playback, and run routines.",
+      meta_og_image_alt: "mctl-alice: AI assistants for Alice speakers and Yandex Smart Home",
+      jsonld_description: "Alice MCP: a Model Context Protocol server for Yandex Station speakers and smart home",
       hero_copy_idle: "Copy MCP URL",
       hero_copy_done: "Copied!",
       hero_login_btn: "Log in with Yandex",
@@ -753,7 +757,20 @@
     });
   }
 
-  applyLanguage(initialLang);
+  if (root.hasAttribute("data-lang-static")) {
+    // The page is already rendered in its language at its own URL, and the
+    // switcher is a pair of real links. The text is not touched here; a click
+    // only records the choice so the account and sign-in pages, which have no
+    // per-language URL, open in the same language.
+    Array.prototype.forEach.call(document.querySelectorAll(".lang-switcher a[hreflang]"), function (link) {
+      link.addEventListener("click", function () {
+        try { localStorage.setItem("alice-lang", link.getAttribute("hreflang")); } catch (e) {}
+      });
+    });
+    updateUrls();
+  } else {
+    applyLanguage(initialLang);
+  }
 
   // ── Live usage numbers (home page only) ─────────────────────────────────
   // The strip stays hidden until the first successful answer, so a failed or

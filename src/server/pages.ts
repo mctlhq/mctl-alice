@@ -1,3 +1,5 @@
+import { enPath } from "./localize.js";
+
 function escapeHtml(str: string): string {
   return str
     .replace(/&/g, "&amp;")
@@ -188,10 +190,20 @@ export function renderRobotsTxt(siteUrl: string): string {
   ].join("\n");
 }
 
+/** Every page lists both language variants (self included) and x-default, as Google's hreflang sitemap format asks. */
 export function renderSitemapXml(siteUrl: string): string {
-  const urls = SITEMAP_PAGE_PATHS.map((p) => `  <url><loc>${escapeHtml(siteUrl + p)}</loc></url>`).join("\n");
+  const urls = SITEMAP_PAGE_PATHS.flatMap((p) => {
+    const ru = escapeHtml(siteUrl + p);
+    const en = escapeHtml(siteUrl + enPath(p));
+    const alternates = [
+      `    <xhtml:link rel="alternate" hreflang="ru" href="${ru}"/>`,
+      `    <xhtml:link rel="alternate" hreflang="en" href="${en}"/>`,
+      `    <xhtml:link rel="alternate" hreflang="x-default" href="${ru}"/>`,
+    ].join("\n");
+    return [ru, en].map((loc) => `  <url>\n    <loc>${loc}</loc>\n${alternates}\n  </url>`);
+  }).join("\n");
   return `<?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">
 ${urls}
 </urlset>
 `;

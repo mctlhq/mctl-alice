@@ -45,6 +45,7 @@ import { IStorage, createStorage, createTelemetryStorage, OAuthStorage } from ".
 import { OAuthController, OAuthError } from "../auth/oauth-controller.js";
 import { initQrAuth, checkQrAuthStatus } from "../auth/yandex-qr-auth.js";
 import { fetchYandexProfile } from "../auth/oauth-helper.js";
+import { loadTranslations, localizePage, matchLocalizedPath, enPath, type Lang, type Translations } from "./localize.js";
 import { renderAboutPage, renderPrivacyPage, renderTermsPage, renderSecurityPage, renderSetupPage, renderNotFoundPage, renderRobotsTxt, renderSitemapXml } from "./pages.js";
 import { renderAccountPage } from "./account-page.js";
 import { PublicStatsCache, publicStatsRefreshMs } from "./public-stats.js";
@@ -63,6 +64,17 @@ const publicDirCandidates = [
   path.resolve(__dirname, "../public"),
 ];
 const publicDir = publicDirCandidates.find((d) => fs.existsSync(d)) || publicDirCandidates[0];
+
+const translationsCache = new Map<string, Translations>();
+/** The RU/EN string table of public/assets/site.js, read once per origin. */
+function translations(origin: string): Translations {
+  let table = translationsCache.get(origin);
+  if (!table) {
+    table = loadTranslations(path.join(publicDir, "assets", "site.js"), origin);
+    translationsCache.set(origin, table);
+  }
+  return table;
+}
 
 const STATIC_MIME_TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -96,7 +108,8 @@ function serveStaticFile(
   reqPath: string,
   res: http.ServerResponse,
   fallbackContentType = "application/octet-stream",
-  siteUrl = ""
+  siteUrl = "",
+  transformHtml: (html: string) => string = (html) => html
 ): boolean {
   let decoded = reqPath;
   try {
@@ -126,7 +139,7 @@ function serveStaticFile(
     if (stats.isDirectory()) {
       const indexPath = path.join(filePath, "index.html");
       if (fs.existsSync(indexPath)) {
-        const content = withAssetVersion(fs.readFileSync(indexPath, "utf8"), siteUrl);
+        const content = withAssetVersion(transformHtml(fs.readFileSync(indexPath, "utf8")), siteUrl);
         res.writeHead(200, {
           "Content-Type": "text/html; charset=utf-8",
           "Cache-Control": "no-cache",
@@ -139,7 +152,7 @@ function serveStaticFile(
 
     const ext = path.extname(filePath).toLowerCase();
     const contentType = STATIC_MIME_TYPES[ext] || fallbackContentType;
-    const content = ext === ".html" ? withAssetVersion(fs.readFileSync(filePath, "utf8"), siteUrl) : fs.readFileSync(filePath);
+    const content = ext === ".html" ? withAssetVersion(transformHtml(fs.readFileSync(filePath, "utf8")), siteUrl) : fs.readFileSync(filePath);
 
     // Font files never change in place (a new font gets a new file name), so
     // they are cached for a week instead of revalidated every minute.
@@ -1111,6 +1124,26 @@ export function createHttpServer(
       if (served) return;
     }
 
+    // English variants of the public pages live under /en/. Each is rendered
+    // by the Russian route's own handler and then localized, so a path is
+    // never negotiated by Accept-Language and the two variants cannot drift.
+    let pageLang: Lang = "ru";
+    if (req.method === "GET" || req.method === "HEAD") {
+      if (url.pathname === "/en") {
+        res.writeHead(301, { Location: "/en/" });
+        res.end();
+        return;
+      }
+      const localizedRoute = matchLocalizedPath(url.pathname);
+      if (localizedRoute?.lang === "en") {
+        pageLang = "en";
+        url.pathname = localizedRoute.path;
+      }
+    }
+    const pagePathFor = (p: string) => (pageLang === "en" ? enPath(p) : p);
+    const finishPage = (html: string, pagePath: string) =>
+      localizePage(html, { lang: pageLang, path: pagePath, base: publicSiteUrl, dict: translations(siteUrl)[pageLang] });
+
     // robots.txt and the sitemap name absolute URLs, so they are built from
     // the configured public origin rather than shipped as static files.
     if (url.pathname === "/robots.txt" && (req.method === "GET" || req.method === "HEAD")) {
@@ -1822,16 +1855,16 @@ export function createHttpServer(
     if (url.pathname === "/setup" && (req.method === "GET" || req.method === "HEAD")) {
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       res.end(
-        renderAuthPage({
+        finishPage(renderAuthPage({
           title: "Алиса MCP — подключение Яндекс Станции к Claude, ChatGPT и Cursor",
           titleKey: "setup_page_title",
           description: "Пошаговая инструкция по подключению Яндекс Станции и умного дома с Алисой к Claude Desktop, ChatGPT, Cursor и другим AI-ассистентам через протокол MCP.",
           descriptionKey: "setup_page_description",
           contentHtml: renderSetupPage(siteUrl),
-          canonical: canonicalFor("/setup"),
+          canonical: canonicalFor(pagePathFor("/setup")),
           indexable: true,
           withAnalytics: true,
-        })
+        }), "/setup")
       );
       return;
     }
@@ -1839,16 +1872,16 @@ export function createHttpServer(
     if (url.pathname === "/about" && (req.method === "GET" || req.method === "HEAD")) {
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       res.end(
-        renderAuthPage({
+        finishPage(renderAuthPage({
           title: "mctl-alice — О сервисе",
           titleKey: "about_title",
           description: "mctl-alice — открытый облачный MCP-сервер для интеграции умного дома Яндекса и колонок с Алисой в современные LLM-ассистенты.",
           descriptionKey: "about_page_description",
           contentHtml: renderAboutPage(baseUrl),
-          canonical: canonicalFor("/about"),
+          canonical: canonicalFor(pagePathFor("/about")),
           indexable: true,
           withAnalytics: true,
-        })
+        }), "/about")
       );
       return;
     }
@@ -1859,15 +1892,15 @@ export function createHttpServer(
         "X-Robots-Tag": "noindex, follow",
       });
       res.end(
-        renderAuthPage({
+        finishPage(renderAuthPage({
           title: "mctl-alice — Политика конфиденциальности",
           titleKey: "privacy_title",
           contentHtml: renderPrivacyPage(baseUrl),
-          canonical: canonicalFor("/privacy"),
+          canonical: canonicalFor(pagePathFor("/privacy")),
           indexable: false,
           robotsDirective: "noindex, follow",
           withAnalytics: true,
-        })
+        }), "/privacy")
       );
       return;
     }
@@ -1878,15 +1911,15 @@ export function createHttpServer(
         "X-Robots-Tag": "noindex, follow",
       });
       res.end(
-        renderAuthPage({
+        finishPage(renderAuthPage({
           title: "mctl-alice — Условия использования",
           titleKey: "terms_title",
           contentHtml: renderTermsPage(baseUrl),
-          canonical: canonicalFor("/terms"),
+          canonical: canonicalFor(pagePathFor("/terms")),
           indexable: false,
           robotsDirective: "noindex, follow",
           withAnalytics: true,
-        })
+        }), "/terms")
       );
       return;
     }
@@ -1894,16 +1927,16 @@ export function createHttpServer(
     if (url.pathname === "/security" && (req.method === "GET" || req.method === "HEAD")) {
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       res.end(
-        renderAuthPage({
+        finishPage(renderAuthPage({
           title: "mctl-alice — Безопасность",
           titleKey: "security_title",
           description: "Архитектура безопасности mctl-alice: авторизация OAuth 2.1, шифрование токенов, отсутствие хранения истории устройств и прямой вызов API Яндекса.",
           descriptionKey: "security_page_description",
           contentHtml: renderSecurityPage(baseUrl),
-          canonical: canonicalFor("/security"),
+          canonical: canonicalFor(pagePathFor("/security")),
           indexable: true,
           withAnalytics: true,
-        })
+        }), "/security")
       );
       return;
     }
@@ -2495,9 +2528,13 @@ export function createHttpServer(
     // Web Landing Page
     if (url.pathname === "/" && (req.method === "GET" || req.method === "HEAD")) {
       const accept = req.headers.accept || "";
-      const prefersJson = accept.includes("application/json") && !accept.includes("text/html");
+      const prefersJson = pageLang === "ru" && accept.includes("application/json") && !accept.includes("text/html");
       if (!prefersJson) {
-        const served = serveStaticFile("index.html", res, undefined, publicSiteUrl);
+        // "__BASE_URL__" is the static file's own placeholder: filled in, or
+        // stripped together with the canonical when no public origin is set.
+        const served = serveStaticFile("index.html", res, undefined, publicSiteUrl, (html) =>
+          localizePage(html, { lang: pageLang, path: "/", base: "__BASE_URL__", dict: translations(siteUrl)[pageLang] })
+        );
         if (served) return;
       }
     }

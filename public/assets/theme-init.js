@@ -3,6 +3,7 @@
 try {
   var t = localStorage.getItem("alice-theme");
   if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+  // Pages with a URL per language already carry their language (data-lang-static).
   var l = localStorage.getItem("alice-lang");
-  if (l === "ru" || l === "en") document.documentElement.setAttribute("lang", l);
+  if ((l === "ru" || l === "en") && !document.documentElement.hasAttribute("data-lang-static")) document.documentElement.setAttribute("lang", l);
 } catch (e) {}

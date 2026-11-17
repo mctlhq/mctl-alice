@@ -493,3 +493,10 @@
   margin: 0 0 14px;
   text-align: left;
 }
+
+/* The language switcher on pages with a URL per language is a pair of links. */
+a.lang-btn {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+}

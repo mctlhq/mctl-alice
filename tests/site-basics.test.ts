@@ -132,7 +132,8 @@ describe("Public site basics: /setup, 404 page, sitemap, fonts, social preview",
     expect(sitemap.status).toBe(200);
     expect(sitemap.headers.get("content-type")).toContain("application/xml");
     const locs = Array.from((await sitemap.text()).matchAll(/<loc>([^<]+)<\/loc>/g), m => m[1]);
-    expect(locs).toEqual(["/", "/setup", "/about", "/security"].map(p => PUBLIC_ORIGIN + p));
+    // Each page is listed once per language; the language variants are covered in i18n-urls.test.ts.
+    expect(locs).toEqual(["/", "/setup", "/about", "/security"].flatMap(p => [p, p === "/" ? "/en/" : "/en" + p]).map(p => PUBLIC_ORIGIN + p));
 
     for (const page of ["/privacy", "/terms"]) {
       const pageRes = await fetch(base + page, { headers: html });

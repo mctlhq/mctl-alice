@@ -246,6 +246,76 @@ describe("CSP, CORS and HTML hardening", () => {
     expect(contentSecurityPolicy(formActionSourceFor("javascript:alert(1)"))).toMatch(/form-action 'self'$/);
   });
 
+  // /setup is the canonical answer to the "алиса mcp" / "подключить алису к ..." intent
+  // (mctl-alice#174, D2 of .github#349). The served Russian HTML and the RU dictionary in
+  // site.js must say the same thing: site.js rewrites the title, description and these
+  // blocks at runtime, so a drift shows search engines a different page than the server sent.
+  describe("/setup intent copy", () => {
+    const SETUP_TITLE = "Как подключить Алису к ChatGPT и Claude через MCP | mctl-alice";
+    const SETUP_DESCRIPTION = "Пошагово: добавьте MCP-адрес в ChatGPT или Claude, войдите через Яндекс ID, выберите разрешения и проверьте список устройств «Дома с Алисой».";
+    const SETUP_H1 = "Как подключить Алису и Яндекс Станцию к ChatGPT или Claude";
+    const SETUP_ANCHOR = "Как подключить Алису к ChatGPT или Claude: пошаговая инструкция →";
+
+    const ruDict = (key: string): string => {
+      const ru = readAsset("site.js").match(/ru:\s*\{([\s\S]*?)\n\s*\},/)![1];
+      const literal = ru.match(new RegExp(`^\\s{6}${key}: ("(?:[^"\\\\]|\\\\.)*"),?$`, "m"));
+      expect(literal, key).not.toBeNull();
+      return JSON.parse(literal![1]) as string;
+    };
+    const decode = (s: string) => s.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+    const setupBody = () => htmlPages.get("/setup")!.body;
+    const inner = (body: string, key: string, tag: string) => {
+      const m = body.match(new RegExp(`<${tag}[^>]*data-i18n(?:-html)?="${key}"[^>]*>([\\s\\S]*?)</${tag}>`));
+      expect(m, key).not.toBeNull();
+      return m![1];
+    };
+
+    it("serves the approved title, H1, description and a single self-canonical", () => {
+      const body = setupBody();
+      expect(decode(body.match(/<title>([^<]*)<\/title>/)![1])).toBe(SETUP_TITLE);
+      expect(inner(body, "setup_page_h1", "h1")).toBe(SETUP_H1);
+      expect(decode(body.match(/<meta name="description" content="([^"]*)"/)![1])).toBe(SETUP_DESCRIPTION);
+      expect(body.match(/rel="canonical"/g)).toHaveLength(1);
+      expect(body).toContain('<link rel="canonical" href="http://localhost/setup">');
+    });
+
+    it("serves the same text that site.js applies for Russian", () => {
+      const body = setupBody();
+      expect(ruDict("setup_page_title")).toBe(SETUP_TITLE);
+      expect(ruDict("setup_page_description")).toBe(SETUP_DESCRIPTION);
+      for (const [key, tag] of [
+        ["setup_page_h1", "h1"], ["setup_page_lead", "p"], ["setup_tested_list", "ul"],
+        ["setup_voice_faq_desc", "p"], ["setup_other_desc", "p"],
+      ]) {
+        expect(inner(body, key, tag).trim(), key).toBe(ruDict(key));
+      }
+    });
+
+    it("lists only verified clients as tested, ChatGPT through Plugins", () => {
+      const tested = inner(setupBody(), "setup_tested_list", "ul");
+      expect(tested).toContain("chatgpt.com/plugins");
+      expect(tested).toContain("Add custom connector");
+      expect(tested).not.toMatch(/Cursor|Claude Code|ограничено/);
+      expect(inner(setupBody(), "setup_voice_faq_desc", "p")).not.toContain("Cursor");
+      expect(inner(setupBody(), "setup_voice_faq_desc", "p")).toContain("Quasar");
+      expect(inner(setupBody(), "setup_other_desc", "p")).toContain("не проверяли");
+    });
+
+    it("claims nothing official in the head, H1 or intro", () => {
+      const body = setupBody();
+      const head = body.slice(0, body.indexOf("</head>"));
+      expect(head).not.toMatch(/официальн/i);
+      expect(inner(body, "setup_page_h1", "h1")).not.toMatch(/официальн/i);
+      expect(inner(body, "setup_page_lead", "p")).not.toMatch(/официальн/i);
+      expect(inner(body, "setup_page_lead", "p")).toMatch(/^mctl-alice — независимый MCP-сервер/);
+    });
+
+    it("links / to /setup with the descriptive anchor", () => {
+      expect(htmlPages.get("/")!.body).toContain(`<a href="/setup" data-i18n="setup_more_link">${SETUP_ANCHOR}</a>`);
+      expect(ruDict("setup_more_link")).toBe(SETUP_ANCHOR);
+    });
+  });
+
   it("restricts analytics tracking to public informational pages and excludes auth and session pages", () => {
     const publicPages = ["/", "/setup", "/about", "/privacy", "/terms", "/security", "404"];
     const sensitivePages = ["/account", "/account (signed in)", "/auth/cookie", "/auth/callback", "consent"];

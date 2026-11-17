@@ -216,8 +216,8 @@ export function renderNotFoundPage(): string {
 export function renderSetupPage(siteUrl: string): string {
   const mcpUrl = escapeHtml(`${siteUrl}/mcp`);
   return `
-    <h1 class="page-title" data-i18n="setup_page_h1">Подключите Алису и Яндекс Станцию к Claude или ChatGPT</h1>
-    <p class="s-d8f4e6" data-i18n="setup_page_lead">mctl-alice подключает Яндекс Станцию и устройства из приложения «Дом с Алисой» к AI-ассистенту через MCP. Добавьте адрес сервера, войдите через Яндекс ID и выберите разрешения. После подключения ассистент сможет показывать устройства и выполнять разрешённые действия.</p>
+    <h1 class="page-title" data-i18n="setup_page_h1">Как подключить Алису и Яндекс Станцию к ChatGPT или Claude</h1>
+    <p class="s-d8f4e6" data-i18n="setup_page_lead">mctl-alice — независимый MCP-сервер: он подключает Яндекс Станцию и устройства из «Дома с Алисой» к ChatGPT или Claude. Добавьте адрес сервера, войдите через Яндекс ID и выберите разрешения. После подключения ассистент сможет показывать устройства и выполнять разрешённые действия.</p>
 
     <div class="endpoint">
       <span class="label">MCP URL</span>
@@ -235,22 +235,17 @@ export function renderSetupPage(siteUrl: string): string {
 
       <section class="s-8f4f37" aria-labelledby="setup-tested">
         <h2 class="section-title s-96cfba" id="setup-tested" data-i18n="setup_tested_title">Проверенные клиенты</h2>
-        <ul class="s-a0190f" data-i18n-html="setup_tested_list">
-          <li><strong>Claude</strong> (claude.ai и Claude Desktop): <em>Customize → Connectors → «+» → Add custom connector</em>, вставьте MCP URL и нажмите <em>Add</em>, затем <em>Connect</em>.</li>
-          <li><strong>Cursor IDE</strong>: добавьте сервер в <code>.cursor/mcp.json</code> (см. конфигурацию ниже).</li>
-          <li><strong>Claude Code</strong>: подключите через команду <code>claude mcp add</code> в терминале (см. конфигурацию ниже).</li>
-          <li><strong>ChatGPT</strong>: прямое подключение удалённых MCP-серверов в веб-версии ChatGPT сейчас ограничено; для работы из коробки рекомендуются Claude Desktop, Cursor или Claude Code.</li>
-        </ul>
+        <ul class="s-a0190f" data-i18n-html="setup_tested_list"><li><strong>ChatGPT</strong>: откройте <em>Plugins</em> (chatgpt.com/plugins), нажмите <em>«+»</em>, выберите добавление custom MCP-сервера и вставьте MCP URL. ChatGPT сам откроет вход через Яндекс ID.</li><li><strong>Claude</strong> (claude.ai и Claude Desktop): <em>Customize → Connectors → «+» → Add custom connector</em>, вставьте MCP URL и нажмите <em>Add</em>, затем <em>Connect</em>.</li></ul>
       </section>
 
       <section class="s-8f4f37" aria-labelledby="setup-voice-faq">
         <h2 class="section-title s-96cfba" id="setup-voice-faq" data-i18n="setup_voice_faq_title">Частый вопрос: заменяет ли это Алису на ChatGPT?</h2>
-        <p class="s-2a0ca8" data-i18n="setup_voice_faq_desc">Нет, сервис не меняет прошивку колонки. Яндекс Станция продолжает штатно работать с Алисой. При этом ваш внешний ИИ-ассистент (Claude, Cursor, ChatGPT) получает возможность видеть устройства умного дома, управлять ими и передавать на колонку произвольные голосовые фразы (TTS) или текстовые сценарии.</p>
+        <p class="s-2a0ca8" data-i18n="setup_voice_faq_desc">Нет, сервис не меняет прошивку колонки. Яндекс Станция продолжает штатно работать с Алисой. При этом ваш внешний ИИ-ассистент (ChatGPT, Claude) получает возможность видеть устройства умного дома и управлять ими, а при подключённом Quasar — передавать на колонку фразы для озвучивания (TTS) и текстовые команды.</p>
       </section>
 
       <section class="s-8f4f37" aria-labelledby="setup-other">
         <h2 class="section-title s-96cfba" id="setup-other" data-i18n="setup_other_title">Конфигурации для других MCP-клиентов</h2>
-        <p class="s-2a0ca8" data-i18n="setup_other_desc">Подойдёт любой клиент, который подключает удалённые MCP-серверы с авторизацией OAuth 2.1 (Claude Code, Cursor, Windsurf, Zed). Скопируйте нужный формат:</p>
+        <p class="s-2a0ca8" data-i18n="setup_other_desc">Другие клиенты, которые подключают удалённые MCP-серверы с авторизацией OAuth 2.1 (Claude Code, Cursor, Windsurf, Zed), должны подойти, но мы их не проверяли. Скопируйте нужный формат:</p>
         <p class="s-2a0ca8"><strong>Claude Code CLI:</strong></p>
         <pre><code>claude mcp add --transport http alice <span class="mcp-url-slot">${mcpUrl}</span></code></pre>
         <p class="s-2a0ca8"><strong>Cursor IDE (<code>.cursor/mcp.json</code>) & Windsurf (<code>mcp_config.json</code>):</strong></p>

@@ -1823,9 +1823,9 @@ export function createHttpServer(
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       res.end(
         renderAuthPage({
-          title: "Алиса MCP — подключение Яндекс Станции к Claude, ChatGPT и Cursor",
+          title: "Как подключить Алису к ChatGPT и Claude через MCP | mctl-alice",
           titleKey: "setup_page_title",
-          description: "Пошаговая инструкция по подключению Яндекс Станции и умного дома с Алисой к Claude Desktop, ChatGPT, Cursor и другим AI-ассистентам через протокол MCP.",
+          description: "Пошагово: добавьте MCP-адрес в ChatGPT или Claude, войдите через Яндекс ID, выберите разрешения и проверьте список устройств «Дома с Алисой».",
           descriptionKey: "setup_page_description",
           contentHtml: renderSetupPage(siteUrl),
           canonical: canonicalFor("/setup"),

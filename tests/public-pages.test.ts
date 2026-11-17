@@ -89,10 +89,36 @@ describe("Public Informational Pages and Account Dashboard", () => {
       "about_page_description",
       "security_page_description",
       "setup_page_title",
+      "setup_page_h1",
+      "setup_page_lead",
+      "setup_tested_list",
     ];
     for (const key of keys) {
       const occurrences = (siteJs.match(new RegExp(`${key}:`, "g")) || []).length;
       expect(occurrences).toBe(2);
+    }
+  });
+
+  it("keeps the English /setup copy to the same verified clients as the Russian one", async () => {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const siteJs = fs.readFileSync(path.resolve("public/assets/site.js"), "utf-8");
+    const en = siteJs.match(/en:\s*\{([\s\S]*?)\n\s*\}\s*\};/)![1];
+    const value = (key: string) => {
+      const literal = en.match(new RegExp(`^\\s{6}${key}: ("(?:[^"\\\\]|\\\\.)*"),?$`, "m"));
+      expect(literal, key).not.toBeNull();
+      return JSON.parse(literal![1]) as string;
+    };
+    expect(value("setup_page_title")).toBe("How to connect Yandex Alice to ChatGPT and Claude via MCP | mctl-alice");
+    expect(value("setup_page_h1")).toBe("How to connect Alice and Yandex Station to ChatGPT or Claude");
+    expect(value("setup_page_lead")).toMatch(/^mctl-alice is an independent MCP server/);
+    expect(value("setup_page_description")).not.toMatch(/Cursor/);
+    expect(value("setup_tested_list")).toContain("chatgpt.com/plugins");
+    expect(value("setup_tested_list")).not.toMatch(/Cursor|Claude Code|limited/);
+    expect(value("setup_voice_faq_desc")).not.toContain("Cursor");
+    expect(value("setup_other_desc")).toContain("have not tested");
+    for (const key of ["setup_page_title", "setup_page_description", "setup_page_h1", "setup_page_lead"]) {
+      expect(value(key), key).not.toMatch(/official/i);
     }
   });
 

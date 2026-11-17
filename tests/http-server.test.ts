@@ -270,8 +270,9 @@ describe("HTTP Server & ChatGPT REST API", () => {
     expect(text).toContain("BETA");
     expect(text).toContain("alice_send_command");
     expect(text).toContain('id="lang-switcher"');
-    expect(text).toContain('data-lang="ru"');
-    expect(text).toContain('data-lang="en"');
+    // The switcher is a pair of real links, one per language URL.
+    expect(text).toContain('hreflang="ru" href="/"');
+    expect(text).toContain('hreflang="en" href="/en/"');
     expect(text).toContain("data-i18n=");
     expect(text).toContain(`/assets/site.js?v=${VERSION}`);
     // Should NOT contain openapi link in navigation or hero GitHub CTA button

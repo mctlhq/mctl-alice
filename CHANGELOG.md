@@ -3,6 +3,14 @@
 Versions follow semantic versioning; tags carry no `v` prefix. Full notes for
 every version are on the [Releases page](https://github.com/mctlhq/mctl-alice/releases).
 
+## [2.15.1](https://github.com/mctlhq/mctl-alice/compare/2.15.0...2.15.1) (2026-11-18)
+
+
+### Bug Fixes
+
+* **a11y:** contrast of the BETA chip on a light OS and the footer link ([8f0c9b7](https://github.com/mctlhq/mctl-alice/commit/8f0c9b781006e091c5df8fc3f24068c8f27a3901))
+* **a11y:** contrast of the BETA chip on a light OS and the footer link ([65d360a](https://github.com/mctlhq/mctl-alice/commit/65d360a4975f58d4d6f763e6ac14128fac5c74cc))
+
 ## [2.15.0](https://github.com/mctlhq/mctl-alice/compare/2.14.0...2.15.0) (2026-11-18)
 
 

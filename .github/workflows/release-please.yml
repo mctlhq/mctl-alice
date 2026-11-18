@@ -1,0 +1,82 @@
+name: release-please
+
+# Flow for this repo, the same as the other mctlhq services: conventional
+# commits on main -> release-please keeps a release PR open -> merging it tags
+# the version (no `v` prefix) and this workflow hands the tag to mctl-gitops,
+# which builds ghcr.io/mctlhq/mctl-alice, commits the new image.tag to
+# platform-gitops/services/labs/mctl-alice/values.yaml and lets ArgoCD sync it.
+# This replaces pushing a semver tag by hand.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      # The default GITHUB_TOKEN cannot open the release PR: "Allow GitHub
+      # Actions to create and approve pull requests" is off at the org level.
+      # A token minted from the mctl-agents App sidesteps the setting, and a PR
+      # opened with an App token raises pull_request events, so the release PR
+      # gets normal CI. The same token creates the tag, which is why the tag
+      # push is not what deploys: the dispatch job below is.
+      - name: Generate release token
+        id: release-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.AGENTS_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AGENTS_APP_PRIVATE_KEY }}
+          owner: mctlhq
+          repositories: mctl-alice
+          permission-contents: write
+          permission-pull-requests: write
+
+      - uses: googleapis/release-please-action@v5
+        id: release
+        with:
+          token: ${{ steps.release-token.outputs.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  # Separate job so the release-please job never holds a token for mctl-gitops.
+  # The credential is still the mctl-agents App, as release-deploy.yml used
+  # before; the open Stage 4 PR (#169, mctl-gitops#1033) moves it to the
+  # mctl-gitops-dispatch App, and that change now applies to this job.
+  dispatch:
+    needs: release-please
+    if: ${{ github.ref == 'refs/heads/main' && needs.release-please.outputs.release_created == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Generate Platform App token
+        id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.AGENTS_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AGENTS_APP_PRIVATE_KEY }}
+          owner: mctlhq
+          repositories: mctl-gitops
+
+      - name: Dispatch centralized release-deploy
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          TAG: ${{ needs.release-please.outputs.tag_name }}
+        run: |
+          gh workflow run release-deploy.yaml \
+            --repo mctlhq/mctl-gitops \
+            --ref main \
+            -f repo=mctlhq/mctl-alice \
+            -f git_ref="$TAG" \
+            -f image_name=ghcr.io/mctlhq/mctl-alice \
+            -f image_tag="$TAG" \
+            -f team_name=labs \
+            -f component_name=mctl-alice

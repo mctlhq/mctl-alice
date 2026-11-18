@@ -307,6 +307,14 @@ section:last-of-type {
   background: var(--accent-soft);
   color: var(--accent-deep);
 }
+/* The same light look for a light operating system with no saved choice: there
+   is no data-theme attribute then, so the rule above never matches. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) .chip-beta {
+    background: var(--accent-soft);
+    color: var(--accent-deep);
+  }
+}
 
 h1 {
   margin: 0 0 20px;
@@ -595,6 +603,12 @@ footer {
 }
 footer a {
   color: var(--surface-fg-muted);
+}
+/* The sentence's link sits in running text of a near colour; underline it so
+   it is not told apart by colour alone. */
+footer .footer-row > span:first-child a {
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 /* ── narrow screens ──────────────────────────────────────────────────── */

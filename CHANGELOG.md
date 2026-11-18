@@ -3,6 +3,19 @@
 Versions follow semantic versioning; tags carry no `v` prefix. Full notes for
 every version are on the [Releases page](https://github.com/mctlhq/mctl-alice/releases).
 
+## [2.15.0](https://github.com/mctlhq/mctl-alice/compare/2.14.0...2.15.0) (2026-11-18)
+
+
+### Features
+
+* **site:** English gets its own crawlable URLs under /en/ ([61da081](https://github.com/mctlhq/mctl-alice/commit/61da0818af79f07e1e1490b2e94cd315357ffd13))
+
+
+### Bug Fixes
+
+* **web:** trim home meta description to under 160 chars ([cbaeb41](https://github.com/mctlhq/mctl-alice/commit/cbaeb41604adb7a35a1a81dbfbac2c0f5df7c543))
+* **web:** trim home meta description to under 160 chars ([7a0d3ff](https://github.com/mctlhq/mctl-alice/commit/7a0d3ff965e1c1329678fe77b60aff4409cbf2e9))
+
 ## 2.11.2 (2026-11-06)
 
 - Say that backups last about 14 days rather than at most 14 days (#160).

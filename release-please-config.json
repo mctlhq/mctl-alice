@@ -1,0 +1,12 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "release-type": "node",
+  "include-v-in-tag": false,
+  "include-component-in-tag": false,
+  "last-release-sha": "4130c0fd85675d3b520a99721fb1eca1b2313320",
+  "packages": {
+    ".": {
+      "package-name": "mctl-alice"
+    }
+  }
+}

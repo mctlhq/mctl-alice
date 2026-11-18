@@ -107,7 +107,7 @@
   var translations = {
     ru: {
       meta_title: "Алиса MCP — Управление Яндекс Станцией и умным домом | mctl-alice",
-      meta_desc: "Готовый MCP-сервер для колонок Яндекс Станция с Алисой. Голосовые команды текстом, музыка, сценарии умного дома, громкость и речь TTS через Claude и Cursor без установки Python.",
+      meta_desc: "Готовый MCP-сервер для колонок Яндекс Станция с Алисой. Голосовые команды текстом, музыка, сценарии умного дома, громкость и TTS через Claude и Cursor.",
       nav_login: "Вход (OAuth)",
       nav_cookie: "Quasar Cookie",
       nav_github: "GitHub",
@@ -368,7 +368,7 @@
     },
     en: {
       meta_title: "Alice MCP — Yandex Station & Smart Home Control | mctl-alice",
-      meta_desc: "Hosted Model Context Protocol (MCP) server for Yandex Station and Alice smart home. Voice commands via text, music, volume, and TTS via Claude, Cursor and AI without Python setup.",
+      meta_desc: "Hosted Model Context Protocol (MCP) server for Yandex Station and Alice smart home. Voice commands via text, music, volume, and TTS via Claude and Cursor.",
       nav_login: "Sign In (OAuth)",
       nav_cookie: "Quasar Cookie",
       nav_github: "GitHub",

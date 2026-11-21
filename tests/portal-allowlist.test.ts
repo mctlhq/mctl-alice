@@ -12,8 +12,8 @@ import { ALICE_TOOLS } from "../src/tools/definitions.js";
  * Modeled on mctlhq/seerrsense tests/portal-allowlist.test.ts, the TS sibling
  * of mctl-telegram/mctl-api's Go guard. Mutating tools are named by hand in
  * mutatingOnPortal -- the same shape as seerrsense's writeToolsOnPortal --
- * and the last test below checks that list against the readOnlyHint
- * annotation each tool carries, so the two cannot drift apart.
+ * and two tests below check that list against the readOnlyHint annotation
+ * each tool carries, so the two cannot drift apart.
  */
 
 const ALLOWLIST = "docs/portal-allowlist.json";
@@ -106,14 +106,27 @@ describe("portal allowlist", () => {
     }
   });
 
-  it("agrees with the readOnlyHint annotation on which tools mutate", () => {
-    for (const tool of ALICE_TOOLS) {
-      const readOnly = tool.annotations?.readOnlyHint;
-      expect(typeof readOnly, `${tool.name}: no readOnlyHint annotation`).toBe("boolean");
+  // mutatingOnPortal means "writes AND is enabled on the portal", so it is
+  // compared with the annotation in the two directions that are true of that
+  // meaning. A writer that is later disabled on the portal drops out of the
+  // vouch list without having to be re-annotated as read-only; which tools
+  // are read-only at all is pinned in tests/tool-annotations.test.ts.
+  it("never annotates a vouched-for mutating tool as read-only", () => {
+    for (const tool of ALICE_TOOLS.filter((t) => isMutating(t.name))) {
       expect(
-        readOnly,
-        `${tool.name}: ${isMutating(tool.name) ? "named in mutatingOnPortal but annotated read-only" : "annotated as writing but not named in mutatingOnPortal"}`,
-      ).toBe(!isMutating(tool.name));
+        tool.annotations?.readOnlyHint,
+        `${tool.name}: named in mutatingOnPortal but annotated read-only`,
+      ).toBe(false);
+    }
+  });
+
+  it("requires a vouch for every enabled tool annotated as writing", () => {
+    const enabled = new Set(list.tools.filter((t) => t.enabled).map((t) => t.name));
+    for (const tool of ALICE_TOOLS.filter((t) => t.annotations?.readOnlyHint === false && enabled.has(t.name))) {
+      expect(
+        isMutating(tool.name),
+        `${tool.name}: annotated as writing and enabled on the portal, but not named in mutatingOnPortal`,
+      ).toBe(true);
     }
   });
 

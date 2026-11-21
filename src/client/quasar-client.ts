@@ -1,7 +1,7 @@
 import { saveEnvVariable, saveTokenToKeychain, getTokenFromKeychain } from "../auth/token-storage.js";
 import { createHash } from "node:crypto";
 import { IStorage } from "../storage/storage-interface.js";
-import { readTextPrefix, sanitizeUpstreamMessage, upstreamError, upstreamFetch } from "./upstream.js";
+import { readTextPrefix, sanitizeUpstreamMessage, upstreamError, upstreamFetch, userRef } from "./upstream.js";
 
 const MASK_EN = "0123456789abcdef-";
 const MASK_RU = "оеаинтсрвлкмдпуяы";
@@ -261,7 +261,7 @@ export class QuasarClient {
    * is read up to a small cap rather than buffered whole.
    */
   private fetchQuasar(url: string, init: RequestInit): Promise<{ res: Response; text: string }> {
-    return upstreamFetch(url, init, { upstream: "Yandex Quasar", timeoutMs: this.timeoutMs, signal: this.signal },
+    return upstreamFetch(url, init, { upstream: "Yandex Quasar", timeoutMs: this.timeoutMs, signal: this.signal, userRef: this.userId ? userRef(this.userId) : undefined },
       async (res) => ({ res, text: res.ok ? await res.text() : await readTextPrefix(res, ERROR_BODY_MAX_BYTES) }));
   }
 

@@ -10,11 +10,10 @@ import { ALICE_TOOLS } from "../src/tools/definitions.js";
  * it re-syncs. Failing the build is the decision being asked for.
  *
  * Modeled on mctlhq/seerrsense tests/portal-allowlist.test.ts, the TS sibling
- * of mctl-telegram/mctl-api's Go guard. ALICE_TOOLS has no readOnlyHint
- * annotation (unlike seerrsense's registered-tool objects), so mutating
- * tools are named by hand in mutatingOnPortal rather than detected from an
- * annotation -- the same shape as seerrsense's writeToolsOnPortal, adapted
- * to the source this repository actually has.
+ * of mctl-telegram/mctl-api's Go guard. Mutating tools are named by hand in
+ * mutatingOnPortal -- the same shape as seerrsense's writeToolsOnPortal --
+ * and two tests below check that list against the readOnlyHint annotation
+ * each tool carries, so the two cannot drift apart.
  */
 
 const ALLOWLIST = "docs/portal-allowlist.json";
@@ -105,5 +104,35 @@ describe("portal allowlist", () => {
       expect(names, `${name}: vouched for but no longer registered`).toContain(name);
       expect(enabled.has(name), `${name}: vouched for but disabled in the file`).toBe(true);
     }
+  });
+
+  // mutatingOnPortal means "writes AND is enabled on the portal", so it is
+  // compared with the annotation in the two directions that are true of that
+  // meaning. A writer that is later disabled on the portal drops out of the
+  // vouch list without having to be re-annotated as read-only; which tools
+  // are read-only at all is pinned in tests/tool-annotations.test.ts.
+  it("never annotates a vouched-for mutating tool as read-only", () => {
+    for (const tool of ALICE_TOOLS.filter((t) => isMutating(t.name))) {
+      expect(
+        tool.annotations?.readOnlyHint,
+        `${tool.name}: named in mutatingOnPortal but annotated read-only`,
+      ).toBe(false);
+    }
+  });
+
+  it("requires a vouch for every enabled tool annotated as writing", () => {
+    const enabled = new Set(list.tools.filter((t) => t.enabled).map((t) => t.name));
+    for (const tool of ALICE_TOOLS.filter((t) => t.annotations?.readOnlyHint === false && enabled.has(t.name))) {
+      expect(
+        isMutating(tool.name),
+        `${tool.name}: annotated as writing and enabled on the portal, but not named in mutatingOnPortal`,
+      ).toBe(true);
+    }
+  });
+
+  it("keeps the history tool off the portal: the hosted service it reaches cannot serve it", () => {
+    const history = list.tools.find((t) => t.name === "alice_get_device_history");
+    expect(history, "alice_get_device_history is not listed").toBeTruthy();
+    expect(history?.enabled, "hosted mode records no history, so the call always errors").toBe(false);
   });
 });

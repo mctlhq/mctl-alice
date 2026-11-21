@@ -46,8 +46,8 @@
     },
     {
       "name": "alice_get_device_history",
-      "enabled": true,
-      "reason": "Reads historical telemetry time-series and energy consumption for a device; read-only."
+      "enabled": false,
+      "reason": "Reads historical telemetry for a device and is read-only, but it always returns an error on the hosted service the portal reaches (alice.mctl.ai samples nothing; history exists only on a self-hosted single-user server). Disabled so the portal does not advertise a tool that cannot work."
     },
     {
       "name": "alice_set_light",

@@ -1,6 +1,6 @@
-import { Tool } from "@modelcontextprotocol/sdk/types.js";
+import { Tool, ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 
-export const ALICE_TOOLS: Tool[] = [
+const TOOL_DEFINITIONS: Tool[] = [
   {
     name: "alice_list_devices",
     description:
@@ -308,3 +308,50 @@ export const ALICE_TOOLS: Tool[] = [
   },
 ];
 
+/**
+ * MCP tool annotations, keyed by tool name. They are hints for clients and
+ * approval flows (a client can auto-approve a read and ask before a write),
+ * never a security control: access is enforced by the OAuth scopes in
+ * handlers.ts. Without them a client cannot tell reading a sensor from
+ * switching off every socket in the home.
+ *
+ * Every tool calls Yandex, so openWorldHint is true throughout.
+ * destructiveHint is true where one call can have wide or hard-to-undo
+ * effect: an arbitrary voice command, a scenario (which can switch many
+ * devices at once) and a bulk room/home switch. That is a conservative
+ * judgement, not a claim that the call cannot be reversed. idempotentHint is
+ * true only where the call sets an absolute state; next/prev, a spoken
+ * phrase and a scenario run repeat their effect.
+ */
+const ANNOTATIONS: Record<string, ToolAnnotations> = {
+  alice_list_devices: { title: "List Alice devices and rooms", readOnlyHint: true, idempotentHint: true },
+  alice_get_device_state: { title: "Get device state", readOnlyHint: true, idempotentHint: true },
+  alice_get_device_history: { title: "Get device history (self-hosted only)", readOnlyHint: true, idempotentHint: true },
+  alice_get_home_summary: { title: "Get home summary", readOnlyHint: true, idempotentHint: true },
+  alice_say_phrase: { title: "Make a speaker say a phrase", readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+  alice_send_command: { title: "Send a voice command to Alice", readOnlyHint: false, destructiveHint: true, idempotentHint: false },
+  alice_set_volume: { title: "Set speaker volume", readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+  alice_media_control: { title: "Control speaker playback", readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+  alice_trigger_scenario: { title: "Run a smart home scenario", readOnlyHint: false, destructiveHint: true, idempotentHint: false },
+  alice_control_device: { title: "Control a device", readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+  alice_set_light: { title: "Control a light", readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+  alice_control_room: { title: "Switch devices in a room or the whole home", readOnlyHint: false, destructiveHint: true, idempotentHint: true },
+};
+
+/**
+ * The exported list is built from the definitions above and refuses to load
+ * if a tool has no annotation entry, or an entry has no tool. A new tool that
+ * is added without a decision about whether it reads or writes must fail at
+ * startup and in the tests, not ship unannotated.
+ */
+export const ALICE_TOOLS: Tool[] = TOOL_DEFINITIONS.map((tool) => {
+  const hints = ANNOTATIONS[tool.name];
+  if (!hints) throw new Error(`tool ${tool.name} has no entry in ANNOTATIONS`);
+  return { ...tool, annotations: { ...hints, openWorldHint: true } };
+});
+
+for (const name of Object.keys(ANNOTATIONS)) {
+  if (!TOOL_DEFINITIONS.some((tool) => tool.name === name)) {
+    throw new Error(`ANNOTATIONS names ${name}, which is not a defined tool`);
+  }
+}

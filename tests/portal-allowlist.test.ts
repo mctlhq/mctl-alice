@@ -10,11 +10,10 @@ import { ALICE_TOOLS } from "../src/tools/definitions.js";
  * it re-syncs. Failing the build is the decision being asked for.
  *
  * Modeled on mctlhq/seerrsense tests/portal-allowlist.test.ts, the TS sibling
- * of mctl-telegram/mctl-api's Go guard. ALICE_TOOLS has no readOnlyHint
- * annotation (unlike seerrsense's registered-tool objects), so mutating
- * tools are named by hand in mutatingOnPortal rather than detected from an
- * annotation -- the same shape as seerrsense's writeToolsOnPortal, adapted
- * to the source this repository actually has.
+ * of mctl-telegram/mctl-api's Go guard. Mutating tools are named by hand in
+ * mutatingOnPortal -- the same shape as seerrsense's writeToolsOnPortal --
+ * and the last test below checks that list against the readOnlyHint
+ * annotation each tool carries, so the two cannot drift apart.
  */
 
 const ALLOWLIST = "docs/portal-allowlist.json";
@@ -105,5 +104,22 @@ describe("portal allowlist", () => {
       expect(names, `${name}: vouched for but no longer registered`).toContain(name);
       expect(enabled.has(name), `${name}: vouched for but disabled in the file`).toBe(true);
     }
+  });
+
+  it("agrees with the readOnlyHint annotation on which tools mutate", () => {
+    for (const tool of ALICE_TOOLS) {
+      const readOnly = tool.annotations?.readOnlyHint;
+      expect(typeof readOnly, `${tool.name}: no readOnlyHint annotation`).toBe("boolean");
+      expect(
+        readOnly,
+        `${tool.name}: ${isMutating(tool.name) ? "named in mutatingOnPortal but annotated read-only" : "annotated as writing but not named in mutatingOnPortal"}`,
+      ).toBe(!isMutating(tool.name));
+    }
+  });
+
+  it("keeps the history tool off the portal: the hosted service it reaches cannot serve it", () => {
+    const history = list.tools.find((t) => t.name === "alice_get_device_history");
+    expect(history, "alice_get_device_history is not listed").toBeTruthy();
+    expect(history?.enabled, "hosted mode records no history, so the call always errors").toBe(false);
   });
 });

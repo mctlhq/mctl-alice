@@ -3,6 +3,16 @@
 Versions follow semantic versioning; tags carry no `v` prefix. Full notes for
 every version are on the [Releases page](https://github.com/mctlhq/mctl-alice/releases).
 
+## [2.16.0](https://github.com/mctlhq/mctl-alice/compare/2.15.1...2.16.0) (2026-11-21)
+
+
+### Features
+
+* **logging:** one JSON line per request and per tool call ([a1428cc](https://github.com/mctlhq/mctl-alice/commit/a1428cc043c894425a1b5371f1c97d48b2bbe248))
+* **logging:** one JSON line per request and per tool call ([a096cbe](https://github.com/mctlhq/mctl-alice/commit/a096cbe6041461b5267984b05487fa75ec938f4b))
+* **tools:** annotate all 12 tools; keep the history tool off the portal ([efa0f93](https://github.com/mctlhq/mctl-alice/commit/efa0f93e6cd23c692031402270d6ccf6a9a809f3))
+* **tools:** annotate all 12 tools; keep the history tool off the portal ([ed24424](https://github.com/mctlhq/mctl-alice/commit/ed24424dd695af677f0e84cea0f245f7b0a1e9d2))
+
 ## [2.15.1](https://github.com/mctlhq/mctl-alice/compare/2.15.0...2.15.1) (2026-11-18)
 
 

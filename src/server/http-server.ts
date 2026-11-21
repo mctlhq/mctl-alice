@@ -6,7 +6,8 @@ import { isLocalOrigin } from "./origin.js";
 import { FORM_BODY_LIMIT, MCP_BODY_LIMIT, PayloadTooLargeError, parseRequestBody, readRequestBody, sendPayloadTooLarge } from "./request-body.js";
 import { RateLimiter, clientAddress, rateLimitBucket, resolveRateLimits, trustProxyHopsFromEnv, clientIpHeaderFromEnv, type RateLimitBucket } from "./rate-limit.js";
 import { UpstreamCancelledError, UpstreamError, UpstreamTimeoutError, userRef } from "../client/upstream.js";
-import { authFailures, rateLimited, recordHttpRequest, registerSseStreamsSource } from "../metrics.js";
+import { authFailures, rateLimited, recordHttpRequest, registerSseStreamsSource, routeTemplate } from "../metrics.js";
+import { QUIET_ROUTES, logEvent, requestId, toolLabel, uaFamily } from "../log.js";
 
 export { isLocalOrigin };
 import http from "node:http";
@@ -629,6 +630,32 @@ export async function getAuthenticatedService(
   return auth.service;
 }
 
+/** The id each in-flight request is logged under, so a tool_call line can be tied to its http line. */
+const requestIds = new WeakMap<http.IncomingMessage, string>();
+
+/**
+ * One line per finished request, emitted from the response's "close" event so
+ * it carries the final status and the full duration, including early
+ * refusals (403, 429) that return before any routing. The route is the
+ * template from metrics.ts, never the raw path or query. status is 0 and
+ * aborted true when the client went away before headers were written.
+ */
+function logHttpRequest(req: http.IncomingMessage, rid: string, status: number, headersSent: boolean, durationMs: number): void {
+  let pathname = "";
+  try { pathname = new URL(req.url || "/", "http://localhost").pathname; } catch { /* unparsable: logged as "other" */ }
+  const route = routeTemplate(pathname);
+  if (QUIET_ROUTES.has(route)) return;
+  logEvent("info", "http", {
+    request_id: rid,
+    method: req.method,
+    route,
+    status: headersSent ? status : 0,
+    aborted: !headersSent,
+    duration_ms: Math.round(durationMs),
+    ua: uaFamily(req.headers["user-agent"]),
+  });
+}
+
 export function createMcpServer(
   service: StationService | (() => StationService | Promise<StationService>),
   scope: string = "*"
@@ -654,8 +681,16 @@ export function createMcpServer(
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
-    try { return await handleToolCall(name, args, await getService(), scope); }
-    catch (error) { return { isError: true, content: [{ type: "text", text: error instanceof Error ? error.message : "Access check failed" }] }; }
+    const started = performance.now();
+    const logTool = (isError: boolean) => logEvent("info", "tool_call", {
+      transport: "sse", tool: toolLabel(name), is_error: isError, duration_ms: Math.round(performance.now() - started),
+    });
+    try {
+      const result = await handleToolCall(name, args, await getService(), scope);
+      logTool(!!(result as { isError?: boolean }).isError);
+      return result;
+    }
+    catch (error) { logTool(true); return { isError: true, content: [{ type: "text", text: error instanceof Error ? error.message : "Access check failed" }] }; }
   });
 
   return server;
@@ -949,14 +984,23 @@ export function createHttpServer(
 
     if (method === "tools/call") {
       const { name, arguments: args } = rpcReq.params || {};
+      const toolStarted = performance.now();
+      const logTool = (isError: boolean, extra: Record<string, unknown> = {}) => logEvent("info", "tool_call", {
+        request_id: requestIds.get(req), tool: toolLabel(name), is_error: isError,
+        duration_ms: Math.round(performance.now() - toolStarted), ...extra,
+      });
       try {
         const fresh = admitted && Date.now() - admitted.at < REAUTH_AFTER_MS
           ? admitted.auth
           : await authenticateRequest(req, stationService, quasarClient, oauthStorage, telemetryStorage, authRequired);
-        if (!fresh.authenticated) return { jsonrpc: "2.0", id, result: { isError: true, content: [{ type: "text", text: fresh.errorMessage }] } };
+        if (!fresh.authenticated) {
+          logTool(true, { reason: "unauthenticated" });
+          return { jsonrpc: "2.0", id, result: { isError: true, content: [{ type: "text", text: fresh.errorMessage }] } };
+        }
         const activeSvc = fresh.service;
         scope = fresh.scope;
         const result = await handleToolCall(name, args, activeSvc, scope);
+        logTool(!!(result as { isError?: boolean }).isError);
         // Counted off the response path; a failed write must never fail the call.
         if (fresh.mode === "hosted" && !(result as { isError?: boolean }).isError) {
           Promise.resolve(oauthStorage.recordToolCall(fresh.userId)).catch(() => {});
@@ -967,6 +1011,7 @@ export function createHttpServer(
           result,
         };
       } catch (err: any) {
+        logTool(true, { error: typeof err?.name === "string" ? err.name : "Error" });
         return {
           jsonrpc: "2.0",
           id,
@@ -986,7 +1031,14 @@ export function createHttpServer(
   }
 
   const server = http.createServer(async (req, res) => {
-    res.once("close", () => recordHttpRequest(req.url, req.method, res.statusCode, res.headersSent));
+    const startedAt = performance.now();
+    const rid = requestId(req.headers["cf-ray"]);
+    requestIds.set(req, rid);
+    res.setHeader("X-Request-Id", rid);
+    res.once("close", () => {
+      recordHttpRequest(req.url, req.method, res.statusCode, res.headersSent);
+      logHttpRequest(req, rid, res.statusCode, res.headersSent, performance.now() - startedAt);
+    });
     try {
     const url = new URL(req.url || "/", baseUrl);
     if (req.method === "POST" && (url.pathname.startsWith("/account/") || ["/oauth/authorize", "/auth/save-cookie", "/auth/save-token"].includes(url.pathname))) {
@@ -1100,8 +1152,6 @@ export function createHttpServer(
       res.end(JSON.stringify({ status: "ok", service: "mctl-alice", version: VERSION }));
       return;
     }
-
-    console.log(`[HTTP] ${req.method} ${url.pathname}`);
 
     // Static assets
     if (url.pathname.startsWith("/assets/") && req.method === "GET") {
@@ -2587,6 +2637,8 @@ export function createHttpServer(
         else res.end();
         return;
       }
+      // The only record of why a request ended in a 503: the class of the error, never its message.
+      logEvent("error", "request_failed", { request_id: rid, error: err instanceof Error ? err.name : "unknown" });
       if (!res.headersSent) { res.writeHead(503, { "Content-Type": "application/json" }); res.end(JSON.stringify({ error: "temporarily_unavailable" })); }
       else res.end();
     }

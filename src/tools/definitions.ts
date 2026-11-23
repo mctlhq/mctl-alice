@@ -360,7 +360,9 @@ const ANNOTATIONS: Record<string, ToolAnnotations> = {
 export const ALICE_TOOLS: Tool[] = TOOL_DEFINITIONS.map((tool) => {
   const hints = ANNOTATIONS[tool.name];
   if (!hints) throw new Error(`tool ${tool.name} has no entry in ANNOTATIONS`);
-  return { ...tool, annotations: { openWorldHint: true, ...hints } };
+  // openWorldHint stays the last key, so adding the exception did not
+  // reorder the serialized annotations of the tools that existed before it.
+  return { ...tool, annotations: { ...hints, openWorldHint: hints.openWorldHint ?? true } };
 });
 
 for (const name of Object.keys(ANNOTATIONS)) {

@@ -45,6 +45,17 @@ describe("alice_get_my_identity descriptor", () => {
     });
   });
 
+  it("keeps the serialized annotation key order of every tool", () => {
+    // A client may pin a descriptor byte for byte, so key order is contract.
+    expect(JSON.stringify(tool.annotations)).toBe(
+      '{"title":"Get my mctl-alice account ID","readOnlyHint":true,"idempotentHint":true,"openWorldHint":false}',
+    );
+    for (const other of ALICE_TOOLS) {
+      expect(Object.keys(other.annotations ?? {}).at(-1), other.name).toBe("openWorldHint");
+      expect(Object.keys(other.annotations ?? {})[0], other.name).toBe("title");
+    }
+  });
+
   it("is granted by iot:view and by iot:control, and by nothing else", () => {
     expect(checkScope(TOOL, "iot:view")).toBe(true);
     expect(checkScope(TOOL, "iot:control")).toBe(true);

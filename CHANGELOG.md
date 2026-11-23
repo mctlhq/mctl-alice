@@ -3,6 +3,14 @@
 Versions follow semantic versioning; tags carry no `v` prefix. Full notes for
 every version are on the [Releases page](https://github.com/mctlhq/mctl-alice/releases).
 
+## [2.17.1](https://github.com/mctlhq/mctl-alice/compare/2.17.0...2.17.1) (2026-11-23)
+
+
+### Bug Fixes
+
+* **oauth:** leave the consent form through a refresh, not a redirect ([99522a5](https://github.com/mctlhq/mctl-alice/commit/99522a5d8cddeec795646a3e85efccbd0e5578cf))
+* **oauth:** leave the consent form through a refresh, not a redirect ([28b8b4e](https://github.com/mctlhq/mctl-alice/commit/28b8b4e5c3161a5881c6e3c42d26d70b71589900)), closes [#197](https://github.com/mctlhq/mctl-alice/issues/197)
+
 ## [2.17.0](https://github.com/mctlhq/mctl-alice/compare/2.16.0...2.17.0) (2026-11-23)
 
 

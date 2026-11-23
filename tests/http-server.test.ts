@@ -6,6 +6,16 @@ import { createHttpServer } from "../src/server/http-server.js";
 import { getOpenApiSpec } from "../src/server/openapi.js";
 import { OAuthStorage } from "../src/storage/oauth-storage.js";
 
+// The consent POST answers an http(s) client with a page that moves on through
+// a Refresh header (see sendClientRedirect), not with a redirect.
+function refreshTarget(res: Response): string {
+  expect(res.status).toBe(200);
+  expect(res.headers.get("location")).toBeNull();
+  const match = /^0;url=(.+)$/.exec(res.headers.get("refresh") || "");
+  expect(match).not.toBeNull();
+  return match![1];
+}
+
 describe("HTTP Server & ChatGPT REST API", () => {
   let server: http.Server;
   const PORT = 8189;
@@ -463,15 +473,41 @@ describe("HTTP Server & ChatGPT REST API", () => {
       redirect: "manual",
     });
 
-    expect(approveRes.status).toBe(302);
-    const redirectLocation = approveRes.headers.get("location");
-    expect(redirectLocation).toBeDefined();
-    const redirectUrl = new URL(redirectLocation!);
+    const redirectLocation = refreshTarget(approveRes);
+    expect(approveRes.headers.get("cache-control")).toBe("no-store");
+    expect(approveRes.headers.get("content-security-policy")).toMatch(/form-action 'self'$/);
+    // The same target is offered as a link for a browser that ignores Refresh.
+    expect(await approveRes.text()).toContain(`href="${redirectLocation.replace(/&/g, "&amp;")}"`);
+    const redirectUrl = new URL(redirectLocation);
     expect(redirectUrl.origin).toBe("https://chatgpt.com");
     expect(redirectUrl.pathname).toBe("/callback");
     expect(redirectUrl.searchParams.get("code")).toMatch(/^code_/);
     expect(redirectUrl.searchParams.get("state")).toBe("xyz");
     expect(redirectUrl.searchParams.get("iss")).toBe(baseUrl);
+  });
+
+  it("keeps the plain redirect for a native-app callback scheme", async () => {
+    const nativeCallback = "cursor://anysphere.cursor-retrieval/oauth/callback";
+    const reg = await fetch(`${baseUrl}/oauth/register`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ client_name: "Native app", redirect_uris: [nativeCallback] }),
+    });
+    const { client_id: nativeClientId } = await reg.json() as { client_id: string };
+    const res = await fetch(
+      `${baseUrl}/oauth/authorize?client_id=${encodeURIComponent(nativeClientId)}&redirect_uri=${encodeURIComponent(nativeCallback)}&response_type=code&state=xyz`
+    );
+    expect(res.status).toBe(200);
+    const sessionId = (await res.text()).match(/name="session_id"\s+value="([^"]+)"/)![1];
+    const approveRes = await fetch(`${baseUrl}/oauth/authorize`, {
+      method: "POST",
+      headers: { Origin: baseUrl, "Content-Type": "application/x-www-form-urlencoded" },
+      body: `session_id=${encodeURIComponent(sessionId)}&action=approve`,
+      redirect: "manual",
+    });
+    expect(approveRes.status).toBe(302);
+    expect(approveRes.headers.get("refresh")).toBeNull();
+    expect(approveRes.headers.get("location")).toMatch(/^cursor:\/\/anysphere\.cursor-retrieval\/oauth\/callback\?code=code_/);
   });
 
   it("should handle token revocation at /oauth/revoke", async () => {
@@ -503,8 +539,7 @@ describe("HTTP Server & ChatGPT REST API", () => {
       redirect: "manual",
     });
 
-    expect(denyRes.status).toBe(302);
-    const clientRedirect = new URL(denyRes.headers.get("location")!);
+    const clientRedirect = new URL(refreshTarget(denyRes));
     expect(clientRedirect.origin).toBe("https://chatgpt.com");
     expect(clientRedirect.pathname).toBe("/callback");
     expect(clientRedirect.searchParams.get("error")).toBe("access_denied");
@@ -705,9 +740,7 @@ describe("HTTP Server with authRequired: true (OAuth & RFC 9728 discovery)", () 
       redirect: "manual",
     });
 
-    expect(approveRes.status).toBe(302);
-    const redirectLocation = approveRes.headers.get("location")!;
-    const callbackUrl = new URL(redirectLocation);
+    const callbackUrl = new URL(refreshTarget(approveRes));
     expect(callbackUrl.origin).toBe("http://127.0.0.1:50780");
     expect(callbackUrl.searchParams.get("state")).toBe(clientState);
     expect(callbackUrl.searchParams.get("iss")).toBe(authBaseUrl);

@@ -255,6 +255,11 @@ export function renderSetupPage(siteUrl: string): string {
         <p class="s-2a0ca8" data-i18n="setup_voice_faq_desc">Нет, сервис не меняет прошивку колонки. Яндекс Станция продолжает штатно работать с Алисой. При этом ваш внешний ИИ-ассистент (ChatGPT, Claude) получает возможность видеть устройства умного дома и управлять ими, а при подключённом Quasar — передавать на колонку фразы для озвучивания (TTS) и текстовые команды.</p>
       </section>
 
+      <section class="s-8f4f37" aria-labelledby="setup-chatgpt-faq">
+        <h2 class="section-title s-96cfba" id="setup-chatgpt-faq" data-i18n="setup_chatgpt_faq_title">Подключение ChatGPT к Яндекс Станции и колонкам с Алисой</h2>
+        <p class="s-2a0ca8" data-i18n-html="setup_chatgpt_faq_desc">Чтобы ChatGPT мог управлять устройствами и воспроизводить речь на колонках Яндекс Станция, добавьте сервер <code>https://alice.mctl.ai/mcp</code> в ChatGPT. Для просмотра и управления умным домом достаточно войти через Яндекс ID. Если требуется озвучивать ответы через колонку (TTS) или отдавать ей голосовые команды, подключите Quasar в <a href="/account">личном кабинете</a>.</p>
+      </section>
+
       <section class="s-8f4f37" aria-labelledby="setup-other">
         <h2 class="section-title s-96cfba" id="setup-other" data-i18n="setup_other_title">Конфигурации для других MCP-клиентов</h2>
         <p class="s-2a0ca8" data-i18n="setup_other_desc">Другие клиенты, которые подключают удалённые MCP-серверы с авторизацией OAuth 2.1 (Claude Code, Cursor, Windsurf, Zed), должны подойти, но мы их не проверяли. Скопируйте нужный формат:</p>

@@ -69,6 +69,8 @@ Set `METRICS_PORT` (for example `9464`) to serve Prometheus metrics at `GET /met
 
 The read-only tools also accept a token with only `iot:control`. `quasar` tools need the Quasar connection described below.
 
+The full tool surface is committed in [`docs/tool-descriptors.json`](docs/tool-descriptors.json) and kept equal to the code by a test. Changing a tool that another service pins needs a matching update there: see [the tool surface runbook](docs/runbooks/tool-surface.md).
+
 ## How data flows
 
 ```mermaid

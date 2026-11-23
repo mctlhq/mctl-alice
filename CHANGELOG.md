@@ -3,6 +3,19 @@
 Versions follow semantic versioning; tags carry no `v` prefix. Full notes for
 every version are on the [Releases page](https://github.com/mctlhq/mctl-alice/releases).
 
+## [2.17.0](https://github.com/mctlhq/mctl-alice/compare/2.16.0...2.17.0) (2026-11-23)
+
+
+### Features
+
+* **seo:** add FAQ and setup guide for ChatGPT and Yandex Station integration ([3d005e1](https://github.com/mctlhq/mctl-alice/commit/3d005e198349307c23c6689254d7e2b258fc9fc5))
+* **seo:** add FAQ and setup guide for ChatGPT and Yandex Station integration ([2adcb67](https://github.com/mctlhq/mctl-alice/commit/2adcb67bfb80eae48884e7ce057ff2434c234524))
+
+
+### Bug Fixes
+
+* **seo:** dynamic slot for MCP URL in setup guide copy ([47e05f9](https://github.com/mctlhq/mctl-alice/commit/47e05f9df0fee061cd9d1f525013fd17eedf6039))
+
 ## [2.16.0](https://github.com/mctlhq/mctl-alice/compare/2.15.1...2.16.0) (2026-11-21)
 
 

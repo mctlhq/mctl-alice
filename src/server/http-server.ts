@@ -22,7 +22,7 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { ALICE_TOOLS } from "../tools/definitions.js";
-import { handleToolCall, checkScope, validScope, TOOL_SCOPES } from "../tools/handlers.js";
+import { handleToolCall, checkScope, validScope, TOOL_SCOPES, type ToolCallContext } from "../tools/handlers.js";
 import { StationService } from "../services/station-service.js";
 import { YandexIoTClient } from "../client/yandex-api.js";
 import { QuasarClient } from "../client/quasar-client.js";
@@ -696,9 +696,27 @@ function logHttpRequest(req: http.IncomingMessage, rid: string, status: number, 
   });
 }
 
+/**
+ * The caller context a tool call gets. Only a hosted request has a real
+ * account behind its access token; for any other request the account read
+ * answers null and alice_get_my_identity returns an error. `current` is asked
+ * on every read, so a long-lived session answers for the authentication that
+ * admitted the call being served, not for the one that opened the session.
+ */
+function toolCallContext(current: () => { mode: "hosted" | "local"; userId?: string }, storage: Pick<IStorage, "getUser">): ToolCallContext {
+  return {
+    getAccount: async () => {
+      const auth = current();
+      const userId = auth.mode === "hosted" ? auth.userId : undefined;
+      return userId ? storage.getUser(userId) : null;
+    },
+  };
+}
+
 export function createMcpServer(
   service: StationService | (() => StationService | Promise<StationService>),
-  scope: string = "*"
+  scope: string = "*",
+  context?: ToolCallContext
 ): Server {
   const getService = typeof service === "function" ? service : () => service;
   const server = new Server(
@@ -726,7 +744,7 @@ export function createMcpServer(
       transport: "sse", tool: toolLabel(name), is_error: isError, duration_ms: Math.round(performance.now() - started),
     });
     try {
-      const result = await handleToolCall(name, args, await getService(), scope);
+      const result = await handleToolCall(name, args, await getService(), scope, context);
       logTool(!!(result as { isError?: boolean }).isError);
       return result;
     }
@@ -1039,10 +1057,11 @@ export function createHttpServer(
         }
         const activeSvc = fresh.service;
         scope = fresh.scope;
-        const result = await handleToolCall(name, args, activeSvc, scope);
+        const result = await handleToolCall(name, args, activeSvc, scope, toolCallContext(() => fresh, oauthStorage));
         logTool(!!(result as { isError?: boolean }).isError);
         // Counted off the response path; a failed write must never fail the call.
-        if (fresh.mode === "hosted" && !(result as { isError?: boolean }).isError) {
+        // alice_get_my_identity is not counted: it promises to write nothing.
+        if (fresh.mode === "hosted" && !(result as { isError?: boolean }).isError && name !== "alice_get_my_identity") {
           Promise.resolve(oauthStorage.recordToolCall(fresh.userId)).catch(() => {});
         }
         return {
@@ -1682,12 +1701,15 @@ export function createHttpServer(
           sseOwners.delete(sessionId);
         };
 
+        // Re-authenticated before every call; the identity tool reads the latest.
+        let latest: { mode: "hosted" | "local"; userId?: string } = auth;
         const mcpServer = createMcpServer(async () => {
           const fresh = await authenticateRequest(req, stationService, quasarClient, oauthStorage, telemetryStorage, authRequired);
           if (!fresh.authenticated) throw new Error(fresh.errorMessage);
           if (fresh.scope !== auth.scope) throw new Error("Grant changed; reconnect");
+          latest = fresh;
           return fresh.service;
-        }, auth.scope);
+        }, auth.scope, toolCallContext(() => latest, oauthStorage));
         await mcpServer.connect(transport);
       } catch (err: any) {
         if (!res.headersSent) {

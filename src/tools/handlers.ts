@@ -6,6 +6,7 @@ export const TOOL_SCOPES: Record<string, string[]> = {
   alice_get_device_state: ["iot:view", "iot:control"],
   alice_get_home_summary: ["iot:view", "iot:control"],
   alice_get_device_history: ["iot:view", "iot:control"],
+  alice_get_my_identity: ["iot:view", "iot:control"],
   alice_control_device: ["iot:control"],
   alice_set_light: ["iot:control"],
   alice_control_room: ["iot:control"],
@@ -26,12 +27,76 @@ export function checkScope(name: string, scope?: string): boolean {
   return (TOOL_SCOPES[name] || []).some(s => granted.has(s));
 }
 
+/**
+ * What a tool may know about the caller beyond its scope. Only the hosted
+ * multi-user server fills it in, from the access token of the request.
+ */
+export interface ToolCallContext {
+  /**
+   * Reads the stored account the access token belongs to. Left out wherever
+   * there is no real per-request account: stdio and single-user HTTP mode.
+   */
+  getAccount?: () => Promise<AccountRecord | null | undefined> | AccountRecord | null | undefined;
+}
+
+interface AccountRecord {
+  id?: unknown;
+  yandexUid?: unknown;
+}
+
+export type ToolCallResult = {
+  content: Array<{ type: "text"; text: string }>;
+  structuredContent?: Record<string, unknown>;
+  isError?: boolean;
+};
+
+/** Ids of the placeholder accounts that stand for "no real user". */
+const PLACEHOLDER_ACCOUNT_IDS = ["legacy_user", "usr_local"];
+
+/**
+ * Longest account id the tool will return, and its alphabet: printable ASCII
+ * without spaces. A client shows the id to a person for comparison with the
+ * account page, so a value that could carry whitespace or control characters
+ * is refused rather than passed on.
+ */
+export const MAX_ACCOUNT_ID_LENGTH = 128;
+const ACCOUNT_ID_PATTERN = /^[\x21-\x7e]+$/;
+
+const IDENTITY_UNAVAILABLE =
+  "Ошибка: не удалось определить аккаунт mctl-alice для этого подключения. Идентификатор доступен только на размещённом сервисе для подключения, выполненного через вход в аккаунт.";
+
+/**
+ * alice_get_my_identity: the stable id of the account the token belongs to
+ * and nothing else. It never calls Yandex and never writes. Every case in
+ * which the id could not be read, or is not a usable id, is an error result:
+ * a client that pins an account must not be handed an empty or invented id.
+ */
+async function getMyIdentity(context: ToolCallContext | undefined): Promise<ToolCallResult> {
+  const unavailable: ToolCallResult = { content: [{ type: "text", text: IDENTITY_UNAVAILABLE }], isError: true };
+  if (!context?.getAccount) return unavailable;
+  let account: AccountRecord | null | undefined;
+  try {
+    account = await context.getAccount();
+  } catch {
+    // The storage error stays out of the result; it may describe the store.
+    return unavailable;
+  }
+  if (!account || typeof account.id !== "string" || !account.id || PLACEHOLDER_ACCOUNT_IDS.includes(account.id)) return unavailable;
+  const accountId = account.yandexUid;
+  if (typeof accountId !== "string" || accountId.length > MAX_ACCOUNT_ID_LENGTH || !ACCOUNT_ID_PATTERN.test(accountId)) return unavailable;
+  return {
+    content: [{ type: "text", text: `account_id: ${accountId}` }],
+    structuredContent: { account_id: accountId },
+  };
+}
+
 export async function handleToolCall(
   name: string,
   args: any,
   stationService: StationService,
-  scope: string = "*"
-): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> {
+  scope: string = "*",
+  context?: ToolCallContext
+): Promise<ToolCallResult> {
   if (!checkScope(name, scope)) {
     return {
       content: [
@@ -43,6 +108,8 @@ export async function handleToolCall(
       isError: true,
     };
   }
+
+  if (name === "alice_get_my_identity") return getMyIdentity(context);
 
   try {
     switch (name) {

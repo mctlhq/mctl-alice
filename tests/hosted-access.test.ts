@@ -157,7 +157,7 @@ describe("hosted access boundary", () => {
       { jsonrpc: "2.0", id: 1, method: "tools/list" },
       { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "alice_set_light", arguments: { device: "same" } } },
     ]) });
-    const data = await batch.json(); expect(data[0].result.tools).toHaveLength(4); expect(data[1].result.isError).toBe(true);
+    const data = await batch.json(); expect(data[0].result.tools).toHaveLength(5); expect(data[1].result.isError).toBe(true);
     const cookie = await realFetch(base + "/mcp", { headers: { ...headers, "x-yandex-cookie": "Session_id=other" } }); expect(cookie.status).toBe(401);
     vi.spyOn(db, "getToken").mockImplementation(() => { throw new Error("offline"); });
     expect((await realFetch(base + "/mcp", { headers })).status).toBe(503);

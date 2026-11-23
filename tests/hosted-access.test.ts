@@ -227,7 +227,7 @@ describe("hosted access boundary", () => {
     const body = `session_id=${id}&action=approve&scope_iot%3Aview=yes`;
     const forged = await realFetch(base + "/oauth/authorize", { method: "POST", headers: { Cookie: "mctl_session=browser-a", "Content-Type": "application/x-www-form-urlencoded" }, body }); expect(forged.status).toBe(403);
     const wrong = await realFetch(base + "/oauth/authorize", { method: "POST", headers: { Cookie: "mctl_session=browser-b", Origin: "http://localhost", "Content-Type": "application/x-www-form-urlencoded" }, body }); expect(wrong.status).toBe(400);
-    const ok = await realFetch(base + "/oauth/authorize", { method: "POST", headers: { Cookie: "mctl_session=browser-a", Origin: "http://localhost", "Content-Type": "application/x-www-form-urlencoded" }, body, redirect: "manual" }); expect(ok.status).toBe(302); expect(ok.headers.get("location")).toContain("code=");
+    const ok = await realFetch(base + "/oauth/authorize", { method: "POST", headers: { Cookie: "mctl_session=browser-a", Origin: "http://localhost", "Content-Type": "application/x-www-form-urlencoded" }, body, redirect: "manual" }); expect(ok.status).toBe(200); expect(ok.headers.get("refresh")).toMatch(/^0;url=http:\/\/localhost\/callback\?.*code=/);
   });
   it("account grant revocation closes an already open SSE connection", async () => {
     await start(); await storage.saveWebSession("browser-a", "alice", Date.now() + 60000);

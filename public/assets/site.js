@@ -250,6 +250,9 @@
       oauth_retention_revoke: "Отозвать доступ приложения или удалить аккаунт можно в любой момент в личном кабинете; резервные копии хранятся около 14 дней.",
       oauth_btn_approve: "Разрешить доступ",
       oauth_btn_deny: "Отклонить",
+      oauth_continue_title: "Возврат в приложение",
+      oauth_continue_lead: "Сейчас вы вернётесь в приложение. Если этого не произошло, нажмите кнопку.",
+      oauth_continue_link: "Продолжить",
 
       // Navigation & Footer
       nav_account: "Аккаунт",
@@ -517,6 +520,9 @@
       oauth_retention_revoke: "You can revoke the app's access or delete your account at any time on your account page; backups are kept for about 14 days.",
       oauth_btn_approve: "Authorize Access",
       oauth_btn_deny: "Cancel",
+      oauth_continue_title: "Returning to the application",
+      oauth_continue_lead: "You are being sent back to the application. If nothing happens, use the button.",
+      oauth_continue_link: "Continue",
 
       // Navigation & Footer
       nav_account: "Account",

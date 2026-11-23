@@ -424,6 +424,46 @@ export function formActionSourceFor(redirectUri: string): string | undefined {
   return /^[a-z][a-z0-9+.\-]*:$/.test(parsed.protocol) ? parsed.protocol : undefined;
 }
 
+/**
+ * Sends the browser back to the OAuth client after the consent form was
+ * submitted. Browsers apply the consent page's form-action to every redirect
+ * that follows the form submission, and a client callback may redirect onward
+ * to a host of its own that the page cannot know about (a hosted agent's
+ * callback relays to the agent's host). Answering the POST with a redirect
+ * would let the browser stop at that second hop, so for http(s) callbacks the
+ * POST gets a page that moves on as a new navigation instead. Other schemes
+ * (native app callbacks) keep the plain redirect: a refresh to a custom scheme
+ * is not reliably followed.
+ */
+function sendClientRedirect(res: http.ServerResponse, redirectUrl: string): void {
+  let protocol = "";
+  try {
+    protocol = new URL(redirectUrl).protocol;
+  } catch {
+    // Falls through to the plain redirect below.
+  }
+  if (protocol !== "http:" && protocol !== "https:") {
+    res.writeHead(302, { Location: redirectUrl });
+    res.end();
+    return;
+  }
+  setSecurityHeaders(res);
+  res.writeHead(200, {
+    "Content-Type": "text/html; charset=utf-8",
+    "Cache-Control": "no-store",
+    Refresh: `0;url=${redirectUrl}`,
+  });
+  res.end(renderAuthPage({
+    title: "mctl-alice — Возврат в приложение",
+    titleKey: "oauth_continue_title",
+    contentHtml: `
+            <h2 data-i18n="oauth_continue_title">Возврат в приложение</h2>
+            <p class="s-de799f" data-i18n="oauth_continue_lead">Сейчас вы вернётесь в приложение. Если этого не произошло, нажмите кнопку.</p>
+            <p><a href="${escapeHtml(redirectUrl)}" class="btn btn-primary" rel="noreferrer" data-i18n="oauth_continue_link">Продолжить</a></p>
+          `,
+  }));
+}
+
 function setSecurityHeaders(res: http.ServerResponse, formActionExtra?: string): void {
   res.setHeader("Content-Security-Policy", contentSecurityPolicy(formActionExtra));
   res.setHeader("X-Frame-Options", "DENY");
@@ -1423,15 +1463,13 @@ export function createHttpServer(
         }
         if (action === "deny") {
           const result = await oauthController.denyAuthorization(sessionId);
-          res.writeHead(302, { Location: result.redirectUrl });
-          res.end();
+          sendClientRedirect(res, result.redirectUrl);
           return;
         }
 
         const user = await getSessionUser(req, oauthStorage);
         const result = await oauthController.approveAuthorization(sessionId, user?.id, authRequired ? ["iot:view", "iot:control", "quasar"].filter(scope => body[`scope_${scope}`] === "yes").join(" ") : undefined);
-        res.writeHead(302, { Location: result.redirectUrl });
-        res.end();
+        sendClientRedirect(res, result.redirectUrl);
         return;
       } catch (err: any) {
         if (err instanceof PayloadTooLargeError) throw err;

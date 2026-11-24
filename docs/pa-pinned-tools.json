@@ -1,0 +1,124 @@
+{
+  "$comment": "The tools of this server that the Personal Assistant in mctlhq/mctl-telegram pins (servers.alice.tools in internal/pa/catalog/pin.json there), with the fields the PA compares at run time. description_sha256, input_schema_sha256 and annotations use the same canonical form as that pin and must equal its values for the same tool; description and input_schema are the readable source of the two hashes. tests/pa-pinned-tools.test.ts fails when a pinned tool is changed, removed or stops accepting required_scope. Updating this file is the acknowledgement that the pin in mctl-telegram is refreshed as well: see docs/runbooks/tool-surface.md.",
+  "schema": "mctl-alice.pa-pinned-tools/v1",
+  "required_scope": "iot:view",
+  "tools": {
+    "alice_get_device_history": {
+      "description": "Get historical telemetry time-series, energy consumption (total kWh, peak/min/average power in Watts), and sensor charts for a smart home device. Works only on a self-hosted single-user server, which samples devices every minute; the hosted service (alice.mctl.ai) does not record history and returns an error.",
+      "description_sha256": "99a7567b26d1ede4f835637e8d09518a3dea7858f725235c1494ff7d088e2c18",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "device": {
+            "type": "string",
+            "description": "Device name or ID (e.g. 'Розетка', 'Датчик климата')."
+          },
+          "room": {
+            "type": "string",
+            "description": "Room name where the device is located (e.g. 'Кухня', 'Спальня')."
+          },
+          "metric": {
+            "type": "string",
+            "description": "Telemetry metric to retrieve: 'power' (Watts & kWh), 'voltage', 'amperage', 'temperature', 'humidity', 'pressure', 'battery_level', 'on_off', or 'all'. Defaults to 'power'."
+          },
+          "from": {
+            "type": "string",
+            "description": "Start of time range (ISO 8601 string e.g. '2026-09-20T00:00:00+02:00', or 'today', '24h', '7d'). Defaults to start of today."
+          },
+          "to": {
+            "type": "string",
+            "description": "End of time range (ISO 8601 string or 'now'). Defaults to current time."
+          },
+          "resolution": {
+            "type": "string",
+            "enum": [
+              "max",
+              "1m",
+              "5m",
+              "15m",
+              "1h"
+            ],
+            "description": "Aggregation resolution: 'max' (or '1m') returns raw 1-minute samples; '5m', '15m', or '1h' groups by average to keep response compact."
+          }
+        },
+        "required": [
+          "device"
+        ]
+      },
+      "input_schema_sha256": "0d43f8c20df503acfe205635447d9a1d47e138565c4f3798a5c36f73772b2730",
+      "annotations": {
+        "title": "Get device history (self-hosted only)",
+        "readOnlyHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true
+      }
+    },
+    "alice_get_device_state": {
+      "description": "Get real-time status and telemetry of any smart home device (socket power in Watts, voltage, current, climate sensor temperature, humidity, pressure, battery level, or on/off state) via official Yandex IoT API.",
+      "description_sha256": "ec77eac6b9d7eaac8fede435718b060f430e5b7357a7575f86ad63c009fb14ff",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "device": {
+            "type": "string",
+            "description": "Device name or ID (e.g. 'Розетка', 'Кондиционер', 'Датчик климата', 'Вентилятор')."
+          },
+          "room": {
+            "type": "string",
+            "description": "Room name where the device is located (e.g. 'Кухня', 'Детская'). Helpful when multiple devices share the same name."
+          }
+        },
+        "required": [
+          "device"
+        ]
+      },
+      "input_schema_sha256": "2a24b1a85c563bad80896357ebabbeed8db076e6cd53d64fb840a20c47384433",
+      "annotations": {
+        "title": "Get device state",
+        "readOnlyHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true
+      }
+    },
+    "alice_get_home_summary": {
+      "description": "Get a single comprehensive status overview and health dashboard of the smart home (or a specific room): climate conditions (°C, humidity, pressure), security sensors (door open/closed, motion, illumination), lighting status, active sockets & power draw (Watts), and sensor battery levels.",
+      "description_sha256": "d65aad14df871c3bf8fedee5cbda2427bbeca7c81c59b63202a27369f7458a5b",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "room": {
+            "type": "string",
+            "description": "Optional room name to filter summary (e.g. 'Кухня', 'Спальня'). If omitted, returns summary for the whole home."
+          }
+        }
+      },
+      "input_schema_sha256": "1a02a5dfeb3394f2ffa26803188d9dfaba3fc8756c08f5a09c6c27bf11607d7e",
+      "annotations": {
+        "title": "Get home summary",
+        "readOnlyHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true
+      }
+    },
+    "alice_list_devices": {
+      "description": "List all Yandex Alice smart speakers, rooms, and devices in the user's smart home. Use this to discover available speakers and their IDs.",
+      "description_sha256": "8869961a4fd0dfa27f524ac345909276ae6439d8578f81d2116c27404b8ea434",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "only_speakers": {
+            "type": "boolean",
+            "description": "If true, only returns Alice smart speakers. Defaults to false."
+          }
+        }
+      },
+      "input_schema_sha256": "1122b4cfb71fb743a94f9aaad65ae59c1f6e7c84f35b6e78b1c273744ee3d9ab",
+      "annotations": {
+        "title": "List Alice devices and rooms",
+        "readOnlyHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true
+      }
+    }
+  }
+}

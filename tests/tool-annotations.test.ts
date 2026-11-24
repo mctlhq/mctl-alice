@@ -5,7 +5,7 @@ const byName = new Map(ALICE_TOOLS.map((t) => [t.name, t]));
 
 describe("tool annotations", () => {
   it("gives every tool a title and the four hints a client needs", () => {
-    expect(ALICE_TOOLS.length).toBe(13);
+    expect(ALICE_TOOLS.length).toBe(14);
     for (const tool of ALICE_TOOLS) {
       const a = tool.annotations;
       expect(a?.title, `${tool.name}: no title`).toBeTruthy();
@@ -42,8 +42,8 @@ describe("tool annotations", () => {
       .map((t) => t.name)
       .sort();
     expect(idempotentWriters).toEqual(["alice_control_device", "alice_control_room", "alice_set_light", "alice_set_volume"]);
-    // next/prev, a spoken phrase and a scenario run repeat their effect.
-    for (const name of ["alice_media_control", "alice_say_phrase", "alice_trigger_scenario", "alice_send_command"]) {
+    // next/prev, a spoken phrase, a music request and a scenario run repeat their effect.
+    for (const name of ["alice_media_control", "alice_play_music", "alice_say_phrase", "alice_trigger_scenario", "alice_send_command"]) {
       expect(byName.get(name)?.annotations?.idempotentHint, name).toBe(false);
     }
   });

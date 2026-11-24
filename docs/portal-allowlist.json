@@ -30,6 +30,11 @@
       "reason": "Controls playback (play/pause/stop/next/prev) on a speaker; mutating, enabled by owner decision -- see mutatingOnPortal."
     },
     {
+      "name": "alice_play_music",
+      "enabled": false,
+      "reason": "Starts music on one speaker from a short text query; mutating (audible side effect). Added for the Personal Assistant (mctlhq/mctl-telegram#1322). Disabled until the owner decides whether the shared portal should offer it: enabling it also needs a line in mutatingOnPortal."
+    },
+    {
       "name": "alice_trigger_scenario",
       "enabled": true,
       "reason": "Runs a predefined Yandex Smart Home scenario by name or ID; mutating (can affect many devices at once), enabled by owner decision -- see mutatingOnPortal."

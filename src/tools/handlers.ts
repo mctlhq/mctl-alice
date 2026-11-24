@@ -13,6 +13,7 @@ export const TOOL_SCOPES: Record<string, string[]> = {
   alice_trigger_scenario: ["iot:control"],
   alice_set_volume: ["iot:control"],
   alice_media_control: ["iot:control"],
+  alice_play_music: ["iot:control"],
   alice_send_command: ["quasar"],
   alice_say_phrase: ["quasar"],
 };
@@ -49,6 +50,27 @@ export type ToolCallResult = {
   structuredContent?: Record<string, unknown>;
   isError?: boolean;
 };
+
+/**
+ * Reads an optional numeric argument. Absent (undefined, null) is undefined;
+ * a number or a plain decimal string is that number; anything else is NaN,
+ * which the service refuses with the allowed range. Number() alone would
+ * turn null, "" and false into 0 and true into 1, and the write would then
+ * carry a value nobody asked for.
+ */
+function optionalNumber(value: unknown): number | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value === "number") return value;
+  if (typeof value === "string" && /^\s*-?\d+(\.\d+)?\s*$/.test(value)) return Number(value);
+  return NaN;
+}
+
+/** Reads an optional string argument; absent, null and "" are undefined. */
+function optionalString(value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  const text = String(value).trim();
+  return text === "" ? undefined : text;
+}
 
 /** Ids of the placeholder accounts that stand for "no real user". */
 const PLACEHOLDER_ACCOUNT_IDS = ["legacy_user", "usr_local"];
@@ -146,8 +168,22 @@ export async function handleToolCall(
           }
         }
 
+        // The text above is unchanged and stays the only place a person
+        // reads. structuredContent is for a program: every listed device
+        // with its id and raw type, which the text gives for speakers only.
         return {
           content: [{ type: "text", text: text.trim() }],
+          structuredContent: {
+            only_speakers: onlySpeakers,
+            devices: result.devices.map((d) => ({
+              id: d.id,
+              name: d.name,
+              type: d.type,
+              is_speaker: d.isSpeaker,
+              room: d.room,
+              household: d.household,
+            })),
+          },
         };
       }
 
@@ -194,8 +230,8 @@ export async function handleToolCall(
       }
 
       case "alice_set_volume": {
-        const level = Number(args?.level);
-        if (isNaN(level)) {
+        const level = optionalNumber(args?.level);
+        if (level === undefined || isNaN(level)) {
           return {
             content: [{ type: "text", text: "Ошибка: параметр 'level' должен быть числом." }],
             isError: true,
@@ -240,6 +276,28 @@ export async function handleToolCall(
         };
       }
 
+      case "alice_play_music": {
+        // Only these two arguments exist. An extra one is refused rather
+        // than ignored: a caller that sent it expected it to matter.
+        const extra = Object.keys(args && typeof args === "object" ? args : {}).filter((k) => k !== "device" && k !== "query");
+        if (extra.length > 0 || typeof args?.device !== "string" || typeof args?.query !== "string") {
+          return {
+            content: [{ type: "text", text: "Ошибка: alice_play_music принимает только строковые параметры 'device' (точный ID колонки) и 'query'. Ничего не отправлено." }],
+            isError: true,
+          };
+        }
+        const result = await stationService.playMusic(args.device, args.query);
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Запрос музыки "${result.query}" (команда: "${result.commandSent}") отправлен на колонку **${result.speaker.name}** (ID: \`${result.speaker.id}\`).`,
+            },
+          ],
+        };
+      }
+
       case "alice_trigger_scenario": {
         const scenario = String(args?.scenario || "").trim();
         if (!scenario) {
@@ -269,9 +327,9 @@ export async function handleToolCall(
           };
         }
         const room = args?.room ? String(args.room).trim() : undefined;
-        const state = args?.state as "on" | "off" | undefined;
-        const temperature = typeof args?.temperature === "number" ? args.temperature : undefined;
-        const mode = args?.mode ? String(args.mode).trim() : undefined;
+        const state = optionalString(args?.state) as "on" | "off" | undefined;
+        const temperature = optionalNumber(args?.temperature);
+        const mode = optionalString(args?.mode);
 
         const result = await stationService.controlDevice({
           device,
@@ -429,10 +487,10 @@ export async function handleToolCall(
           };
         }
         const room = args?.room ? String(args.room).trim() : undefined;
-        const state = args?.state as any;
-        const brightness = args?.brightness !== undefined ? Number(args.brightness) : undefined;
-        const color_temp_k = args?.color_temp_k !== undefined ? Number(args.color_temp_k) : undefined;
-        const scene = args?.scene ? String(args.scene).trim() : undefined;
+        const state = optionalString(args?.state) as "on" | "off" | undefined;
+        const brightness = optionalNumber(args?.brightness);
+        const color_temp_k = optionalNumber(args?.color_temp_k);
+        const scene = optionalString(args?.scene);
 
         const result = await stationService.setLight({
           device,

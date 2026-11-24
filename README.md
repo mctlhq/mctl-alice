@@ -59,16 +59,19 @@ Set `METRICS_PORT` (for example `9464`) to serve Prometheus metrics at `GET /met
 | `alice_get_home_summary` | `iot:view` | Returns a readable overview of rooms and devices. |
 | `alice_get_device_history` | `iot:view` | Returns stored telemetry samples. The hosted service does not sample telemetry and answers that no history is recorded. |
 | `alice_get_my_identity` | `iot:view` | Returns the stable ID of the mctl-alice account the token belongs to (the ID shown on the account page) and nothing else. Hosted service only. |
-| `alice_control_device` | `iot:control` | Turns a device on or off and sets temperature, mode or brightness. |
+| `alice_control_device` | `iot:control` | Turns a device on or off and sets temperature or mode. |
 | `alice_set_light` | `iot:control` | Sets a light's power, brightness, color temperature or scene. |
 | `alice_control_room` | `iot:control` | Controls every device of a category in a room or the whole home, e.g. all lights off. |
 | `alice_trigger_scenario` | `iot:control` | Runs a scenario defined in Yandex Smart Home. |
 | `alice_set_volume` | `iot:control` | Sets speaker volume (1 to 10). |
 | `alice_media_control` | `iot:control` | Playback commands: play, pause, stop, next, previous. |
+| `alice_play_music` | `iot:control` | Starts music on one speaker, named by its exact ID, from a short text query (artist, track, genre). Not a free-form command. |
 | `alice_say_phrase` | `quasar` | Makes a speaker say arbitrary text (TTS). |
 | `alice_send_command` | `quasar` | Sends a text command as if spoken, e.g. "Включи джаз". |
 
 The read-only tools also accept a token with only `iot:control`. `quasar` tools need the Quasar connection described below.
+
+The write tools refuse a value they cannot set as asked: a volume, brightness, color temperature or temperature outside the range the device reports, a scene or mode the device does not list, or a setting the device has no capability for. The error names the allowed range and nothing is sent to Yandex. `alice_list_devices` also returns `structuredContent.devices` with the ID, name, room, household and raw type of every device.
 
 The full tool surface is committed in [`docs/tool-descriptors.json`](docs/tool-descriptors.json) and kept equal to the code by a test. Changing a tool that another service pins needs a matching update there: see [the tool surface runbook](docs/runbooks/tool-surface.md).
 

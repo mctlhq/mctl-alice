@@ -244,7 +244,7 @@ describe("StationService", () => {
     ]);
   });
 
-  it("should set volume with clamping", async () => {
+  it("should set volume inside the speaker range", async () => {
     const res = await service.setVolume(7, "station-living");
     expect(res.status).toBe("ok");
     expect(res.volume).toBe(7);

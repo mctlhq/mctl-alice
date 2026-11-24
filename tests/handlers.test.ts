@@ -8,6 +8,7 @@ describe("handleToolCall", () => {
   beforeEach(() => {
     mockService = {
       listDevices: vi.fn().mockResolvedValue({
+        devices: [{ id: "sp-1", name: "Колонка", type: "devices.types.smart_speaker.yandex.station", isSpeaker: true, room: "Зал", household: null }],
         speakers: [{ id: "sp-1", name: "Колонка", room: "Зал", state: "online" }],
         otherDevices: [],
         rooms: [{ id: "r-1", name: "Зал" }],

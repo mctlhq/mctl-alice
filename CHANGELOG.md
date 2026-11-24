@@ -3,6 +3,20 @@
 Versions follow semantic versioning; tags carry no `v` prefix. Full notes for
 every version are on the [Releases page](https://github.com/mctlhq/mctl-alice/releases).
 
+## [2.19.0](https://github.com/mctlhq/mctl-alice/compare/2.18.0...2.19.0) (2026-11-24)
+
+
+### Features
+
+* **tools:** add alice_play_music, list every device, refuse bad values ([04df5b3](https://github.com/mctlhq/mctl-alice/commit/04df5b355f892e50c4e5058f029ea0b2bec066b9))
+* **tools:** alice_play_music, ids for every device, refuse instead of clamp ([5f6755b](https://github.com/mctlhq/mctl-alice/commit/5f6755b7ae9e8764952dad4e5cb7eaabc78ca48c))
+
+
+### Bug Fixes
+
+* **tools:** compare alice_play_music query words in one script and form ([ac28a08](https://github.com/mctlhq/mctl-alice/commit/ac28a0851648b3b098be27334f16501c71c50b0e))
+* **tools:** keep a second request out of the alice_play_music query ([6bd033f](https://github.com/mctlhq/mctl-alice/commit/6bd033fc72940acd60bd4297957dd59ac49f5e71))
+
 ## [2.18.0](https://github.com/mctlhq/mctl-alice/compare/2.17.1...2.18.0) (2026-11-24)
 
 

@@ -54,7 +54,7 @@ const HAS_LATIN = /\p{Script=Latin}/u;
 const HAS_CYRILLIC = /[а-яёА-ЯЁ]/u;
 
 // The names Alice answers to. Whole words, compared in lower case with ё as е.
-const WAKE_WORDS = new Set(["алиса", "алису", "алисе", "алисой", "яндекс", "alice", "alisa", "yandex"]);
+const WAKE_WORDS = new Set(["алиса", "алису", "алисе", "алисой", "яндекс", "alice", "alisa", "alisu", "alise", "alisoy", "yandex", "yandeks"]);
 
 // How a Russian request to Alice starts: the stems of imperative verbs that
 // switch, open, buy, call, send, say, set, start, stop, delete, remind or pay.
@@ -68,6 +68,7 @@ const COMMAND_STEMS = [
   "напомн", "активир", "запомн", "отмен", "прекрат",
   "погас", "потуш", "зажг", "зажиг", "убер", "найди", "выйди",
   "стоп", "хватит", "громче", "тише",
+  "заведи", "разбуди", "повтор", "пауз", "следующ", "предыдущ",
 ];
 
 const normalizeWord = (word: string): string => word.toLowerCase().replaceAll("ё", "е");

@@ -3,6 +3,21 @@
 Versions follow semantic versioning; tags carry no `v` prefix. Full notes for
 every version are on the [Releases page](https://github.com/mctlhq/mctl-alice/releases).
 
+## [2.18.0](https://github.com/mctlhq/mctl-alice/compare/2.17.1...2.18.0) (2026-11-24)
+
+
+### Features
+
+* **tools:** add read-only alice_get_my_identity tool ([148cab1](https://github.com/mctlhq/mctl-alice/commit/148cab11f31c870f9905d2085731cae3c1124454))
+* **tools:** add read-only alice_get_my_identity tool ([53ab30a](https://github.com/mctlhq/mctl-alice/commit/53ab30a8f44045a13c0a0b102d5a4bb346e16ae1))
+* **tools:** commit the tool surface and guard the PA pin ([6252c50](https://github.com/mctlhq/mctl-alice/commit/6252c5084b8b32ad0fff6fbffd89e27ed5c6bea8)), closes [#191](https://github.com/mctlhq/mctl-alice/issues/191)
+* **tools:** tool-surface descriptor and PA pin drift guard ([7163af5](https://github.com/mctlhq/mctl-alice/commit/7163af5e2b8b15734b441a77e1585b7121d6cfc1))
+
+
+### Bug Fixes
+
+* **tools:** keep annotation key order stable for pinned tools ([673729c](https://github.com/mctlhq/mctl-alice/commit/673729c530052db4cba336b4e1516bf5819acb41))
+
 ## [2.17.1](https://github.com/mctlhq/mctl-alice/compare/2.17.0...2.17.1) (2026-11-23)
 
 

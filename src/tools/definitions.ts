@@ -110,7 +110,7 @@ const TOOL_DEFINITIONS: Tool[] = [
           minLength: 1,
           maxLength: 100,
           description:
-            "What to play: an artist, a track, an album, a genre or a mood. 1 to 100 characters and at most 8 words; letters, digits, single spaces and the marks ' & - only. No sentence punctuation, no line breaks, no assistant name and no command words (e.g. 'включи', 'выключи'). It is sent as written or refused, never trimmed or rewritten.",
+            "What to play: an artist, a track, an album, a genre or a mood. 1 to 100 characters and at most 8 words; Latin and Russian letters, the digits 0-9, single spaces and the marks ' & - only. No sentence punctuation, no line breaks, no word mixing Latin and Cyrillic, no assistant name and no command words (e.g. 'включи', 'выключи'). It is sent as written or refused, never trimmed or rewritten.",
         },
       },
       required: ["device", "query"],

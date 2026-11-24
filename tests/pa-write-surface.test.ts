@@ -205,6 +205,15 @@ describe("PA write surface", () => {
         ["empty", ""],
         ["too long", "a".repeat(MAX_MUSIC_QUERY_LENGTH + 1)],
         ["too long in astral letters", "𝒜".repeat(MAX_MUSIC_QUERY_LENGTH + 1)],
+        ["mathematical letters", "𝒿𝒶𝓏𝓏"],
+        ["fullwidth letters", "ｊａｚｚ"],
+        ["a ligature", "ﬁre"],
+        ["combining mark on a Latin letter", "Beyonce\u0301"],
+        ["decomposed Russian letter", "и\u0306од"],
+        ["Greek letters", "τζαζ"],
+        ["Ukrainian letter", "джаз і блюз"],
+        ["Arabic-Indic digit", "top \u0665"],
+        ["superscript digit", "top ²"],
         ["line break", "jazz\nturn off the lights"],
         ["carriage return", "jazz\rstop"],
         ["tab", "jazz\tstop"],
@@ -280,6 +289,20 @@ describe("PA write surface", () => {
         "jazz-alisa",
         "Yandex jazz",
         "джаз и Включённый свет",
+        "джаз погаси свет",
+        "джаз зажги свет",
+        "джаз стоп",
+        "джаз отмени будильник",
+        // One character that a reader does not see, each inside a refused word:
+        // a combining stress mark, a decomposed й, a Latin look-alike.
+        "джаз и вы\u0301ключи свет",
+        "джаз позвони\u0306 маме",
+        "джаз \u0041лиса",
+        "джаз и вык\u043bюч\u0438 свет".replace("\u043b", "l"),
+        "джаз и выключи свет".replace("у", "y"),
+        "джаз и вык\u043bючи свет".replace("к", "k"),
+        // ё for е does not get a verb past the list.
+        "джаз набёри маму",
       ];
       for (const query of bad) {
         expect(musicQueryProblem(query), query).not.toBeNull();
@@ -290,7 +313,7 @@ describe("PA write surface", () => {
       expect(sent).toEqual([]);
       // What the tool is for still passes, including words that only contain a stem inside.
       const longest = Array.from({ length: MAX_MUSIC_QUERY_WORDS }, () => "ла").join(" ");
-      for (const query of ["джаз", "спокойная музыка", "Queen", "Кино Группа крови", "Simon & Garfunkel", "Чиж и Ко", "что-нибудь весёлое", "малиса", longest]) {
+      for (const query of ["джаз", "спокойная музыка", "Queen", "Beyoncé", "Кино Группа крови", "Simon & Garfunkel", "Чиж и Ко", "что-нибудь весёлое", "Ёлка", "малиса", "Queen и Кино", "top 100", longest]) {
         expect(musicQueryProblem(query), query).toBeNull();
       }
     });

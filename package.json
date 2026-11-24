@@ -16,7 +16,9 @@
     "start:http": "PORT=8080 node dist/index.js",
     "test": "vitest run",
     "sync:tokens": "node scripts/sync-tokens.mjs",
-    "check:tokens": "node scripts/sync-tokens.mjs --check"
+    "check:tokens": "node scripts/sync-tokens.mjs --check",
+    "update:tool-descriptors": "UPDATE_TOOL_DESCRIPTORS=1 vitest run tests/tool-descriptors.test.ts",
+    "update:pa-pin": "UPDATE_PA_PIN=1 vitest run tests/pa-pinned-tools.test.ts"
   },
   "keywords": [
     "mcp",

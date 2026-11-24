@@ -49,12 +49,6 @@ jq -S '.servers.alice.tools | map_values({description_sha256, input_schema_sha25
 
 The two outputs must be identical.
 
-Until mctlhq/mctl-telegram#1439 is merged they differ on `annotations`: the
-pin on `main` there was taken before this server annotated its tools and
-still holds `{}`, so the PA denies all four tools. This file already holds
-the values of the refreshed pin in that pull request. Remove this paragraph
-once it is merged.
-
 ## A tool changed and `tool-descriptors.test.ts` fails
 
 ```sh

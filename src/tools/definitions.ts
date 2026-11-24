@@ -306,6 +306,15 @@ const TOOL_DEFINITIONS: Tool[] = [
       },
     },
   },
+  {
+    name: "alice_get_my_identity",
+    description:
+      "Get the stable account ID of the mctl-alice account this connection is signed in to. Returns only the ID that the account page shows as \"ID\"; no name, login, e-mail, home or device data. Takes no arguments, reads nothing from Yandex and changes nothing. Works on the hosted service only.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+    },
+  },
 ];
 
 /**
@@ -315,7 +324,10 @@ const TOOL_DEFINITIONS: Tool[] = [
  * handlers.ts. Without them a client cannot tell reading a sensor from
  * switching off every socket in the home.
  *
- * Every tool calls Yandex, so openWorldHint is true throughout.
+ * Every tool that reaches Yandex has openWorldHint true, which is the default
+ * applied below. alice_get_my_identity is the one exception: it reads the
+ * account record this server stores and calls no external service, so it
+ * says false explicitly.
  * destructiveHint is true where one call can have wide or hard-to-undo
  * effect: an arbitrary voice command, a scenario (which can switch many
  * devices at once) and a bulk room/home switch. That is a conservative
@@ -328,6 +340,7 @@ const ANNOTATIONS: Record<string, ToolAnnotations> = {
   alice_get_device_state: { title: "Get device state", readOnlyHint: true, idempotentHint: true },
   alice_get_device_history: { title: "Get device history (self-hosted only)", readOnlyHint: true, idempotentHint: true },
   alice_get_home_summary: { title: "Get home summary", readOnlyHint: true, idempotentHint: true },
+  alice_get_my_identity: { title: "Get my mctl-alice account ID", readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   alice_say_phrase: { title: "Make a speaker say a phrase", readOnlyHint: false, destructiveHint: false, idempotentHint: false },
   alice_send_command: { title: "Send a voice command to Alice", readOnlyHint: false, destructiveHint: true, idempotentHint: false },
   alice_set_volume: { title: "Set speaker volume", readOnlyHint: false, destructiveHint: false, idempotentHint: true },
@@ -347,7 +360,9 @@ const ANNOTATIONS: Record<string, ToolAnnotations> = {
 export const ALICE_TOOLS: Tool[] = TOOL_DEFINITIONS.map((tool) => {
   const hints = ANNOTATIONS[tool.name];
   if (!hints) throw new Error(`tool ${tool.name} has no entry in ANNOTATIONS`);
-  return { ...tool, annotations: { ...hints, openWorldHint: true } };
+  // openWorldHint stays the last key, so adding the exception did not
+  // reorder the serialized annotations of the tools that existed before it.
+  return { ...tool, annotations: { ...hints, openWorldHint: hints.openWorldHint ?? true } };
 });
 
 for (const name of Object.keys(ANNOTATIONS)) {

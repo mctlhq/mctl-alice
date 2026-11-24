@@ -5,13 +5,14 @@ const byName = new Map(ALICE_TOOLS.map((t) => [t.name, t]));
 
 describe("tool annotations", () => {
   it("gives every tool a title and the four hints a client needs", () => {
-    expect(ALICE_TOOLS.length).toBe(12);
+    expect(ALICE_TOOLS.length).toBe(13);
     for (const tool of ALICE_TOOLS) {
       const a = tool.annotations;
       expect(a?.title, `${tool.name}: no title`).toBeTruthy();
       expect(typeof a?.readOnlyHint, `${tool.name}: readOnlyHint`).toBe("boolean");
       expect(typeof a?.idempotentHint, `${tool.name}: idempotentHint`).toBe("boolean");
-      expect(a?.openWorldHint, `${tool.name}: every tool calls Yandex`).toBe(true);
+      // Only the identity tool stays inside this server; the rest call Yandex.
+      expect(a?.openWorldHint, `${tool.name}: openWorldHint`).toBe(tool.name !== "alice_get_my_identity");
       // destructiveHint is only meaningful on a tool that writes.
       if (a?.readOnlyHint === false) {
         expect(typeof a.destructiveHint, `${tool.name}: a writing tool must say destructive or not`).toBe("boolean");
@@ -19,12 +20,13 @@ describe("tool annotations", () => {
     }
   });
 
-  it("marks exactly the sensor and listing tools read-only", () => {
+  it("marks exactly the sensor, listing and identity tools read-only", () => {
     const readOnly = ALICE_TOOLS.filter((t) => t.annotations?.readOnlyHint).map((t) => t.name).sort();
     expect(readOnly).toEqual([
       "alice_get_device_history",
       "alice_get_device_state",
       "alice_get_home_summary",
+      "alice_get_my_identity",
       "alice_list_devices",
     ]);
   });

@@ -63,6 +63,11 @@
       "name": "alice_get_home_summary",
       "enabled": true,
       "reason": "Reads a combined status overview (climate, security sensors, lighting, sockets, battery levels) for the home or a room; read-only."
+    },
+    {
+      "name": "alice_get_my_identity",
+      "enabled": false,
+      "reason": "Reads the stable account ID of the token owner and is read-only, but it exists for a client that links one user's account and must confirm which account it got. Disabled until the owner decides whether the shared portal should show an account ID."
     }
   ]
 }

@@ -5,6 +5,7 @@ import { StationService } from "../src/services/station-service.js";
 describe("Scope Enforcement in Tool Handlers", () => {
   const mockService = {
     listDevices: vi.fn().mockResolvedValue({
+      devices: [],
       speakers: [],
       otherDevices: [],
       rooms: [],

@@ -9,6 +9,7 @@ import {
 } from "../client/types.js";
 import { ITelemetryStorage, TelemetryHistoryResult } from "../storage/telemetry-storage.js";
 import { createTelemetryStorage } from "../storage/index.js";
+import { playMusicCommand } from "../tools/music-query.js";
 
 /** The hosted service runs no sampler (2.2.2), so it has no history to serve. */
 export const HOSTED_HISTORY_UNAVAILABLE =
@@ -80,7 +81,24 @@ export interface HomeSummaryResult {
   }>;
 }
 
+/**
+ * One device of the structured listing. `room` and `household` are the names
+ * Yandex reports and null when it reports none: a missing name is never
+ * replaced by a placeholder a reader could take for a real one.
+ */
+export interface ListedDevice {
+  id: string;
+  name: string;
+  /** The raw Yandex type, e.g. "devices.types.light". */
+  type: string;
+  isSpeaker: boolean;
+  room: string | null;
+  household: string | null;
+}
+
 export interface DeviceListResult {
+  /** Every listed device (speakers only when asked), in the order Yandex returns them. */
+  devices: ListedDevice[];
   speakers: Array<{
     id: string;
     name: string;
@@ -96,6 +114,69 @@ export interface DeviceListResult {
   }>;
   rooms: Array<{ id: string; name: string }>;
   scenarios: Array<{ id: string; name: string; isActive: boolean }>;
+}
+
+/**
+ * A write that was refused before anything was sent to Yandex: a value
+ * outside the range the device reports, a setting the device has no
+ * capability for, or a target that is not what the tool accepts. The write
+ * tools refuse instead of clamping, rounding or dropping, because a caller
+ * that was told "done" must be able to rely on the value it asked for.
+ */
+export class WriteRefusedError extends Error {
+  /** For the REST routes, which answer with err.statusCode: the request was understood and refused. */
+  readonly statusCode = 422;
+  constructor(message: string) {
+    super(`${message} Nothing was sent.`);
+    this.name = "WriteRefusedError";
+  }
+}
+
+const finiteOr = (value: unknown, fallback: number): number =>
+  typeof value === "number" && Number.isFinite(value) ? value : fallback;
+
+/** Refuses a value that is not a number inside [min, max]; whole numbers only when `whole`. */
+function requireInRange(what: string, value: number, min: number, max: number, deviceName: string, whole: boolean): void {
+  const range = `${min} to ${max}`;
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new WriteRefusedError(`${what} must be a number from ${range} for "${deviceName}".`);
+  }
+  if (whole && !Number.isInteger(value)) {
+    throw new WriteRefusedError(`${what} must be a whole number from ${range} for "${deviceName}"; ${value} is not.`);
+  }
+  if (value < min || value > max) {
+    throw new WriteRefusedError(`${what} ${value} is outside the allowed range ${range} for "${deviceName}".`);
+  }
+}
+
+function requireOnOff(state: unknown): void {
+  if (state !== "on" && state !== "off") {
+    throw new WriteRefusedError(`state must be "on" or "off".`);
+  }
+}
+
+/** The shape alice_play_music accepts as a device id: never a name or a room. */
+const DEVICE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+
+/**
+ * Throws when Yandex answered the request but reported the action itself as
+ * failed. Yandex returns HTTP 200 with a per-device or per-capability
+ * action_result in that case, so the HTTP status alone says nothing.
+ */
+function assertActionDone(response: any, deviceName: string): void {
+  const failed = (result: any): string | null =>
+    result?.status === "ERROR" ? String(result.error_code || "").replace(/[^A-Za-z0-9_]/g, "").slice(0, 64) || "ERROR" : null;
+  if (response?.status !== "ok") {
+    throw new YandexApiError(`Yandex did not confirm the action on "${deviceName}".`);
+  }
+  for (const device of Array.isArray(response.devices) ? response.devices : []) {
+    const codes = [failed(device?.action_result)];
+    for (const cap of Array.isArray(device?.capabilities) ? device.capabilities : []) {
+      codes.push(failed(cap?.state?.action_result));
+    }
+    const code = codes.find((c) => c !== null);
+    if (code) throw new YandexApiError(`Yandex reported that the action on "${deviceName}" failed (${code}).`);
+  }
 }
 
 /**
@@ -342,8 +423,30 @@ export class StationService {
 
     const speakers: DeviceListResult["speakers"] = [];
     const otherDevices: DeviceListResult["otherDevices"] = [];
+    const listed: ListedDevice[] = [];
+
+    const householdNames = new Map<string, string>();
+    for (const h of info.households || []) {
+      if (h && typeof h.id === "string" && typeof h.name === "string" && h.name) householdNames.set(h.id, h.name);
+    }
+    const roomHousehold = new Map<string, string>();
+    for (const r of info.rooms || []) {
+      if (r.household_id) roomHousehold.set(r.id, r.household_id);
+    }
 
     for (const device of info.devices || []) {
+      const isSpeaker = this.isSpeaker(device);
+      if (isSpeaker || !onlySpeakers) {
+        const householdId = device.household_id || (device.room ? roomHousehold.get(device.room) : undefined);
+        listed.push({
+          id: device.id,
+          name: device.name,
+          type: device.type,
+          isSpeaker,
+          room: (device.room && roomMap.get(device.room)) || null,
+          household: (householdId && householdNames.get(householdId)) || null,
+        });
+      }
       const roomName = (device.room && roomMap.get(device.room)) || "Не указана";
       const item = {
         id: device.id,
@@ -353,7 +456,7 @@ export class StationService {
         state: device.state,
       };
 
-      if (this.isSpeaker(device)) {
+      if (isSpeaker) {
         speakers.push(item);
       } else {
         otherDevices.push(item);
@@ -368,6 +471,7 @@ export class StationService {
     }));
 
     return {
+      devices: listed,
       speakers,
       otherDevices: onlySpeakers ? undefined : otherDevices,
       rooms,
@@ -531,7 +635,7 @@ export class StationService {
   }
 
   /**
-   * Set speaker volume (1-10 or 1-100 depending on device parameters)
+   * Set speaker volume: a whole number inside the range the speaker reports (1-10 when it reports none)
    */
   async setVolume(level: number, targetSpeaker?: string) {
     const speaker = await this.resolveSpeaker(targetSpeaker);
@@ -541,15 +645,14 @@ export class StationService {
       (c) => c.type === "devices.capabilities.range" && c.parameters?.instance === "volume"
     );
 
-    let targetValue = level;
-    if (volumeCap?.parameters?.range) {
-      const min = volumeCap.parameters.range.min ?? 1;
-      const max = volumeCap.parameters.range.max ?? 10;
-      targetValue = Math.min(Math.max(level, min), max);
-    } else {
-      // Default to standard 1-10 scale for Yandex Station
-      targetValue = Math.min(Math.max(Math.round(level), 1), 10);
-    }
+    // The range the speaker reports, else the 1-10 scale the tool documents.
+    // A speaker does not always list a volume capability, so its absence is
+    // not a refusal: that is the one case here where the range is assumed.
+    // A level outside the range, or not a whole number, is refused; it used
+    // to be clamped or rounded and reported as set.
+    const range = volumeCap?.parameters?.range;
+    requireInRange("Volume level", level, finiteOr(range?.min, 1), finiteOr(range?.max, 10), speaker.name, true);
+    const targetValue = level;
 
     if (this.quasarClient && this.quasarClient.hasCookie()) {
       try {
@@ -644,6 +747,62 @@ export class StationService {
       action,
       commandSent: command,
       apiResponse: response,
+    };
+  }
+
+  /**
+   * Starts music on one speaker from a short query (alice_play_music).
+   *
+   * The speaker is named by its exact id and by nothing else. The command is
+   * a fixed prefix plus the validated query, sent once through the official
+   * IoT API as a quasar.server_action / text_action: there is no Quasar
+   * cookie path and no fallback, so one call reaches the speaker at most
+   * once. Every refusal happens before anything is sent.
+   */
+  async playMusic(deviceId: string, query: string) {
+    // Throws on a query that is not plain words; see tools/music-query.ts.
+    let command: string;
+    try {
+      command = playMusicCommand(query);
+    } catch (err: any) {
+      throw new WriteRefusedError(`The ${err.message}.`);
+    }
+    if (typeof deviceId !== "string" || !DEVICE_ID_PATTERN.test(deviceId)) {
+      throw new WriteRefusedError("device must be the exact ID of a speaker from alice_list_devices, not a name or a room.");
+    }
+    const info = await this.getUserInfo();
+    const matches = (info.devices || []).filter((d) => d.id === deviceId);
+    if (matches.length !== 1 || !this.isSpeaker(matches[0])) {
+      throw new WriteRefusedError(`No speaker has the ID "${deviceId}". Use an ID from alice_list_devices.`);
+    }
+    const speaker = matches[0];
+    const canTakeText = (speaker.capabilities || []).some((c) => {
+      if (c.type !== "devices.capabilities.quasar.server_action") return false;
+      const instance = c.parameters?.instance ?? c.state?.instance;
+      return instance === undefined || instance === "text_action";
+    });
+    if (!canTakeText) {
+      throw new WriteRefusedError(`Speaker "${speaker.name}" does not report the capability that accepts a text command through the Yandex IoT API.`);
+    }
+
+    const response = await this.getClient().sendDeviceActions([
+      {
+        id: speaker.id,
+        actions: [
+          {
+            type: "devices.capabilities.quasar.server_action",
+            state: { instance: "text_action", value: command },
+          },
+        ],
+      },
+    ]);
+    assertActionDone(response, speaker.name);
+
+    return {
+      status: "ok",
+      speaker: { id: speaker.id, name: speaker.name },
+      query,
+      commandSent: command,
     };
   }
 
@@ -753,68 +912,60 @@ export class StationService {
       state: { instance: string; value: any };
     }> = [];
 
+    // Each requested setting is either sent as asked or refuses the whole
+    // call: a setting the device has no capability for used to be dropped,
+    // and a temperature outside the device's range clamped, while the tool
+    // reported success.
+    const lacks = (what: string) =>
+      new WriteRefusedError(`Device "${device.name}" (type ${device.type}) has no ${what} capability.`);
+
     // 1. On / Off capability
-    if (options.state) {
-      const onOffCap = device.capabilities?.find(
-        (c) => c.type === "devices.capabilities.on_off"
-      );
-      if (onOffCap) {
-        actions.push({
-          type: "devices.capabilities.on_off",
-          state: {
-            instance: "on",
-            value: options.state === "on",
-          },
-        });
-      }
+    if (options.state !== undefined) {
+      requireOnOff(options.state);
+      if (!device.capabilities?.some((c) => c.type === "devices.capabilities.on_off")) throw lacks("on/off");
+      actions.push({
+        type: "devices.capabilities.on_off",
+        state: { instance: "on", value: options.state === "on" },
+      });
     }
 
     // 2. Temperature capability (thermostat/AC range)
-    if (typeof options.temperature === "number" && !isNaN(options.temperature)) {
+    if (options.temperature !== undefined) {
       const tempCap = device.capabilities?.find(
         (c) =>
           c.type === "devices.capabilities.range" &&
           c.parameters?.instance === "temperature"
       );
-      if (tempCap) {
-        let val = options.temperature;
-        if (tempCap.parameters?.range) {
-          const min = tempCap.parameters.range.min ?? 16;
-          const max = tempCap.parameters.range.max ?? 30;
-          val = Math.min(Math.max(val, min), max);
-        }
-        actions.push({
-          type: "devices.capabilities.range",
-          state: {
-            instance: "temperature",
-            value: val,
-          },
-        });
-      }
+      if (!tempCap) throw lacks("temperature");
+      const range = tempCap.parameters?.range;
+      requireInRange("Temperature", options.temperature, finiteOr(range?.min, 16), finiteOr(range?.max, 30), device.name, false);
+      actions.push({
+        type: "devices.capabilities.range",
+        state: { instance: "temperature", value: options.temperature },
+      });
     }
 
     // 3. Mode capability (thermostat mode: cool, heat, auto, dry, fan_only)
-    if (options.mode) {
+    if (options.mode !== undefined) {
       const modeCap = device.capabilities?.find(
         (c) =>
           c.type === "devices.capabilities.mode" &&
           c.parameters?.instance === "thermostat"
       );
-      if (modeCap) {
-        actions.push({
-          type: "devices.capabilities.mode",
-          state: {
-            instance: "thermostat",
-            value: options.mode,
-          },
-        });
+      if (!modeCap) throw lacks("thermostat mode");
+      const modes = modeCap.parameters?.modes;
+      if (Array.isArray(modes) && !modes.some((m: any) => m?.value === options.mode)) {
+        const allowed = modes.map((m: any) => m?.value).filter((v: unknown) => typeof v === "string").join(", ");
+        throw new WriteRefusedError(`Mode "${options.mode}" is not one "${device.name}" supports. Allowed: ${allowed || "none"}.`);
       }
+      actions.push({
+        type: "devices.capabilities.mode",
+        state: { instance: "thermostat", value: options.mode },
+      });
     }
 
     if (actions.length === 0) {
-      throw new YandexApiError(
-        `Device "${device.name}" does not support the requested actions. Device type: ${device.type}.`
-      );
+      throw new WriteRefusedError("No setting was given: pass state, temperature or mode.");
     }
 
     if (this.quasarClient && this.quasarClient.hasCookie()) {
@@ -856,85 +1007,71 @@ export class StationService {
       state: { instance: string; value: any };
     }> = [];
 
+    // As in controlDevice: every requested setting is sent as asked or the
+    // whole call is refused. Brightness and color temperature used to be
+    // rounded and clamped into the device's range, and a setting the device
+    // has no capability for dropped, with success reported either way.
+    const lacks = (what: string) =>
+      new WriteRefusedError(`Device "${device.name}" (type ${device.type}) has no ${what} capability.`);
+    const colorCap = device.capabilities?.find(
+      (c) => c.type === "devices.capabilities.color_setting"
+    );
+
     // 1. On / Off capability
-    if (options.state) {
-      const onOffCap = device.capabilities?.find(
-        (c) => c.type === "devices.capabilities.on_off"
-      );
-      if (onOffCap) {
-        actions.push({
-          type: "devices.capabilities.on_off",
-          state: {
-            instance: "on",
-            value: options.state === "on",
-          },
-        });
-      }
+    if (options.state !== undefined) {
+      requireOnOff(options.state);
+      if (!device.capabilities?.some((c) => c.type === "devices.capabilities.on_off")) throw lacks("on/off");
+      actions.push({
+        type: "devices.capabilities.on_off",
+        state: { instance: "on", value: options.state === "on" },
+      });
     }
 
     // 2. Brightness capability
-    if (typeof options.brightness === "number" && !isNaN(options.brightness)) {
+    if (options.brightness !== undefined) {
       const brightnessCap = device.capabilities?.find(
         (c) =>
           c.type === "devices.capabilities.range" &&
           c.parameters?.instance === "brightness"
       );
-      if (brightnessCap) {
-        let val = Math.round(options.brightness);
-        const min = brightnessCap.parameters?.range?.min ?? 1;
-        const max = brightnessCap.parameters?.range?.max ?? 100;
-        val = Math.min(Math.max(val, min), max);
-        actions.push({
-          type: "devices.capabilities.range",
-          state: {
-            instance: "brightness",
-            value: val,
-          },
-        });
-      }
+      if (!brightnessCap) throw lacks("brightness");
+      const range = brightnessCap.parameters?.range;
+      requireInRange("Brightness", options.brightness, finiteOr(range?.min, 1), finiteOr(range?.max, 100), device.name, true);
+      actions.push({
+        type: "devices.capabilities.range",
+        state: { instance: "brightness", value: options.brightness },
+      });
     }
 
-    // 3. Color temperature capability (Kelvin)
-    if (typeof options.color_temp_k === "number" && !isNaN(options.color_temp_k)) {
-      const colorCap = device.capabilities?.find(
-        (c) => c.type === "devices.capabilities.color_setting"
-      );
-      if (colorCap) {
-        let val = Math.round(options.color_temp_k);
-        const min = colorCap.parameters?.temperature_k?.min ?? 1500;
-        const max = colorCap.parameters?.temperature_k?.max ?? 6500;
-        val = Math.min(Math.max(val, min), max);
-        actions.push({
-          type: "devices.capabilities.color_setting",
-          state: {
-            instance: "temperature_k",
-            value: val,
-          },
-        });
-      }
+    // 3. Color temperature capability (Kelvin). A color_setting capability
+    // without temperature_k is a color-only light: it has no temperature.
+    if (options.color_temp_k !== undefined) {
+      const kelvin = colorCap?.parameters?.temperature_k;
+      if (!kelvin || typeof kelvin !== "object") throw lacks("color temperature");
+      requireInRange("Color temperature", options.color_temp_k, finiteOr(kelvin.min, 1500), finiteOr(kelvin.max, 6500), device.name, true);
+      actions.push({
+        type: "devices.capabilities.color_setting",
+        state: { instance: "temperature_k", value: options.color_temp_k },
+      });
     }
 
     // 4. Lighting scene capability (night, reading, party, candle, etc.)
-    if (options.scene) {
-      const colorCap = device.capabilities?.find(
-        (c) => c.type === "devices.capabilities.color_setting"
-      );
-      if (colorCap) {
-        const sceneId = options.scene.trim().toLowerCase();
-        actions.push({
-          type: "devices.capabilities.color_setting",
-          state: {
-            instance: "scene",
-            value: sceneId,
-          },
-        });
+    if (options.scene !== undefined) {
+      const scenes = colorCap?.parameters?.color_scene?.scenes;
+      if (!Array.isArray(scenes)) throw lacks("lighting scene");
+      const sceneId = String(options.scene).trim().toLowerCase();
+      if (!scenes.some((sc: any) => sc?.id === sceneId)) {
+        const allowed = scenes.map((sc: any) => sc?.id).filter((v: unknown) => typeof v === "string").join(", ");
+        throw new WriteRefusedError(`Scene "${sceneId}" is not one "${device.name}" supports. Allowed: ${allowed || "none"}.`);
       }
+      actions.push({
+        type: "devices.capabilities.color_setting",
+        state: { instance: "scene", value: sceneId },
+      });
     }
 
     if (actions.length === 0) {
-      throw new YandexApiError(
-        `Device "${device.name}" does not support the requested light actions. Device type: ${device.type}.`
-      );
+      throw new WriteRefusedError("No setting was given: pass state, brightness, color_temp_k or scene.");
     }
 
     if (this.quasarClient && this.quasarClient.hasCookie()) {

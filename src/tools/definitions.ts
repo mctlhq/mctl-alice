@@ -95,6 +95,29 @@ const TOOL_DEFINITIONS: Tool[] = [
     },
   },
   {
+    name: "alice_play_music",
+    description:
+      "Start music on one Yandex Alice smart speaker from a short text query: an artist, a track, an album, a genre or a mood (e.g. 'джаз', 'Queen', 'спокойная музыка'). The server asks the speaker to play music matching the query and sends nothing else: this is not a free-form voice command. The speaker is named by its exact device ID from alice_list_devices; a name, a room or an omitted device is refused.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        device: {
+          type: "string",
+          description: "Exact device ID of the target speaker, as listed by alice_list_devices. Not a name and not a room.",
+        },
+        query: {
+          type: "string",
+          minLength: 1,
+          maxLength: 100,
+          description:
+            "What to play, 1 to 100 characters: letters, digits, single spaces and the punctuation . , ' & ! ? ( ) - only. No line breaks or other symbols. It is sent as written or refused, never trimmed or rewritten.",
+        },
+      },
+      required: ["device", "query"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "alice_trigger_scenario",
     description:
       "Trigger a predefined Yandex Smart Home automation scenario by name or ID (e.g. 'Доброе утро', 'Спокойной ночи', 'Я ушел').",
@@ -333,7 +356,7 @@ const TOOL_DEFINITIONS: Tool[] = [
  * devices at once) and a bulk room/home switch. That is a conservative
  * judgement, not a claim that the call cannot be reversed. idempotentHint is
  * true only where the call sets an absolute state; next/prev, a spoken
- * phrase and a scenario run repeat their effect.
+ * phrase, a music request and a scenario run repeat their effect.
  */
 const ANNOTATIONS: Record<string, ToolAnnotations> = {
   alice_list_devices: { title: "List Alice devices and rooms", readOnlyHint: true, idempotentHint: true },
@@ -345,6 +368,7 @@ const ANNOTATIONS: Record<string, ToolAnnotations> = {
   alice_send_command: { title: "Send a voice command to Alice", readOnlyHint: false, destructiveHint: true, idempotentHint: false },
   alice_set_volume: { title: "Set speaker volume", readOnlyHint: false, destructiveHint: false, idempotentHint: true },
   alice_media_control: { title: "Control speaker playback", readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+  alice_play_music: { title: "Play music on a speaker by query", readOnlyHint: false, destructiveHint: false, idempotentHint: false },
   alice_trigger_scenario: { title: "Run a smart home scenario", readOnlyHint: false, destructiveHint: true, idempotentHint: false },
   alice_control_device: { title: "Control a device", readOnlyHint: false, destructiveHint: false, idempotentHint: true },
   alice_set_light: { title: "Control a light", readOnlyHint: false, destructiveHint: false, idempotentHint: true },

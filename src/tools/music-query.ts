@@ -10,8 +10,22 @@
  * rather than rewriting matters to a client that shows the query to a person
  * for approval: what was approved is what is sent.
  *
- * This narrows the command, it does not prove what Alice does with it: the
- * words after the prefix are still interpreted by Alice.
+ * Characters alone would not do that: a query could still hold a second
+ * sentence ("jazz. Alice, switch off the lights") and leave it to Alice's
+ * parser whether that runs. So the query is also kept to something a title,
+ * an artist or a genre fits and a second request does not:
+ *
+ *   - no punctuation that ends or splits a sentence (. , ! ? : ; and brackets);
+ *   - at most MAX_MUSIC_QUERY_WORDS words;
+ *   - no wake word and no word that starts like a Russian command verb
+ *     (включи, выключи, открой, купи, позвони, ...), which is how a second
+ *     request to Alice begins.
+ *
+ * The verb list costs some real titles ("Закрой за мной дверь"); they are
+ * refused with a message that says why, which is the intended trade. This
+ * still narrows the command rather than proving what Alice does with it: the
+ * words after the prefix are interpreted by Alice, and that was not run
+ * against a real speaker.
  */
 
 /** Longest query, in characters (code points). */
@@ -20,12 +34,32 @@ export const MAX_MUSIC_QUERY_LENGTH = 100;
 /** The fixed start of the spoken command. The query is appended as is. */
 export const PLAY_MUSIC_PREFIX = "включи музыку ";
 
-// Letters, combining marks and digits of any script, the plain space, and a
-// short list of punctuation that occurs in artist and track names. No line
-// break, tab, other whitespace, control or format character, quote mark,
-// slash, colon or symbol passes.
-const ALLOWED_QUERY = /^[\p{L}\p{M}\p{N} .,'&!?()-]+$/u;
+/** Most words a query may hold. Words are split at spaces, hyphens and apostrophes. */
+export const MAX_MUSIC_QUERY_WORDS = 8;
+
+// Letters, combining marks and digits of any script, the plain space, and
+// the three marks that occur inside names (Guns N' Roses, AC-DC, Simon &
+// Garfunkel). No line break, tab, other whitespace, control or format
+// character, quote mark, slash, sentence punctuation, bracket or symbol.
+const ALLOWED_QUERY = /^[\p{L}\p{M}\p{N} '&-]+$/u;
 const HAS_WORD = /[\p{L}\p{N}]/u;
+
+// The names Alice answers to. Whole words, compared in lower case.
+const WAKE_WORDS = new Set(["алиса", "алису", "алисе", "алисой", "яндекс", "alice", "alisa", "yandex"]);
+
+// How a Russian request to Alice starts: the stems of imperative verbs that
+// switch, open, buy, call, send, say, set, start, stop, delete, remind or pay.
+// A word that begins with one of them is refused, whatever its ending.
+const COMMAND_STEMS = [
+  "включ", "выключ", "отключ", "подключ", "переключ", "вруб", "выруб",
+  "откро", "откры", "закро", "закры", "заблокир", "разблокир",
+  "купи", "закаж", "заказ", "оплат", "переведи", "перевест",
+  "позвон", "набери", "вызов", "вызв", "отправ", "напиш", "скаж", "расскаж", "прочит",
+  "установ", "постав", "запус", "останов", "удал", "сдела", "добав", "убав", "прибав",
+  "напомн", "активир", "запомн",
+];
+
+const normalizeWord = (word: string): string => word.toLowerCase();
 
 /** Why a query is refused, or null when it may be sent. */
 export function musicQueryProblem(query: unknown): string | null {
@@ -36,12 +70,20 @@ export function musicQueryProblem(query: unknown): string | null {
     return `it is longer than ${MAX_MUSIC_QUERY_LENGTH} characters`;
   }
   if (!ALLOWED_QUERY.test(query)) {
-    return "it may hold only letters, digits, single spaces and the punctuation . , ' & ! ? ( ) -";
+    return "it may hold only letters, digits, single spaces and the marks ' & -";
   }
   if (query.startsWith(" ") || query.endsWith(" ") || query.includes("  ")) {
     return "it must not start or end with a space or hold two spaces in a row";
   }
   if (!HAS_WORD.test(query)) return "it holds no letter or digit";
+  const words = query.split(/[ '&-]+/u).filter((w) => w !== "").map(normalizeWord);
+  if (words.length > MAX_MUSIC_QUERY_WORDS) return `it holds more than ${MAX_MUSIC_QUERY_WORDS} words`;
+  for (const word of words) {
+    if (WAKE_WORDS.has(word)) return "it names the assistant; give only what to play";
+    if (COMMAND_STEMS.some((stem) => word.startsWith(stem))) {
+      return "it holds a command word; give only an artist, a track, an album, a genre or a mood";
+    }
+  }
   return null;
 }
 

@@ -166,7 +166,7 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 100,
-            "description": "What to play, 1 to 100 characters: letters, digits, single spaces and the punctuation . , ' & ! ? ( ) - only. No line breaks or other symbols. It is sent as written or refused, never trimmed or rewritten."
+            "description": "What to play: an artist, a track, an album, a genre or a mood. 1 to 100 characters and at most 8 words; letters, digits, single spaces and the marks ' & - only. No sentence punctuation, no line breaks, no assistant name and no command words (e.g. 'включи', 'выключи'). It is sent as written or refused, never trimmed or rewritten."
           }
         },
         "required": [

@@ -7,7 +7,54 @@ on:
     branches: ["main"]
 
 jobs:
+  check-pr-coverage:
+    if: github.event_name == 'push' && github.ref != 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      pull-requests: read
+    outputs:
+      covered: ${{ steps.lookup.outputs.covered }}
+    steps:
+      - id: lookup
+        name: Check for an active PR run covering this push
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          repo="repos/$GITHUB_REPOSITORY"
+          if ! prs=$(gh api --method GET "$repo/pulls" -f state=open -f base=main \
+              -f head="$GITHUB_REPOSITORY_OWNER:$GITHUB_REF_NAME"); then
+            echo "::warning::Could not check open PRs. Running branch CI."
+            exit 0
+          fi
+          if ! pr_number=$(jq -er 'first(.[] | select(.head.repo.full_name == env.GITHUB_REPOSITORY) | .number)' <<<"$prs"); then
+            exit 0
+          fi
+          # The push event can arrive before GitHub registers the matching PR run.
+          for delay in 0 4 6; do
+            sleep "$delay"
+            if ! runs=$(gh api --method GET "$repo/actions/workflows/ci.yml/runs" \
+                -f event=pull_request -f branch="$GITHUB_REF_NAME" -f head_sha="$GITHUB_SHA"); then
+              echo "::warning::Could not check PR workflow runs. Running branch CI."
+              exit 0
+            fi
+            if run_id=$(jq -er --argjson pr "$pr_number" 'first(.workflow_runs[] | select(
+                .head_repository.full_name == env.GITHUB_REPOSITORY and
+                .head_branch == env.GITHUB_REF_NAME and .head_sha == env.GITHUB_SHA and
+                any(.pull_requests[]?; .number == $pr) and
+                (.status == "queued" or .status == "in_progress" or .conclusion == "success")) | .id)' <<<"$runs"); then
+              echo "covered=true" >> "$GITHUB_OUTPUT"
+              echo "Covered by [PR CI]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$run_id)." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+          done
+
   build-and-test:
+    # Only the merge-ref build and main may report the protected check name.
+    name: ${{ github.event_name == 'push' && github.ref != 'refs/heads/main' && 'branch-build-and-test' || 'build-and-test' }}
+    needs: check-pr-coverage
+    if: ${{ !cancelled() && needs.check-pr-coverage.outputs.covered != 'true' }}
     runs-on: ubuntu-latest
     services:
       postgres:

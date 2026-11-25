@@ -7,7 +7,46 @@ on:
     branches: ["main"]
 
 jobs:
+  check-pr-coverage:
+    if: github.event_name == 'push' && github.ref != 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      pull-requests: read
+    outputs:
+      covered: ${{ steps.lookup.outputs.covered }}
+    steps:
+      - id: lookup
+        name: Check for an active PR run covering this push
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          repo="repos/$GITHUB_REPOSITORY"
+          if ! prs=$(gh api --method GET "$repo/pulls" -f state=open -f base=main \
+              -f head="$GITHUB_REPOSITORY_OWNER:$GITHUB_REF_NAME"); then
+            echo "::warning::Could not check open PRs. Running branch CI."
+            exit 0
+          fi
+          if ! jq -e 'any(.[]; .head.sha == env.GITHUB_SHA and .head.repo.full_name == env.GITHUB_REPOSITORY)' <<<"$prs" >/dev/null; then
+            exit 0
+          fi
+          # An open PR alone is insufficient: a conflicting PR may have no merge-ref run.
+          if ! runs=$(gh api --method GET "$repo/actions/workflows/ci.yml/runs" \
+              -f event=pull_request -f branch="$GITHUB_REF_NAME" -f head_sha="$GITHUB_SHA"); then
+            echo "::warning::Could not check PR workflow runs. Running branch CI."
+            exit 0
+          fi
+          if jq -e 'any(.workflow_runs[]; .head_repository.full_name == env.GITHUB_REPOSITORY and
+              (.status == "queued" or .status == "in_progress"))' <<<"$runs" >/dev/null; then
+            echo "covered=true" >> "$GITHUB_OUTPUT"
+          fi
+
   build-and-test:
+    # Only the merge-ref build and main may report the protected check name.
+    name: ${{ github.event_name == 'push' && github.ref != 'refs/heads/main' && 'branch-build-and-test' || 'build-and-test' }}
+    needs: check-pr-coverage
+    if: ${{ !cancelled() && needs.check-pr-coverage.outputs.covered != 'true' }}
     runs-on: ubuntu-latest
     services:
       postgres:

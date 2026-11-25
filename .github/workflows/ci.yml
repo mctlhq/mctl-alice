@@ -28,22 +28,27 @@ jobs:
             echo "::warning::Could not check open PRs. Running branch CI."
             exit 0
           fi
-          if ! jq -e 'any(.[]; .head.sha == env.GITHUB_SHA and .head.repo.full_name == env.GITHUB_REPOSITORY)' <<<"$prs" >/dev/null; then
+          if ! pr_number=$(jq -er 'first(.[] | select(.head.repo.full_name == env.GITHUB_REPOSITORY) | .number)' <<<"$prs"); then
             exit 0
           fi
-          # An open PR alone is insufficient: a conflicting PR may have no merge-ref run.
-          if ! runs=$(gh api --method GET "$repo/actions/workflows/ci.yml/runs" \
-              -f event=pull_request -f branch="$GITHUB_REF_NAME" -f head_sha="$GITHUB_SHA"); then
-            echo "::warning::Could not check PR workflow runs. Running branch CI."
-            exit 0
-          fi
-          if run_id=$(jq -er 'first(.workflow_runs[] | select(
-              .head_repository.full_name == env.GITHUB_REPOSITORY and
-              .head_branch == env.GITHUB_REF_NAME and .head_sha == env.GITHUB_SHA and
-              (.status == "queued" or .status == "in_progress")) | .id)' <<<"$runs"); then
-            echo "covered=true" >> "$GITHUB_OUTPUT"
-            echo "Covered by [PR CI]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$run_id)." >> "$GITHUB_STEP_SUMMARY"
-          fi
+          # The push event can arrive before GitHub registers the matching PR run.
+          for delay in 0 4 6; do
+            sleep "$delay"
+            if ! runs=$(gh api --method GET "$repo/actions/workflows/ci.yml/runs" \
+                -f event=pull_request -f branch="$GITHUB_REF_NAME" -f head_sha="$GITHUB_SHA"); then
+              echo "::warning::Could not check PR workflow runs. Running branch CI."
+              exit 0
+            fi
+            if run_id=$(jq -er --argjson pr "$pr_number" 'first(.workflow_runs[] | select(
+                .head_repository.full_name == env.GITHUB_REPOSITORY and
+                .head_branch == env.GITHUB_REF_NAME and .head_sha == env.GITHUB_SHA and
+                any(.pull_requests[]?; .number == $pr) and
+                (.status == "queued" or .status == "in_progress" or .conclusion == "success")) | .id)' <<<"$runs"); then
+              echo "covered=true" >> "$GITHUB_OUTPUT"
+              echo "Covered by [PR CI]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$run_id)." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+          done
 
   build-and-test:
     # Only the merge-ref build and main may report the protected check name.

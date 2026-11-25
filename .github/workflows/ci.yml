@@ -37,9 +37,12 @@ jobs:
             echo "::warning::Could not check PR workflow runs. Running branch CI."
             exit 0
           fi
-          if jq -e 'any(.workflow_runs[]; .head_repository.full_name == env.GITHUB_REPOSITORY and
-              (.status == "queued" or .status == "in_progress"))' <<<"$runs" >/dev/null; then
+          if run_id=$(jq -er 'first(.workflow_runs[] | select(
+              .head_repository.full_name == env.GITHUB_REPOSITORY and
+              .head_branch == env.GITHUB_REF_NAME and .head_sha == env.GITHUB_SHA and
+              (.status == "queued" or .status == "in_progress")) | .id)' <<<"$runs"); then
             echo "covered=true" >> "$GITHUB_OUTPUT"
+            echo "Covered by [PR CI]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$run_id)." >> "$GITHUB_STEP_SUMMARY"
           fi
 
   build-and-test:

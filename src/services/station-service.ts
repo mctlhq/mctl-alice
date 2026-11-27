@@ -230,6 +230,13 @@ function withinMs<T>(work: Promise<T>, ms: number): Promise<T> {
 export class StationService {
   private client: YandexIoTClient | null = null;
   private quasarClient: QuasarClient | null = null;
+  /**
+   * The Quasar connection playMusic may use and nothing else may: in hosted
+   * mode an `iot:control` token gets no quasarClient, so every other tool
+   * stays on the IoT API, but playMusic reaches a speaker without
+   * text_action through this one (mctlhq/mctl-alice#213, owner decision D1).
+   */
+  private musicQuasar: QuasarClient | null = null;
   private cachedUserInfo: YandexUserInfo | null = null;
   private cacheTimestamp = 0;
   private readonly CACHE_TTL_MS = 30000; // 30 seconds
@@ -242,8 +249,10 @@ export class StationService {
     client?: YandexIoTClient,
     quasarClient?: QuasarClient,
     storage?: ITelemetryStorage,
-    private credentialsMode: "local" | "hosted" = "local"
+    private credentialsMode: "local" | "hosted" = "local",
+    musicQuasar?: QuasarClient,
   ) {
+    this.musicQuasar = musicQuasar ?? null;
     if (client) {
       this.client = client;
     } else if (credentialsMode === "local") {
@@ -800,11 +809,12 @@ export class StationService {
       return instance === undefined || instance === "text_action";
     });
     if (!canTakeText) {
-      if (!this.quasarClient || !this.quasarClient.hasCookie()) {
+      const quasar = this.quasarClient?.hasCookie() ? this.quasarClient : this.musicQuasar;
+      if (!quasar || !quasar.hasCookie()) {
         throw new WriteRefusedError(`Speaker "${speaker.name}" does not report the capability that accepts a text command through the Yandex IoT API, and Quasar is not connected (connect it in /auth/cookie).`);
       }
       // No trigger callback: see the comment above.
-      const triggered = await this.quasarClient.sendCommand(speaker.id, command);
+      const triggered = await quasar.sendCommand(speaker.id, command);
       if (triggered?.status !== "ok") {
         throw new YandexApiError(`Yandex did not confirm the command on "${speaker.name}".`);
       }

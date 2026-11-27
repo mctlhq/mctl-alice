@@ -638,7 +638,8 @@ async function checkBearer(
             yandexExpiresAt: expiresIn ? Date.now() + expiresIn * 1000 : undefined });
         },
       }) : undefined;
-      const quasar = record.scope.split(/\s+/).includes("quasar") && creds.quasarCookie
+      const scopes = record.scope.split(/\s+/);
+      const cookieClient = () => creds.quasarCookie
         ? new QuasarClient({ credentialsMode: "hosted", cookie: creds.quasarCookie, userId, storage: oauthStorage,
           onCookieRefresh: async cookie => {
             const current = await oauthStorage!.getUserCredentials(userId);
@@ -647,8 +648,13 @@ async function checkBearer(
             creds.quasarCookie = cookie;
           },
         }) : undefined;
+      // Only `quasar` puts the cookie behind every tool. An `iot:control`
+      // grant gets it for alice_play_music alone, which sends nothing but
+      // the fixed music prefix plus a validated query (#213, decision D1).
+      const quasar = scopes.includes("quasar") ? cookieClient() : undefined;
+      const musicQuasar = quasar ?? (scopes.includes("iot:control") ? cookieClient() : undefined);
       return { authenticated: true, mode: "hosted", userId, clientId: record.clientId, scope: record.scope,
-        service: new StationService(client, quasar, telemetryStorage?.forUser(userId), "hosted") };
+        service: new StationService(client, quasar, telemetryStorage?.forUser(userId), "hosted", musicQuasar) };
     }
     if (!authRequired && defaultService) {
       if (rawToken === process.env.YANDEX_OAUTH_TOKEN) return { authenticated: true, mode: "local", service: defaultService, scope: "*" };

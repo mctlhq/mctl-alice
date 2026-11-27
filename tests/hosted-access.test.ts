@@ -384,6 +384,51 @@ describe("hosted access boundary", () => {
       vi.restoreAllMocks();
     }
   });
+  it("an iot:control grant reaches Quasar for alice_play_music only", async () => {
+    const calls: Array<{ url: string; method: string; body: any; cookie: string | null }> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input); const method = init?.method ?? "GET";
+      calls.push({ url, method, body: init?.body ? JSON.parse(String(init.body)) : undefined, cookie: new Headers(init?.headers).get("cookie") });
+      if (url === "https://yandex.ru/iot/") return new Response('{"csrfToken2":"test-csrf"}');
+      if (url.includes("/user/info")) return new Response(JSON.stringify({ status: "ok", rooms: [], scenarios: [{ id: "scn-1", name: "Synthetic", is_active: true }], devices: [
+        // Reports no text_action, like a Station Midi.
+        { id: "d2b45847-0000-4000-8000-000000000001", name: "Speaker", type: "devices.types.smart_speaker.yandex.station.midi", capabilities: [] },
+      ] }));
+      if (url === "https://iot.quasar.yandex.ru/m/user/scenarios" && method === "GET") return Response.json({ status: "ok", scenarios: [] });
+      return Response.json({ status: "ok", scenario_id: "proxy-1", devices: [] });
+    });
+    const record = db.getToken("mcp-alice")!;
+    db.saveToken({ ...record, scope: "iot:control" });
+    const auth = await authenticate(storage, "mcp-alice"); if (!auth.authenticated) throw new Error("Expected success");
+
+    expect(auth.service.getQuasarClient()).toBeNull();
+    const result = await auth.service.playMusic("d2b45847-0000-4000-8000-000000000001", "jazz");
+    expect(result).toMatchObject({ method: "quasar_scenario", commandSent: "включи музыку jazz" });
+    const quasarCalls = calls.filter(c => c.url.includes("quasar.yandex.ru"));
+    expect(quasarCalls.length).toBeGreaterThan(0);
+    expect(quasarCalls.every(c => c.cookie === "Session_id=alice")).toBe(true);
+    const put = quasarCalls.filter(c => c.method === "PUT");
+    expect(put).toHaveLength(1);
+    expect(JSON.stringify(put[0].body)).toContain("включи музыку jazz");
+    expect(quasarCalls.filter(c => c.method === "POST" && c.url.endsWith("/actions"))).toHaveLength(1);
+    expect(calls.some(c => c.url.includes("/devices/actions"))).toBe(false);
+
+    // Every other tool stays off the cookie under the same grant.
+    calls.length = 0;
+    await expect(auth.service.sendCommand("выключи свет", "d2b45847-0000-4000-8000-000000000001")).rejects.toThrow(/Connect Quasar/);
+    await expect(auth.service.sayPhrase("test", "d2b45847-0000-4000-8000-000000000001")).rejects.toThrow(/Connect Quasar/);
+    await auth.service.triggerScenario("scn-1");
+    expect(calls.some(c => c.url.includes("quasar.yandex.ru"))).toBe(false);
+    expect(calls.every(c => c.cookie === null)).toBe(true);
+
+    // A read-only grant gets no cookie path at all.
+    calls.length = 0;
+    db.saveToken({ ...record, scope: "iot:view" });
+    const view = await authenticate(storage, "mcp-alice"); if (!view.authenticated) throw new Error("Expected success");
+    await expect(view.service.playMusic("d2b45847-0000-4000-8000-000000000001", "jazz")).rejects.toThrow(/Quasar is not connected/);
+    expect(calls.some(c => c.url.includes("quasar.yandex.ru"))).toBe(false);
+  });
+
   it("never uses the shared refresh token when the user has none", async () => {
     vi.stubEnv("YANDEX_CLIENT_ID", "app"); vi.stubEnv("YANDEX_CLIENT_SECRET", "app-secret");
     await storage.saveUserCredentials("alice", { yandexAccessToken: "expired", quasarCookie: undefined });

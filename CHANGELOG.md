@@ -3,6 +3,14 @@
 Versions follow semantic versioning; tags carry no `v` prefix. Full notes for
 every version are on the [Releases page](https://github.com/mctlhq/mctl-alice/releases).
 
+## [2.20.0](https://github.com/mctlhq/mctl-alice/compare/2.19.0...2.20.0) (2026-11-27)
+
+
+### Features
+
+* play music through the Quasar scenario when IoT has no text_action ([42db525](https://github.com/mctlhq/mctl-alice/commit/42db525274400e5d0952bb8fc27aacd265d26fb4))
+* play music through the Quasar scenario when IoT has no text_action ([ba8d983](https://github.com/mctlhq/mctl-alice/commit/ba8d983be3a2f96a2621597f04e8783d23726f20)), closes [#213](https://github.com/mctlhq/mctl-alice/issues/213)
+
 ## [2.19.0](https://github.com/mctlhq/mctl-alice/compare/2.18.0...2.19.0) (2026-11-24)
 
 

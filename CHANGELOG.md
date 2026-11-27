@@ -3,6 +3,14 @@
 Versions follow semantic versioning; tags carry no `v` prefix. Full notes for
 every version are on the [Releases page](https://github.com/mctlhq/mctl-alice/releases).
 
+## [2.20.1](https://github.com/mctlhq/mctl-alice/compare/2.20.0...2.20.1) (2026-11-27)
+
+
+### Bug Fixes
+
+* give iot:control grants the Quasar path for play_music only ([718d850](https://github.com/mctlhq/mctl-alice/commit/718d850f6ab61a5dd85aa28d909aebcaa36eba86))
+* give iot:control grants the Quasar path for play_music only ([69b3810](https://github.com/mctlhq/mctl-alice/commit/69b38104a195a4a0b39f775b0eae95c426170c59)), closes [#213](https://github.com/mctlhq/mctl-alice/issues/213)
+
 ## [2.20.0](https://github.com/mctlhq/mctl-alice/compare/2.19.0...2.20.0) (2026-11-27)
 
 

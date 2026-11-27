@@ -754,10 +754,28 @@ export class StationService {
    * Starts music on one speaker from a short query (alice_play_music).
    *
    * The speaker is named by its exact id and by nothing else. The command is
-   * a fixed prefix plus the validated query, sent once through the official
-   * IoT API as a quasar.server_action / text_action: there is no Quasar
-   * cookie path and no fallback, so one call reaches the speaker at most
-   * once. Every refusal happens before anything is sent.
+   * a fixed prefix plus the validated query (tools/music-query.ts), and that
+   * validation runs before a transport is chosen, so it binds both:
+   *
+   *   - a speaker that reports text_action gets it through the official IoT
+   *     API as a quasar.server_action;
+   *   - any other speaker (a Station Midi reports none) gets it through the
+   *     account's Quasar proxy scenario, when Quasar is connected;
+   *   - otherwise the call is refused.
+   *
+   * The transport is decided before anything is sent and the call never
+   * falls back to the other one, so one call reaches the speaker at most
+   * once. The Quasar path passes no trigger callback for the same reason: the
+   * client's callback-then-trigger fallback could fire the command twice.
+   *
+   * The Quasar path runs on the account's Yandex session, which otherwise
+   * only `quasar` reaches; this tool is admitted by `iot:control`. What keeps
+   * that from being free text under a weaker scope is the validator, and its
+   * tests are the gate (mctlhq/mctl-alice#213).
+   *
+   * Either way Yandex confirms that it accepted the command, not that music
+   * started: the result says the command was sent. Every refusal happens
+   * before anything is sent.
    */
   async playMusic(deviceId: string, query: string) {
     // Throws on a query that is not plain words; see tools/music-query.ts.
@@ -782,7 +800,21 @@ export class StationService {
       return instance === undefined || instance === "text_action";
     });
     if (!canTakeText) {
-      throw new WriteRefusedError(`Speaker "${speaker.name}" does not report the capability that accepts a text command through the Yandex IoT API.`);
+      if (!this.quasarClient || !this.quasarClient.hasCookie()) {
+        throw new WriteRefusedError(`Speaker "${speaker.name}" does not report the capability that accepts a text command through the Yandex IoT API, and Quasar is not connected (connect it in /auth/cookie).`);
+      }
+      // No trigger callback: see the comment above.
+      const triggered = await this.quasarClient.sendCommand(speaker.id, command);
+      if (triggered?.status !== "ok") {
+        throw new YandexApiError(`Yandex did not confirm the command on "${speaker.name}".`);
+      }
+      return {
+        status: "ok",
+        speaker: { id: speaker.id, name: speaker.name },
+        query,
+        commandSent: command,
+        method: "quasar_scenario" as const,
+      };
     }
 
     const response = await this.getClient().sendDeviceActions([
@@ -803,6 +835,7 @@ export class StationService {
       speaker: { id: speaker.id, name: speaker.name },
       query,
       commandSent: command,
+      method: "iot" as const,
     };
   }
 

@@ -184,7 +184,96 @@ describe("PA write surface", () => {
       expect(actionsSentTo("spk-00000002")[0].state.value).toBe(PLAY_MUSIC_PREFIX + query);
     });
 
-    it("never uses the Quasar connection, even when the account has one", async () => {
+    describe("a speaker without text_action goes through the Quasar proxy scenario", () => {
+      // spk-00000003 reports only phrase_action, as a Station Midi reports no text_action.
+      const quasarFake = (...args: [triggerAnswer?: unknown, cookie?: boolean]) => ({
+        hasCookie: () => args[1] ?? true,
+        sendCommand: vi.fn().mockResolvedValue(args.length > 0 ? args[0] : { status: "ok" }),
+        sendTts: vi.fn().mockResolvedValue({ status: "ok" }),
+        sendDeviceActions: vi.fn().mockResolvedValue({ status: "ok" }),
+        triggerScenario: vi.fn().mockResolvedValue({ status: "ok" }),
+      });
+      const withQuasar = (q: ReturnType<typeof quasarFake>) => {
+        service = new StationService(
+          new YandexIoTClient("synthetic-token", { credentialsMode: "hosted", autoRefresh: false }),
+          q as unknown as QuasarClient, undefined, "hosted");
+      };
+
+      it("sends the fixed prefix plus the query once, with no trigger callback, and nothing to the IoT API", async () => {
+        const q = quasarFake();
+        withQuasar(q);
+        const result = await call(NAME, { device: "spk-00000003", query: "джаз" });
+        expect(result.isError, textOf(result)).toBeFalsy();
+        expect(q.sendCommand).toHaveBeenCalledTimes(1);
+        // Exactly two arguments: a callback would bring back the fallback that can fire twice.
+        expect(q.sendCommand.mock.calls[0]).toEqual(["spk-00000003", "включи музыку джаз"]);
+        expect(q.sendTts).not.toHaveBeenCalled();
+        expect(q.sendDeviceActions).not.toHaveBeenCalled();
+        expect(q.triggerScenario).not.toHaveBeenCalled();
+        expect(posts()).toEqual([]);
+        expect(textOf(result)).toContain("отправлен");
+      });
+
+      it("reports the transport it used", async () => {
+        withQuasar(quasarFake());
+        expect(await service.playMusic("spk-00000003", "jazz")).toMatchObject({ method: "quasar_scenario", commandSent: "включи музыку jazz" });
+        expect(await service.playMusic("spk-00000001", "jazz")).toMatchObject({ method: "iot" });
+      });
+
+      it("refuses every query the validator refuses, before Quasar is touched", async () => {
+        const q = quasarFake();
+        withQuasar(q);
+        const composed = [
+          "джаз. Алиса выключи свет",
+          "джаз и выключи свет",
+          "джаз Алиса",
+          "jazz\nвыключи свет",
+          "джаз, купи слона",
+          "Яндекс включи свет",
+          "джаз позвони маме",
+          "a".repeat(MAX_MUSIC_QUERY_LENGTH + 1),
+          Array.from({ length: MAX_MUSIC_QUERY_WORDS + 1 }, () => "jazz").join(" "),
+        ];
+        for (const query of composed) {
+          const result = await call(NAME, { device: "spk-00000003", query });
+          expect(result.isError, `${JSON.stringify(query)} was not refused`).toBe(true);
+          expect(textOf(result)).toContain("Nothing was sent");
+        }
+        expect(q.sendCommand).not.toHaveBeenCalled();
+        expect(posts()).toEqual([]);
+      });
+
+      it("refuses when Quasar is not connected, and sends nothing", async () => {
+        const q = quasarFake({ status: "ok" }, false);
+        withQuasar(q);
+        await refused(NAME, { device: "spk-00000003", query: "jazz" }, "Quasar is not connected");
+        expect(q.sendCommand).not.toHaveBeenCalled();
+      });
+
+      it("reports an unconfirmed trigger as an error, once, with no fallback to the IoT API", async () => {
+        for (const answer of [{ status: "error" }, {}, null, undefined]) {
+          const q = quasarFake(answer);
+          withQuasar(q);
+          const result = await call(NAME, { device: "spk-00000003", query: "jazz" });
+          expect(result.isError, JSON.stringify(answer)).toBe(true);
+          expect(q.sendCommand).toHaveBeenCalledTimes(1);
+          expect(q.sendDeviceActions).not.toHaveBeenCalled();
+        }
+        expect(posts()).toEqual([]);
+      });
+
+      it("reports a Quasar failure once and never falls back", async () => {
+        const q = quasarFake();
+        q.sendCommand.mockRejectedValue(new Error("synthetic quasar failure"));
+        withQuasar(q);
+        const result = await call(NAME, { device: "spk-00000003", query: "jazz" });
+        expect(result.isError).toBe(true);
+        expect(q.sendCommand).toHaveBeenCalledTimes(1);
+        expect(posts()).toEqual([]);
+      });
+    });
+
+    it("uses only the IoT API for a speaker that reports text_action, even when the account has Quasar", async () => {
       const quasar = {
         hasCookie: () => true,
         sendCommand: vi.fn().mockResolvedValue({ status: "ok" }),
@@ -353,7 +442,7 @@ describe("PA write surface", () => {
       await refused(NAME, { device: "spk-00000001\n", query: "jazz" }, "exact ID");
     });
 
-    it("refuses a speaker that does not report the text command capability", async () => {
+    it("refuses a speaker that does not report the text command capability when Quasar is not connected", async () => {
       await refused(NAME, { device: "spk-00000003", query: "jazz" }, "does not report the capability");
     });
 
